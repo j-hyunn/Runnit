@@ -7,6 +7,8 @@ description: "러닝 앱의 Supabase 백엔드(스키마, RLS, 랭킹 집계, �
 
 러닝 앱의 Supabase 스키마와 API를 설계하는 절차. Supabase MCP 도구(`list_tables`, `apply_migration`, `execute_sql`, `get_advisors`)를 사용해 실제 프로젝트에 반영한다.
 
+> 📌 **제품 사양은 `docs/PRD.md`가 단일 진실 원천이다.** 이 스킬의 서술과 충돌하면 PRD가 우선한다. 티어(분기 시즌·절대평가)와 주간 랭킹(티어 내·상대평가)의 구분, 크루가 P2라는 점을 반드시 확인하고 작업한다.
+
 ## 1. 스키마 골격
 
 ```sql
@@ -45,6 +47,10 @@ create table public.user_badges (
   primary key (user_id, badge_id)
 );
 
+-- ⚠️ Runnit 확정 사양: 티어(시즌 누적, 절대평가)와 주간 랭킹(티어 내, 상대평가)은
+--    집계 주기와 평가 방식이 다르므로 반드시 테이블을 분리한다. 상세는 docs/PRD.md §5.3~§5.4.
+--    필요 테이블: seasons / user_season_tier / weekly_ranking_cache
+--    아래는 랭킹 캐시의 기본형 예시다.
 create table public.leaderboard_cache (
   scope text not null,          -- 'global' | 'weekly' | 'crew:{id}'
   user_id uuid references public.profiles(id),
