@@ -5,7 +5,11 @@ description: "Runnit(러닝 기록/랭킹/뱃지 게이미피케이션 Flutter �
 
 # Runnit Builder — 러닝 앱 개발 오케스트레이터
 
-Runnit(러닝크루 랭킹 커뮤니티) Flutter 앱의 기능 개발을 전문 에이전트 팀으로 조율하는 통합 스킬.
+Runnit(**개인 중심** 러닝 기록·티어·랭킹·뱃지 앱) Flutter 앱의 기능 개발을 전문 에이전트 팀으로 조율하는 통합 스킬.
+
+> 📌 **제품 사양의 단일 진실 원천은 `docs/PRD.md`(v1.0 확정)이며, 사업 맥락은 `docs/BRD.md`다.**
+> 이 스킬을 포함한 모든 하네스 문서의 서술이 PRD와 충돌하면 **PRD가 우선한다.**
+> 핵심 구조 — **티어**(3개월 분기 시즌, 절대평가, 4단계 0/25/100/250km) × **주간 랭킹**(티어 내 상대평가) × **뱃지·레벨**(영구). 포인트는 Phase 4로 MVP 범위 밖이며, **크루/그룹은 P2다.**
 
 ## 실행 모드: 에이전트 팀 (감독자 + 전문가 풀 하이브리드)
 
@@ -28,6 +32,7 @@ Runnit(러닝크루 랭킹 커뮤니티) Flutter 앱의 기능 개발을 전문 
 
 ### Phase 0: 컨텍스트 확인 (후속 작업 지원)
 
+0. **`docs/PRD.md`를 먼저 읽는다 (생략 불가).** 요청과 관련된 섹션(티어 §5.3 / 주간 랭킹 §5.4 / 뱃지 §5.5 / 정책 §8)을 확인하고, 요청이 PRD의 확정 사양과 충돌하면 **구현 전에 사용자에게 알린다.** 요청이 PRD에 없는 신규 기능이면 그 사실을 보고하고, 구현 후 PRD 반영이 필요함을 명시한다.
 1. `_workspace/` 디렉토리와 `pubspec.yaml`(Flutter 프로젝트 존재 여부)을 확인한다.
 2. 실행 모드 결정:
    - **`pubspec.yaml` 미존재** → 초기 실행. mobile-architect를 반드시 포함해 프로젝트 골격부터 시작.
@@ -43,7 +48,7 @@ Runnit(러닝크루 랭킹 커뮤니티) Flutter 앱의 기능 개발을 전문 
 |-----------------|-----------|
 | 신규 데이터 모델이 필요하거나 앱 구조 관련 | mobile-architect (거의 항상 포함 — 새 필드/모델이 생기면 이 팀부터) |
 | GPS, 위치, 워치, 백그라운드 추적, 거리/페이스 계산 | gps-tracking-engineer |
-| 뱃지, 업적, 랭킹 규칙, 레벨, 챌린지, 포인트 | gamification-designer |
+| 뱃지, 업적, **티어·시즌**, 랭킹 규칙, 레벨, 챌린지, 포인트 | gamification-designer |
 | 백엔드, DB, API, 인증, 랭킹 쿼리, 실시간 동기화 | backend-engineer |
 | 화면, UI, 위젯, 디자인, 지도/차트 표시 | flutter-ui-designer |
 
@@ -57,7 +62,7 @@ Runnit(러닝크루 랭킹 커뮤니티) Flutter 앱의 기능 개발을 전문 
 TeamCreate(
   team_name: "runnit-team",
   members: [
-    { name: "architect", agent_type: "mobile-architect", model: "opus", prompt: "{요청 요약 + 기존 산출물 경로}" },
+    { name: "architect", agent_type: "mobile-architect", model: "opus", prompt: "{요청 요약 + 기존 산출물 경로 + 'docs/PRD.md를 먼저 읽고 확정 사양을 따를 것'}" },
     { name: "tracking", agent_type: "gps-tracking-engineer", model: "opus", prompt: "..." },
     { name: "gamification", agent_type: "gamification-designer", model: "opus", prompt: "..." },
     { name: "backend", agent_type: "backend-engineer", model: "opus", prompt: "..." },
@@ -77,6 +82,8 @@ TaskCreate(tasks: [
 ])
 ```
 
+> **모든 팀원 프롬프트에 `docs/PRD.md`를 먼저 읽으라는 지시를 반드시 포함한다.** 팀원은 PRD를 모른 채 시작하면 크루 중심·상대평가 리그 등 폐기된 전제로 설계할 위험이 있다.
+>
 > mobile-architect의 데이터 모델이 다른 모든 작업의 선행 조건이다. 팀원당 3~5개 작업이 적정 범위(팀 크기 가이드라인 참조).
 
 ### Phase 3: 협업 실행
@@ -128,6 +135,7 @@ lib/models/*.dart  (모든 팀원의 공통 기준점)
 | architect의 모델이 확정되지 않은 채 다른 팀원이 대기 | 리더가 architect에게 우선순위 상향 요청, 30분 이상 지연 시 잠정 모델로 나머지 팀원을 우선 진행시키고 추후 조정 |
 | QA에서 CONFIRMED 이슈 발견 | 담당 팀원에게 즉시 SendMessage, 수정 완료까지 해당 모듈은 "미완료"로 유지 |
 | 팀원 간 데이터(필드명 등) 충돌 | 삭제하지 않고 양쪽 주장을 병기해 사용자에게 보고, architect가 최종 결정 |
+| **팀원 산출물이 PRD 확정 사양과 불일치** | qa-integration-tester가 PRD 대조로 검출 → 담당 팀원에게 SendMessage로 수정 요청. PRD가 항상 우선하며, PRD 자체를 바꿔야 한다면 **사용자 확인 후** `docs/PRD.md`를 갱신한다 |
 | Supabase 마이그레이션 실패 | backend-engineer가 원인을 리더에게 보고, 파괴적 변경이면 사용자 확인 후 재시도 |
 
 ## 팀 크기
