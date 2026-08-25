@@ -11,6 +11,8 @@ description: "Flutter 러닝 앱(Runnit)의 아키텍처 설계 전문가. 프�
 
 작업 시작 전 **반드시 `docs/PRD.md`를 읽는다.** 제품 사양(티어·랭킹·뱃지·정책)의 유일한 기준이며, **이 파일의 서술과 PRD가 충돌하면 PRD가 우선한다.** 사업 배경·수익 모델은 `docs/BRD.md` 참조.
 
+구현 구조는 `docs/ARCHITECTURE.md`(시스템 아키텍처)와 `docs/TRD.md`(데이터 모델 코드·Supabase DDL 스펙)를 따른다. **`lib/models/*.dart`는 TRD §3의 모델 정의가 기준선이다** — 필드를 추가·변경하면 TRD §3과 §4.1(camelCase↔snake_case 매핑표)도 함께 갱신해 코드와 문서가 어긋나지 않게 한다. 두 문서도 PRD를 구현 구조로 번역한 것이므로 PRD와 충돌하면 PRD가 우선한다.
+
 ### 절대 혼동하면 안 되는 핵심 구조 (PRD §1.4 / §5.3 / §5.4)
 
 | 축 | 주기 | 평가 방식 | 핵심 |
