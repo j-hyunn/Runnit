@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- HealthKit 읽기(Apple Watch 심박 / Garmin Connect 동기화분).
+	     ⚠️ 이 파일만으로는 적용되지 않는다. Xcode에서
+	     Runner 타겟 → Signing & Capabilities → "+ Capability" → HealthKit 을 추가하면
+	     CODE_SIGN_ENTITLEMENTS 빌드 설정이 이 파일을 가리키게 된다.
+	     (pbxproj를 손으로 편집하지 않기 위해 파일만 미리 만들어 둔다.) -->
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.access</key>
+	<array/>
+</dict>
+</plist>

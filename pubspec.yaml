@@ -1,0 +1,108 @@
+name: runnit
+description: "Runnit — 러닝크루 랭킹 커뮤니티. GPS/웨어러블 러닝 트래킹, 기록, 랭킹, 뱃지 게이미피케이션."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.8.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── 상태관리 ───────────────────────────────────────────────
+  # Riverpod: 컴파일 타임 안전성, Provider override 기반 목킹,
+  # GPS 스트림처럼 백그라운드 갱신 상태를 여러 화면이 구독하는 구조에 적합.
+  flutter_riverpod: ^2.5.1
+
+  # ── 불변 모델 / 직렬화 ─────────────────────────────────────
+  # freezed: copyWith/==/toString + union 타입. json_serializable로 직렬화 자동화.
+  # 수동 toJson/fromJson은 필드 추가 시 누락되기 쉬워 금지.
+  freezed_annotation: ^3.1.0
+  json_annotation: ^4.9.0
+
+  # ── 라우팅 ────────────────────────────────────────────────
+  # go_router: 딥링크(챌린지 초대 링크), 중첩 라우트(바텀 네비 shell) 지원.
+  go_router: ^14.2.7
+
+  # ── 위치 / 센서 / 권한 ────────────────────────────────────
+  # geolocator: 위치 스트림 + 정확도/거리필터 옵션. 거리 계산 유틸(Haversine) 내장.
+  geolocator: ^13.0.1
+  # flutter_background_service: 화면 꺼짐/앱 백그라운드 상태에서 트래킹 세션 유지.
+  flutter_background_service: ^5.0.10
+  # health: HealthKit(iOS) / Health Connect(Android) 통합 래퍼.
+  #   Apple Watch는 HealthKit 경유, Garmin은 Garmin Connect → HealthKit/Health Connect
+  #   동기화 경유로 심박수·워크아웃을 읽는다.
+  health: ^11.1.0
+  # permission_handler: iOS/Android 위치·활동·건강 권한 흐름 통합.
+  permission_handler: ^11.3.1
+
+  # ── 백엔드 ────────────────────────────────────────────────
+  # supabase_flutter: Auth + Postgres + Realtime(랭킹 구독) + Storage 단일 SDK.
+  supabase_flutter: ^2.6.0
+
+  # ── 로컬 저장 ─────────────────────────────────────────────
+  # drift: 진행 중 러닝 세션의 RunSample을 오프라인에서 append-only로 저장.
+  #   네트워크 없이 러닝하고 종료 후 업로드하는 흐름의 핵심.
+  drift: ^2.20.0
+  sqlite3_flutter_libs: ^0.5.24
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  # shared_preferences: 온보딩 완료 여부, 단위(km/mi) 설정 등 경량 키-값.
+  shared_preferences: ^2.3.2
+
+  # ── 지도 / 차트 ───────────────────────────────────────────
+  # flutter_map: API 키/과금 없이 시작 가능. 초기 단계 비용 0.
+  #   더 정교한 UX가 필요해지면 google_maps_flutter로 교체 (MapView 추상화 뒤에 격리).
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  # fl_chart: 페이스/고도/심박 추이 시각화.
+  fl_chart: ^0.69.0
+  # flutter_svg: Figma에서 내려받은 벡터 아이콘(내비게이션/헤더/티어 배지)을
+  # 그대로 렌더링 — 손으로 다시 그리지 않고 원본 SVG를 쓴다.
+  flutter_svg: ^2.0.10+1
+
+  # ── 유틸 ─────────────────────────────────────────────────
+  intl: ^0.19.0          # 날짜/숫자 로케일 포맷 (페이스 표시)
+  collection: ^1.18.0
+  uuid: ^4.5.0           # 클라이언트 생성 RunRecord id (오프라인 업로드 멱등성)
+  logger: ^2.4.0
+  flutter_web_auth_2: ^5.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+  build_runner: ^2.15.1
+  freezed: ^3.2.3
+  json_serializable: ^6.11.2
+  drift_dev: ^2.20.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/badges/PB/
+    - assets/badges/count/
+    - assets/badges/date/
+    - assets/badges/distance/
+    - assets/badges/event/
+    - assets/badges/level/
+    - assets/badges/ranking/
+    - assets/badges/route/
+    - assets/badges/session/
+    - assets/badges/special/
+    - assets/badges/speed/
+    - assets/badges/strict/
+    - assets/badges/tier/
+    - assets/badges/wearable/
+    - assets/icons/
+
+  # Figma가 지정한 본문 서체. 가변 폰트 하나로 Regular~Bold 전 굵기를 커버한다
+  # (별도 정적 굵기 파일을 따로 등록할 필요 없음 — TextStyle.fontWeight가
+  # 자동으로 가장 가까운 굵기 축으로 매핑된다).
+  fonts:
+    - family: Pretendard Variable
+      fonts:
+        - asset: assets/fonts/PretendardVariable.ttf

@@ -1,0 +1,25 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "**/*.freezed.dart"
+    - "**/*.g.dart"
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+  errors:
+    invalid_annotation_target: ignore # freezed + json_serializable 조합의 알려진 경고
+  plugins:
+    - custom_lint
+
+linter:
+  rules:
+    - always_declare_return_types
+    - prefer_const_constructors
+    - prefer_final_locals
+    - avoid_print
+    - unawaited_futures
