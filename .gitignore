@@ -1,2 +1,30 @@
 # 사업 검토 문서 — 본인 의사결정용 (철수 기준·기회비용 포함, 대외 비공개)
 docs/BRD.md
+
+# Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+.idea/
+*.iml
+.vscode/
+*.freezed.dart
+*.g.dart
+
+# iOS — 빌드마다 재생성되는 파일(Supabase URL/anon key가 담긴 dart-defines 포함).
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+
+# Android — 빌드마다 재생성/머신별 경로.
+android/.gradle/
+android/local.properties
+
+# 로컬 개발용 dart-define 값 (Supabase URL/키 등). 절대 커밋하지 않는다.
+env/*.json

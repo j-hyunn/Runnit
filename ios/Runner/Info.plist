@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Runnit</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>runnit</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- ── 위치 권한 (features/tracking) ──────────────────────────────
+	     GeolocatorRunTrackingService.ensureReady()가 2단계로 요청한다:
+	     ① locationWhenInUse → WhenInUse 문구, ② locationAlways → Always 문구.
+	     iOS는 Always만 단독으로 선언하면 안 되고 WhenInUse 문구가 함께 있어야
+	     "앱 사용 중 허용" 단계가 표시된다. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>러닝 중 이동 경로와 거리를 기록하기 위해 위치 정보를 사용합니다.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>화면이 꺼지거나 다른 앱을 사용하는 동안에도 러닝 기록이 끊기지 않도록 위치 정보를 사용합니다.</string>
+	<!-- iOS 10 이하 호환용. 최신 SDK는 위 두 키만 참조하지만, permission_handler가
+	     locationAlways 상태를 조회할 때 이 키가 없으면 경고를 남긴다. -->
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>화면이 꺼진 상태에서도 러닝 기록이 끊기지 않도록 위치 정보를 사용합니다.</string>
+	<!-- ── 백그라운드 실행 모드 ────────────────────────────────────────
+	     AppleSettings.allowBackgroundLocationUpdates = true 는 이 선언이
+	     없으면 런타임에 예외를 던진다. "항상 허용"을 못 받은 사용자는
+	     서비스가 이 플래그를 false로 두므로 이 선언이 있어도 무해하다. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
+	<!-- ── HealthKit (Apple Watch 심박 / Garmin Connect 동기화분) ──────
+	     HealthWearableMetricsSource가 READ 전용으로 요청한다. 쓰기는 하지 않으므로
+	     NSHealthUpdateUsageDescription은 두지 않는다(불필요한 권한 요청 방지). -->
+	<key>NSHealthShareUsageDescription</key>
+	<string>러닝 중 심박수를 함께 기록하기 위해 Apple Watch·Garmin 등이 건강 앱에 저장한 심박 데이터를 읽습니다.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>러닝 중 걸음·움직임 정보를 활용해 거리와 페이스 정확도를 높입니다.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>io.runnit.app.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>io.runnit.app</string>
+			</array>
+		</dict>
+	</array>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>UIWindowScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>flutter</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+					<key>UISceneStoryboardFile</key>
+					<string>Main</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

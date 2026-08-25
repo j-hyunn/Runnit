@@ -13,6 +13,7 @@
 |------|----------|
 | v0.1 | 최초 작성. `docs/ARCHITECTURE.md`의 구조 결정을 구현 가능한 스펙(데이터 모델 코드, DDL, API, 검증 규칙)으로 세분화 |
 | v0.2 | 뱃지 카탈로그 확장(30종 → 158개 템플릿) 설계 반영. `Badge`에 `category`(16종)·`scope`(permanent/seasonal)·`description`·`seasonId` 필드 추가, `tierLabel`→`badgeGrade`로 개명(시즌 티어 시스템과 명칭 혼동 방지). 카탈로그 원본은 `docs/badge-catalog.csv` |
+| v0.3 | 뱃지 판정 실제 구현 완료(§10.1) — `runs` 트리거 기반 `evaluate_badges`/`evaluate_badge_condition`, `condition_type` 44→40종 중 사실상 전량 판정 가능. 시즌 뱃지 인스턴스 발급을 실제로 구현(`{templateId}@{seasonId}`, `ensure_season_badge_instances()`, §3.6 상단 정정 노트). 티어 도달 시각 이력 테이블 `tier_change_history` 신규 추가. 2026-08-26 사용자 요청으로 `seasonCumulativeDistance`/`seasonFinisher` 카테고리와 소속 뱃지 9종 삭제(158→148 템플릿, 16→14 카테고리, `condition_type` 44→40종) |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
 
@@ -189,9 +190,48 @@ class RankingEntry with _$RankingEntry {
 
 동점 처리(PRD §8.2)는 서버 집계 쿼리에서 `(weeklyDistanceMeters desc, runCount asc, firstReachedAt asc, totalDuration asc)` 순서로 정렬해 `rank`를 확정한다 — 클라이언트는 산정하지 않는다.
 
+> ⚠️ **구현 갱신(2026-08-25, 시즌 뱃지 활성화)**: 아래 §3/§4의 `seasons` / `user_season_tier` /
+> `weekly_ranking_cache` 테이블 설계는 **실제로 만들어지지 않았다**. 실제 구현(마이그레이션
+> 19~24, 31, 32)은 다음으로 대체됐다 — 이 문서가 실제 스키마와 어긋난 채 방치되지 않도록
+> 여기 명시한다:
+> - `seasons` → `season_id_at(ts)` / `season_start(id)` / `season_end(id)` 순수 계산 함수
+>   (분기는 달력에서 결정론적으로 유도되고 운영자가 조정할 절차가 없어 테이블이 불필요하다는
+>   판단, 마이그레이션 20).
+> - `user_season_tier` → `profiles.current_tier` / `profiles.season_distance_meters` /
+>   `profiles.tier_season_id` (마이그레이션 19, 22) + 시즌 마감 스냅샷은
+>   `season_histories`(마이그레이션 21)에 남는다.
+> - `weekly_ranking_cache` → 기존 `leaderboard_entries`를 그대로 재사용
+>   (`period='weekly', metric='distance', scope='global', tier=<티어>`). 5분 주기로 티어별
+>   4개 보드가 갱신되고(마이그레이션 23 `refresh_all_leaderboards`), 지난 주차 행은 삭제되지
+>   않고 누적 보존된다.
+> - `badges.season_id`는 `seasons` FK가 아니라 `season_id_at`과 같은 정규식(`^\d{4}-Q[1-4]$`)으로만
+>   검증되는 text 컬럼이다(마이그레이션 25 `badges_season_id_scope`).
+> - 시즌 뱃지 인스턴스 id는 `{templateId}_{season}` 이 아니라 **`{templateId}@{seasonId}`**
+>   형식이다(예: `stier_platinum@2026-Q3`) — `badges_id_slug_format` CHECK가 `@`를 구분자로 허용.
+>   인스턴스 발급은 `ensure_season_badge_instances()`가 담당하며 `evaluate_badges` /
+>   `sync_my_season` / `reset_stale_seasons` 3개 진입점에서 멱등 호출된다(마이그레이션 31).
+> - `evaluate_badge_condition`의 seasonal 19종은 마이그레이션 32에서 18종, 마이그레이션
+>   33/34에서 나머지 1종(`season_max_tier_reached_before_pct`)까지 전부 실제 판정으로
+>   구현됐다. 이 마지막 1종은 `profiles.current_tier`/`season_histories`만으로는 "시즌 중
+>   특정 티어에 처음 도달한 시각"을 알 수 없어(전자는 현재 상태만, 후자는 시즌 마감
+>   스냅샷만 보유) 신규 테이블 `public.tier_change_history(user_id, season_id, tier,
+>   reached_at)`를 추가했다 — `recompute_season_tier`(마이그레이션 22)가 티어 판정 후
+>   **직전보다 실제로 상승했을 때만**(enum 비교, 하드코딩 없음) 이 테이블에 최초 1행을
+>   기록한다(UNIQUE(user_id, season_id, tier) + ON CONFLICT DO NOTHING이 동시성 안전망).
+>   같은 시즌에 유지·강등 시에는 기록하지 않는다. `season_max_tier_reached_before_pct`는
+>   `enum_range(null::public.tier)`에서 유도한 "최고 티어"(하드코딩 금지) 도달 시각을
+>   `season_start + (season_end - season_start) * pct/100.0`과 비교한다.
+>   ⚠️ **소급 불가**: 이 테이블은 2026-08-25(마이그레이션 33/34) 이후의 상승분만 담는다.
+>   그 이전에 이미 어떤 티어에 도달해 있던 기존 유저는 도달 "시각"을 역산할 근거가
+>   없어(season_histories는 마감 스냅샷뿐) 이력이 소급 생성되지 않는다 — 근사치도 만들지
+>   않았다(false negative만 발생, 오지급 없음). 이후 실제로 다시 그 티어로 오르는 순간부터
+>   (예: 다음 시즌, 또는 강등 후 재상승) 정확하게 기록된다.
+
 ### 3.6 `Badge` / `UserBadge`
 
-뱃지 카탈로그(158개 템플릿, 16개 카테고리)의 확정 스펙은 [`docs/badge-catalog.csv`](./badge-catalog.csv) 참고. `category`·`scope`는 이 카탈로그에서 역산한 필드다.
+뱃지 카탈로그(148개 템플릿, 14개 카테고리 — 2026-08-26 `seasonCumulativeDistance`/`seasonFinisher`
+카테고리와 소속 뱃지 9종을 사용자 요청으로 삭제해 158/16에서 축소)의 확정 스펙은
+[`docs/badge-catalog.csv`](./badge-catalog.csv) 참고. `category`·`scope`는 이 카탈로그에서 역산한 필드다.
 
 ```dart
 enum BadgeTriggerType { session, cumulative }
@@ -214,9 +254,9 @@ enum BadgeCategory {
   level,                     // 레벨 (permanent) — XP 공식 미정, 값은 GM-04 별도 설계 후 확정
   seasonTier,                // 시즌티어달성 (seasonal, GM-07)
   seasonWeeklyRank,          // 시즌주간랭킹 (seasonal, RK-06)
-  seasonCumulativeDistance,  // 시즌누적거리 (seasonal, P1)
   seasonEvent,               // 시즌한정이벤트 (seasonal, GM-08 P1)
-  seasonFinisher,            // 시즌완주 (seasonal)
+  // seasonCumulativeDistance/seasonFinisher는 2026-08-26 사용자 요청으로
+  // 카테고리·소속 뱃지 9종(sdist_*/sfin_*, 마이그레이션 35)을 완전히 삭제했다.
 }
 
 @freezed
@@ -228,7 +268,14 @@ class Badge with _$Badge {
     required BadgeCategory category,
     required BadgeScope scope,
     required BadgeTriggerType triggerType,
-    required Map<String, dynamic> condition,  // 판정 함수 입력 파라미터
+    required String conditionType,             // 판정 함수 **디스패치 키**. badge-catalog.csv의
+                                                 // condition_type 열과 1:1 (현재 40종).
+                                                 // condition 맵만으로는 어느 판정 함수를 쓸지 알 수 없다.
+    @Default(<String, dynamic>{})
+    Map<String, dynamic> condition,            // 판정 함수 입력 파라미터. 키 집합은 conditionType마다
+                                                 // 다르다 (예: cumulative_distance_gte → {"distanceKm": 1000},
+                                                 // season_weekly_rank_lte → {"tier": "gold", "bucket": "top1"}).
+                                                 // 파라미터가 없는 종류는 {} — NULL도 {}와 동치로 취급한다.
     required String badgeGrade,                // bronze/silver/gold/platinum/diamond/special — 뱃지 자체 표시 등급.
                                                  // ⚠️ scope=seasonal인 시즌티어달성(stier_*) 4종을 제외하면
                                                  // 실제 시즌 티어 시스템과 무관한 순수 장식용 값이다.
@@ -242,10 +289,13 @@ class Badge with _$Badge {
 @freezed
 class UserBadge with _$UserBadge {
   const factory UserBadge({
+    required String id,              // UUID. 서버 생성 — markBadgesSeen()이 이 값으로 개별 행을 갱신한다.
     required String userId,
-    required String badgeId,
+    required String badgeId,         // seasonal이면 템플릿이 아니라 인스턴스 id (`{templateId}@{seasonId}`)
     required DateTime earnedAt,
     @Default(false) bool verified,   // 서버 재검증 결과
+    @Default(false) bool isSeen,     // 획득 연출(GM-02)을 봤는지. RLS상 클라이언트가 쓸 수 있는 유일한 컬럼.
+    Badge? badge,                    // 조인 임베드(선택) — 갤러리 조회 왕복 절감
   }) = _UserBadge;
 
   factory UserBadge.fromJson(Map<String, dynamic> json) => _$UserBadgeFromJson(json);
@@ -407,6 +457,27 @@ create table public.user_badges (
 | `RankingEntry.weeklyDistanceMeters` | `weekly_ranking_cache.weekly_distance_m` | numeric | |
 | `RankingEntry.tierParticipantCount` | `weekly_ranking_cache.tier_participant_count` | integer | |
 | `UserProfile.totalDistanceMeters` | `profiles.total_distance_m` | numeric | 트리거 갱신 캐시 |
+| `Badge.conditionType` | `badges.condition_type` | text (check, 40종) | 판정 함수 디스패치 키 |
+| `Badge.condition` | `badges.condition` | jsonb | 키 집합은 `condition_type`마다 다름 |
+| `Badge.badgeGrade` | `badges.badge_grade` | text (check, 6종) | 표시용 등급 — 경쟁 `Tier`와 무관 |
+| `Badge.triggerType` | `badges.trigger_type` | text (enum check) | `session` / `cumulative` |
+| `Badge.scope` | `badges.scope` | text (enum check) | `permanent` / `seasonal` |
+| `Badge.category` | `badges.category` | text (enum check, 14종) | CSV의 한국어 라벨은 시드 시 snake_case 영문으로 매핑 |
+| `Badge.seasonId` | `badges.season_id` | text nullable | seasonal **인스턴스**일 때만 값 존재 |
+| `Badge.name` | `badges.name` | text | 시드 원천은 CSV `display_name` 열이다 (`functional_name` 열은 **시드하지 않는다** — Dart 모델에 대응 필드가 없고 `description`이 상위집합) |
+| `UserBadge.id` | `user_badges.id` | uuid | 서버 생성. `markBadgesSeen()`이 이 값으로 개별 행을 갱신 |
+| `UserBadge.userId` | `user_badges.user_id` | uuid | |
+| `UserBadge.badgeId` | `user_badges.badge_id` | text FK → `badges.id` | seasonal이면 템플릿이 아니라 **인스턴스** id |
+| `UserBadge.earnedAt` | `user_badges.earned_at` | timestamptz | 서버가 확정(클라이언트 시각 불신) |
+| `UserBadge.verified` | `user_badges.verified` | boolean | 서버 재검증 결과 |
+| `UserBadge.isSeen` | `user_badges.is_seen` | boolean | 클라이언트가 쓸 수 있는 유일한 컬럼 |
+| *(대응 필드 없음)* | `user_badges.revoked` | boolean | **서버 전용.** 부정 기록 회수(PRD §8.1) — 행은 남기고 플래그만 세운다. 타인 조회 RLS 술어에 쓰인다 |
+| *(대응 필드 없음)* | `user_badges.source_run_id` | uuid nullable | **서버 전용 감사 컬럼.** 회수 판정 시 "어느 기록 때문에 지급됐나" 추적용 |
+
+> 서버 전용 컬럼(`revoked` / `source_run_id`)은 `select *`로 클라이언트에 내려가지만
+> `json_serializable`이 미지 키를 무시하므로 무해하다. Dart 모델에 추가하지 않는다 —
+> 클라이언트가 회수 여부를 렌더링할 이유가 없고(타인 것은 애초에 RLS가 가린다),
+> 필드를 늘리면 서버 전용이라는 경계가 흐려진다.
 
 이 표는 필드 추가 시마다 갱신한다 — 암묵적 매핑은 QA 단계에서 필드 불일치 버그로 드러난다(`backend-engineer` 작업 원칙).
 
@@ -552,7 +623,37 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 - 클라이언트 잠정 판정 → 서버 확정 결과 Realtime 반영까지의 사이, UI는 "확인 중" 상태를 명시(연출 자체는 잠정치로 먼저 보여주되 최종 확정 실패 시 취소 애니메이션 없이 조용히 `verified=false`로 유지 — 게이미피케이션 원칙: 설명 없이 박탈하지 않음).
 - **카탈로그 시딩**: [`docs/badge-catalog.csv`](./badge-catalog.csv)의 158개 행을 `badges` 시드 데이터로 적재한다. `scope='permanent'`(117개)는 그대로 1행 = 1뱃지. `scope='seasonal'`(41개 템플릿)은 시즌 시작 배치 작업이 시즌마다 `id`에 `season_id`를 붙여 실제 인스턴스로 복제 발급한다(예: 템플릿 `stier_platinum` → 인스턴스 `stier_platinum_2026q3`). 템플릿 자체는 `badges`에 유저에게 노출되지 않는 참조용 행으로 유지하거나, 시즌 인스턴스 생성 로직의 입력 메타데이터로만 별도 관리한다 — 어느 쪽으로 할지는 `backend-engineer`가 시딩 스크립트 작성 시 확정.
 
----
+### 10.1 실제 구현 노트 (v2, 2026-08-25 · 마이그레이션 27_badge_evaluation_logic)
+
+위 §10 서술은 Edge Function 트리거를 전제로 썼으나, **실제 구현은 Postgres 트리거**다
+(`runs` 테이블의 `runs_03_evaluate_badges` AFTER 트리거 → `evaluate_badges(user_id, run_id)` →
+`evaluate_badge_condition(user_id, condition_type, condition)` 디스패치). 세션형/누적형을
+따로 구분하지 않고 매 `runs` INSERT/UPDATE/DELETE마다 미획득 permanent 뱃지 전체를
+재평가한다 — 카탈로그가 158행 규모라 전체 스캔 비용이 낮기 때문(§6.4 근거와 동일 판단).
+
+44개 `condition_type` 중 21종을 이번에 구현했고, 23종(레벨/시즌 19종/역지오코딩/기기판별 2종)은
+선행 의존성 미해결로 `false` 스텁을 유지한다. 상세는 `_workspace/{날짜}_backend_badge-evaluation-logic.md` 참조.
+
+> **이후 진행 상황(2026-08-25~26)**: 시즌 조건 19종은 이후 라운드(마이그레이션 31~34)에서
+> 전부 실제 판정 로직으로 교체됐다(§3.6 상단 정정 노트 참고). 2026-08-26에는 사용자 요청으로
+> `seasonCumulativeDistance`/`seasonFinisher` 카테고리와 그 조건 타입 4종
+> (`season_cumulative_distance_gte`/`consecutive_seasons_participated_gte`/
+> `season_first_and_last_week_active`/`season_final_week_active`)이 카탈로그에서 완전히
+> 삭제됐다(마이그레이션 35) — 현재 `condition_type`은 40종, 그중 `district_diversity_gte`/
+> `device_source_diversity_gte`/`level_gte` 등 일부만 여전히 스텁이다.
+
+구현 시 판정 규칙에 넣은 **문서화되지 않은 가정**(카탈로그/PRD에 명시 없음, 가장 단순한 해석으로 채움 — 추후 gamification-designer 확인 필요):
+
+| 조건 | 가정 |
+|---|---|
+| `pb_first_achieved`/`pb_time_lte` | 목표 거리의 98~115% 구간에 든 완주 세션만 해당 거리의 기록으로 인정(실외만, `activity_type <> 'indoor_run'`) |
+| `route_diversity_count_gte` | 시작점을 위경도 소수 3자리(~100m)로 반올림해 클러스터링(정식 클러스터링 아님) |
+| `loop_course_count_gte` | 출발-도착 직선거리 200m 이내 + 총 거리 1km 이상 |
+| `streak_weeks_gte` | KST ISO 주(월~일) 단위, 유예(freeze) 없음, "최장 기록"(daily 스트릭과 동일 철학 — 한 번 달성하면 이후 끊겨도 유지) |
+| `pace_negative_split_count_gte`/`pace_final_km_faster_pct_gte`/`pace_variance_lte` | `RunSample.cumulative_distance_meters`+`timestamp`로 1km 스플릿을 보간 없이 근사(`_run_km_split_seconds`) |
+| `calendar_date_match` | 음력 날짜(`chuseok`/`lunar_newyear`)는 미구현. 양력 고정일 + `birthday`만 구현 |
+
+
 
 ## 11. 비기능 요구사항 → 기술 목표치 매핑
 

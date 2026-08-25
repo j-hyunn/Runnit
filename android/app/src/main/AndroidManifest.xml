@@ -1,0 +1,94 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ── 위치 (features/tracking) ────────────────────────────────────
+         COARSE/FINE는 포그라운드 위치. BACKGROUND는 Android 10(API 29)+에서
+         분리된 별도 권한으로, GeolocatorRunTrackingService가 "앱 사용 중" 승인
+         이후에만 2단계로 요청한다. 거부돼도 포그라운드 트래킹은 계속된다. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+
+    <!-- 화면이 꺼진 상태에서 위치 콜백을 유지하려면 포그라운드 서비스가 필수다.
+         Android 14(API 34)부터는 서비스 타입별 권한을 따로 선언해야 한다. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <!-- geolocator의 ForegroundNotificationConfig가 띄우는 상시 알림용(API 33+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+
+    <!-- ── Health Connect (Garmin/Wear OS 심박) ────────────────────────
+         HealthWearableMetricsSource는 READ만 한다. 미설치 기기에서는
+         ensureAuthorized()가 false를 돌려주고 폰 단독 트래킹으로 폴백한다. -->
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE"/>
+
+    <!-- 위치 하드웨어가 없는 기기(태블릿 등)도 설치는 가능해야 한다. -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
+
+    <application
+        android:label="runnit"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- 카카오 OAuth 콜백 딥링크 복귀 (lib/core/auth/auth_config.dart 와 동일 스킴 유지) -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="io.runnit.app" android:host="login-callback"/>
+            </intent-filter>
+            <!-- Health Connect가 권한 화면에서 "이 앱이 왜 필요한지" 링크를 띄울 때
+                 호출하는 진입점. 없으면 일부 기기에서 권한 요청이 반려된다. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/>
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE"/>
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS"/>
+            </intent-filter>
+        </activity-alias>
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+    <!-- Required to query activities that can process text, see:
+         https://developer.android.com/training/package-visibility and
+         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Health Connect 설치 여부 조회. package visibility(API 30+) 때문에
+             선언하지 않으면 health 플러그인이 항상 "미설치"로 판단한다. -->
+        <package android:name="com.google.android.apps.healthdata"/>
+    </queries>
+</manifest>
