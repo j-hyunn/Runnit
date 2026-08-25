@@ -1,3 +1,16 @@
+> ## ✅ 구조는 채택됨 / ⚠️ §2.3 일부 폐기 (2026-08-26) — `_workspace/20260826_012000_architect_device-vendor-arbitration.md` 참조
+>
+> mobile-architect 중재 결과 **이 문서의 구조가 정본으로 채택됐다** — 러닝 단위 배열
+> `runs.device_vendors`, 토큰 5종, camelCase 라벨, DDL(§4), 클라이언트 모델(§5) 전부 유효하다.
+>
+> **폐기된 부분은 §2.3의 판정식 하나다.** "폰 단독 기록" = `device_vendors = '{phone}'`
+> (정확히 일치)는 채택되지 않았다. 정본은 **두 `condition_type` 모두 배열 겹침 `&&` 단일
+> 규칙**이며, `device_both_used`의 `phone` 원소도 `device_vendors && '{phone}'`으로 판정한다.
+> 같은 토큰이 조건 종류에 따라 다른 연산자를 뜻하게 두지 않기 위해서다. 이에 맞춰
+> `docs/badge-catalog.csv`의 `device_both_used` 설명문에서 "단독"을 제거했다(중재 문서 §3).
+>
+> §2.3이 gamification-designer 소관으로 남겨둔 `_or_` 파싱 문법은 확정돼 TRD §3.1.2에 있다.
+
 # 기기 벤더(Apple Watch / Garmin) 구분 설계 — 확정본
 
 **작성**: gps-tracking-engineer · 2026-08-26
