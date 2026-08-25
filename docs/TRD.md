@@ -2,8 +2,8 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.5 (초안) |
-| 작성일 | 2026-08-25 |
+| 문서 버전 | v0.7 (초안) |
+| 작성일 | 2026-08-26 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | Phase 0 초안 — 구현 착수 전 검토 필요 |
 | 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.3 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.1 |
@@ -16,6 +16,8 @@
 | v0.3 | 뱃지 판정 실제 구현 완료(§10.1) — `runs` 트리거 기반 `evaluate_badges`/`evaluate_badge_condition`, `condition_type` 44→40종 중 사실상 전량 판정 가능. 시즌 뱃지 인스턴스 발급을 실제로 구현(`{templateId}@{seasonId}`, `ensure_season_badge_instances()`, §3.6 상단 정정 노트). 티어 도달 시각 이력 테이블 `tier_change_history` 신규 추가. 2026-08-26 사용자 요청으로 `seasonCumulativeDistance`/`seasonFinisher` 카테고리와 소속 뱃지 9종 삭제(158→148 템플릿, 16→14 카테고리, `condition_type` 44→40종) |
 | v0.4 | 뱃지 백로그 설계 결정 7건 반영(`_workspace/20260826_000340_gamification_badge-backlog-decisions.md`) — **XP/레벨 공식 확정**(§3.8 신설, `total_points`→`total_xp` 개명·만렙 60), **주 단위 스트릭 + 1회 유예 규칙 확정**, `season_weekly_rank_lte`의 `bucket` 도메인 확정, device source 토큰 7종·OR 표현식 문법 확정, §10.1의 미문서화 가정표를 §10.2 정본 규칙으로 교체, 음력 룩업 테이블 채택. `district_diversity_gte`(`route_district_3`/`route_district_10`) 사용자 요청으로 삭제(148→146 템플릿, `condition_type` 40→39종) |
 | v0.5 | **기기 벤더 모델 중재 확정**(`_workspace/20260826_012000_architect_device-vendor-arbitration.md`) — 병렬 워크트리의 두 상충 설계(배열 `runs.device_vendors` vs 스칼라 `runs.device_source`) 중 **배열 안 채택**, 스칼라 안의 OR 문법(`_or_`)·판정 대상 규칙은 흡수. 토큰 **5종 확정**(`watchWearOS`/`external`/`manual` 불채택). §3.1.2 뱃지 매칭 시맨틱 신설(배열 겹침 `&&` 단일 규칙), §4.0 벤더 DDL 신설, §3.1 `RunSampleSource` 초안 코드블록을 구현값(`phone`/`watch`/`external`)으로 정정, §4.1 매핑표의 잘못된 `watchApple → watch_apple` 행 교체, §14 #9 해소·#10 신설. `device_both_used` 설명문에서 "단독" 제거 |
+| v0.6 | **뱃지 백로그 7건 실제 구현·적용 완료**(마이그레이션 36~41, Supabase `xwtbwexcofcgmbvktwdo`). §3.8·§10.2가 설계 확정 문서였던 것을 라이브 스키마 사실로 갱신 — `device_vendor` enum + `runs.device_vendors`(36), `district_diversity_gte` 삭제 + `condition_type` CHECK 39종·`category` CHECK 14종·`bucket` 도메인 CHECK(37), `lunar_holidays` 테이블 2026~2040(38), `total_points`→`total_xp`/`awarded_points`→`awarded_xp` 개명 + XP 4원천 + 60레벨 정수 배열 + 주간 스트릭 4컬럼 + XP 갱신 트리거 2개 + `evaluate_badges` 3패스 수렴 루프(39), `leaderboard_entries.reached_at` + PRD §8.2 3단계 타이브레이크(40), 판정 스텁 5종 전량 해제 + §5 임계값 정본화 + 스플릿 선형 보간(41). **`evaluate_badge_condition`의 `raise notice … 보류` 스텁이 0개가 됐다.** §4.2 신설(음력 룩업), §4.3 신설(랭킹 캐시 실제 테이블명) |
+| v0.7 | **거리 허용오차 통일**(마이그레이션 42) — `session_first_long_distance`(고정 98%)와 `session_distance_gte` 5종(허용오차 없음)을 `pb_first_achieved`/`pb_time_lte`와 동일한 `목표 − min(목표×2%, 300m)`로 통일. gamification-designer 확인 완료(§14 #13·#15 해소). 완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 즉시 채움 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
 
@@ -422,7 +424,7 @@ total_xp = XP_run + XP_streak + XP_badge + XP_tier
 
 | 원천 | 규칙 |
 |---|---|
-| **XP_run** | 완주·비플래그·≥500m 세션마다. **실외**: `min(20 + floor(m/100) + floor(floor(m/100)×pace_mult) + min(floor(max(elev,0)/10),100), 1000)`, `pace_mult` = 0.30(≤300s/km) / 0.20(≤360) / 0.10(≤420) / 0(그 외·거리<2km). **실내·수동**: `min(20 + floor(m/100), 300)` — 보너스 없음(검증 불가 입력의 어뷰징 차단) |
+| **XP_run** | `compute_run_xp(status, is_flagged, distance_m, moving_s, elev_gain_m, **activity_type**)`. 완주·비플래그·≥500m 세션마다. **실외**: `min(20 + floor(m/100) + floor(floor(m/100)×pace_mult) + min(floor(max(elev,0)/10),100), 1000)`, `pace_mult` = 0.30(≤300s/km) / 0.20(≤360) / 0.10(≤420) / 0(그 외·거리<2km). **실내·수동**: `min(20 + floor(m/100), 300)` — 보너스 없음(검증 불가 입력의 어뷰징 차단) |
 | **XP_streak** | §10.2 활동 주 1개마다 `30 × min(n, 5)` (n = 스트릭 내 순번). **유예로 메운 주는 0** |
 | **XP_badge** | `verified AND NOT revoked` 뱃지의 `badge_grade`별: bronze 100 / silver 250 / gold 600 / platinum 1,500 / diamond 4,000 / special 200. **⚠️ `category='level'` 뱃지 9종은 0** (XP↔레벨 순환 차단) |
 | **XP_tier** | `tier_change_history`의 distinct `(season_id, tier)`마다: silver 300 / gold 800 / platinum 2,000 (bronze 0). 시즌마다 재지급 |
@@ -443,7 +445,9 @@ L41..L50  167303, 176643, 186260, 196156, 206332, 216790, 227530, 238554, 249863
 L51..L60  273341, 285513, 297974, 310726, 323770, 337108, 350739, 364666, 378889, 393410
 ```
 
-`profiles.level` CHECK를 `between 1 and 60`으로. `LevelCurve.maxLevel = 60`
+**구현(2026-08-26)**: 서버는 `public.xp_level_thresholds() returns integer[]`(immutable)에 60개 정수를 담고, `compute_level(p_total_xp)`이 `generate_subscripts` 로 `max{i : thresholds[i] <= xp}` 를 찾는다 — **정수 비교만** 하므로 부동소수 경계 버그가 원천적으로 없다. 클라이언트는 `LevelCurve.thresholds`(같은 60개 정수) + 이진 탐색이며, `test/gamification/level_curve_test.dart` 가 L=2..60 전수 경계를 잠근다.
+
+`profiles.level` CHECK를 `between 1 and 60`으로(제약명 `profiles_level_range`, 구 `profiles_level_positive` 대체). `LevelCurve.maxLevel = 60`
 (현행 100은 구 포인트 곡선의 잔재이고, 카탈로그 `lvl_60` 표시명이 이미 "만렙"이다).
 
 #### 3.8.4 저장·갱신 (뷰가 아니라 저장 컬럼)
@@ -453,10 +457,23 @@ L51..L60  273341, 285513, 297974, 310726, 323770, 337108, 350739, 364666, 378889
 ① `level_gte` 판정이 프로필 1행 읽기로 끝나야 한다(뱃지 146행 루프) ② GM-04의 "레벨업 시 알림"이
 old→new 전이 감지를 요구한다 ③ 원천이 3개 테이블에 흩어져 있다.
 
-호출 트리거 3곳: 기존 `runs` INSERT/UPDATE/DELETE, **신규** `user_badges` AFTER INSERT/UPDATE,
-**신규** `tier_change_history` AFTER INSERT.
-재진입은 레벨 뱃지 XP=0 덕분에 2패스에서 수렴한다 — `evaluate_badges`를 "새 뱃지가 생겼으면
-다시 한 번, 최대 3회" 루프로 감싸고 `pg_trigger_depth()` 가드를 둘 것.
+호출 트리거 3곳(**전부 적용됨 — 마이그레이션 39**):
+
+| 트리거 | 테이블 | 담당 XP |
+|---|---|---|
+| `runs_01_recompute_stats` (기존) | `runs` INSERT/UPDATE/DELETE | XP-1, XP-2 |
+| `user_badges_02_recompute_xp` (신규) | `user_badges` AFTER INSERT/DELETE/UPDATE OF (verified, revoked) | XP-3 |
+| `tier_change_history_01_recompute_xp` (신규) | `tier_change_history` AFTER INSERT | XP-4 |
+
+뒤의 둘은 공통 함수 `trg_recompute_xp_source()` 를 쓰며 `pg_trigger_depth() > 8` 가드가 있다.
+
+**재진입 수렴**: 레벨 뱃지 XP=0 덕분에 2패스에서 수렴한다. `evaluate_badges` 를 "새 뱃지가 생겼으면
+다시 한 번, 최대 3회" 루프로 감쌌고, 패스 끝에서만 `recompute_profile_stats` 를 한 번 호출한다.
+그 사이 `user_badges` 트리거는 세션 변수 `runnit.badge_eval='on'` 을 보고 스킵한다 —
+켜둔 채로 두면 한 번의 평가에서 지급된 뱃지 N개마다 전체 재집계가 N번 돌기 때문이다(결과는 동일, 비용만 N배).
+
+⚠️ **`challenges.reward_points` 는 `total_xp` 에 들어가지 않는다.** XP 4원천에 챌린지가 없고
+`reward_points` 는 Phase 4 포인트 이름이다 — 구 `recompute_profile_stats` 가 이 항을 더하던 것을 39번에서 제거했다.
 
 ---
 
@@ -583,7 +600,7 @@ create table public.user_badges (
 
 > ⚠️ 위 DDL은 Phase 0 초안이고 **라이브 스키마의 테이블명은 `public.runs`**(마이그레이션 01)다. 아래 §4.0 이후의 추가 DDL은 라이브 이름을 기준으로 적는다.
 
-#### 4.0 기기 벤더 (§3.1.1 확정 — backend-engineer 적용 대상)
+#### 4.0 기기 벤더 (§3.1.1 확정 — ✅ **적용 완료**, 마이그레이션 36)
 
 ```sql
 -- ─────────────────────────────────────────────
@@ -617,6 +634,57 @@ update public.runs
 
 - **RLS**: `runs`의 기존 정책을 그대로 상속한다. 새 정책 불필요.
 - **쓰기 주체**: 클라이언트가 `RunRecord.toJson()`으로 함께 올린다(`_serverOwnedKeys` 아님). P1에서 워크아웃 임포트가 서버 경유로 바뀌면 그때 서버가 재확정한다.
+- **판정 헬퍼**: `_device_vendor_tokens(text) returns device_vendor[]` 가 `_or_` 표현식을 파싱한다. 문법 오류·미지 토큰이면 `null` + `raise notice` 를 내고 해당 뱃지는 `false` — 조용히 무시하지 않는다(§3.1.2).
+
+#### 4.2 음력 명절 룩업 (✅ **적용 완료**, 마이그레이션 38)
+
+`calendar_date_match` 의 `date='chuseok'` / `'lunar_newyear'` 판정 원천. **음력 변환 함수를 구현하지 않는다** —
+정확한 한국 음력은 한국천문연구원의 삭(朔) 계산을 **동경 135°E(KST)** 기준으로 따라야 하고, 중국 음력(120°E)과
+날짜가 갈리는 해가 실제로 있다(삭이 KST 자정 직후에 들면 한국은 하루 뒤가 초하루다).
+
+```sql
+create table public.lunar_holidays (
+  holiday_key text    not null,   -- 'lunar_newyear' | 'chuseok'
+  year        integer not null,
+  solar_date  date    not null,   -- KST 양력 날짜
+  primary key (holiday_key, year),
+  check (holiday_key in ('lunar_newyear','chuseok')),
+  check (extract(year from solar_date)::integer = year)
+);
+```
+
+- `holiday_key` 는 `badges.condition ->> 'date'` 값과 **같은 문자열**이다 — 매핑 계층을 두지 않는다.
+- **RLS**: `anon`/`authenticated` SELECT 허용(공개 상수), 쓰기 정책 없음 + write 권한 revoke.
+- 2026~2040 15년치(30행) 시드 완료. **미등재 연도는 `false` + `raise notice`** — 조용히 넘어가지 않는다.
+- ⚠️ 회귀 테스트 대상: **2027 설날 한국 2/7(중국 2/6)**, **2028 설날 한국 1/27(중국 1/26)**.
+  중국 음력 라이브러리를 참조 구현으로 쓰면 이 두 해가 하루 틀린다.
+- §6.4 연휴 3일(전날·당일·다음날) 확대는 **채택하지 않았다** — 같은 카테고리 다른 8종이 전부 당일 기준이라
+  설날·추석만 3일로 하면 규칙이 불균질해진다. 넓히려면 `solar_date` 를 `start_date`/`end_date` 로 확장해
+  **데이터만** 고치면 되고 판정식은 그대로다.
+
+#### 4.3 주간 랭킹 캐시의 실제 테이블명 (⚠️ 문서 ↔ 라이브 스키마)
+
+위 §4 초안 DDL과 여러 설계 문서가 이 캐시를 **`weekly_ranking_cache`** 라고 부르지만,
+**라이브 스키마의 실제 이름은 `public.leaderboard_entries`**(마이그레이션 03)이고 §2.5가 요구한 컬럼이
+이미 전부 들어 있다. 새 테이블을 만들지 않고 이 테이블을 쓴다 — 마이그레이션 32/33의
+`season_weekly_rank_*` 판정도 이미 이 테이블을 읽고 있다.
+
+| 설계 문서의 이름 | 라이브 컬럼 |
+|---|---|
+| `week_id` | `period_start` (+ `period='weekly'`) |
+| `season_id` | `period_start` 이 속한 시즌(`season_id_at()`) |
+| `weekly_distance_m` | `score` (`metric='distance'`) |
+| `weekly_run_count` | `run_count` |
+| `weekly_moving_sec` | `total_moving_seconds` |
+| `rank` | `rank` — **배치가 확정해 기록**하며 조회 시 재계산하지 않는다 |
+| `tier` | `tier` (주 종료 시점 확정 티어) |
+| `N`(모집단) | `participant_count` |
+| `reached_at` | **`reached_at` — 마이그레이션 40에서 신설.** 유일하게 없던 컬럼이고, 이것 없이는 PRD §8.2 ②를 구현할 수 없었다 |
+
+**순위 정렬(마이그레이션 40, `metric='distance'` 한정)** — PRD §8.2 3단계 + 결정성 폴백:
+`score desc → run_count asc → reached_at asc → total_moving_seconds asc → user_id asc`.
+공동 순위를 만들지 않는다. `duration`/`run_count` 지표는 §8.2의 적용 대상이 아니므로 기존 `tie_break_value` 순서를 유지한다.
+`reached_at` = 그 기간의 마지막 집계 대상 러닝의 `started_at`(= 누적 거리가 최종값에 도달하는 시점).
 
 ### 4.1 camelCase ↔ snake_case 매핑
 
@@ -629,9 +697,17 @@ update public.runs
 | `RunSample.source` (`RunSampleSource`) | `run_samples.source` / `runs.sources[]` | `public.run_sample_source` | `phone` / `watch` / `external` — snake_case 규약 대상이 아닌 단어들이라 변환 없음 |
 | `RunRecord.deviceVendors` (`List<DeviceVendor>`) | `runs.device_vendors` | `public.device_vendor[]` | ⚠️ **값 문자열은 camelCase 그대로**(`watchApple`). 프로젝트 유일한 규약 예외 — §3.1.1 |
 | `UserSeasonTier.cumulativeDistanceMeters` | `user_season_tier.cumulative_distance_m` | numeric | |
-| `RankingEntry.weeklyDistanceMeters` | `weekly_ranking_cache.weekly_distance_m` | numeric | |
-| `RankingEntry.tierParticipantCount` | `weekly_ranking_cache.tier_participant_count` | integer | |
+| `RankingEntry.score` | `leaderboard_entries.score` | numeric | 단위는 `metric`에 종속(distance→미터). ⚠️ 정본 테이블명은 `leaderboard_entries`다 — `weekly_ranking_cache`는 초기 설계 문서에만 있던 이름이고 실제로 생성된 적이 없다(§4.3) |
+| `RankingEntry.participantCount` | `leaderboard_entries.participant_count` | integer nullable | |
 | `UserProfile.totalDistanceMeters` | `profiles.total_distance_m` | numeric | 트리거 갱신 캐시 |
+| `AppUser.totalXp` | `profiles.total_xp` | integer | ⚠️ 구 `totalPoints`/`total_points` 개명(2026-08-26). **PRD §5.6 Phase 4 포인트와 다른 개념** |
+| `AppUser.level` | `profiles.level` | integer | CHECK `between 1 and 60` |
+| `RunRecord.awardedXp` | `runs.awarded_xp` | integer nullable | ⚠️ 구 `awardedPoints`/`awarded_points` 개명. 서버 전용 쓰기(`_serverOwnedKeys`) |
+| *(대응 필드 없음)* | `profiles.current_streak_weeks` | integer | 리플레이 결과 캐시 |
+| *(대응 필드 없음)* | `profiles.longest_streak_weeks` | integer | 리플레이 결과 캐시 · **`streak_weeks_gte` 판정의 유일한 소스** |
+| *(대응 필드 없음)* | `profiles.streak_freeze_credits` | smallint | 리플레이 파생값 캐시(표시용, 0 또는 1) |
+| *(대응 필드 없음)* | `profiles.streak_last_active_week` | text | KST ISO 주 키 `YYYY-Www`. 알림 판단용 |
+| *(대응 필드 없음)* | `leaderboard_entries.reached_at` | timestamptz | PRD §8.2 ② 타이브레이크 근거(§4.3) |
 | `Badge.conditionType` | `badges.condition_type` | text (check, 39종) | 판정 함수 디스패치 키 |
 | `Badge.condition` | `badges.condition` | jsonb | 키 집합은 `condition_type`마다 다름 |
 | `Badge.badgeGrade` | `badges.badge_grade` | text (check, 6종) | 표시용 등급 — 경쟁 `Tier`와 무관 |
@@ -829,6 +905,12 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 44개 `condition_type` 중 21종을 이번에 구현했고, 23종(레벨/시즌 19종/역지오코딩/기기판별 2종)은
 선행 의존성 미해결로 `false` 스텁을 유지한다. 상세는 `_workspace/{날짜}_backend_badge-evaluation-logic.md` 참조.
 
+> ✅ **2026-08-26 완료(마이그레이션 41)**: **`evaluate_badge_condition` 의 `raise notice … 보류` 스텁이 0개가 됐다.**
+> 해제된 5종 — `level_gte`(→ `profiles.level`, 39번), `device_source_count_gte`/`device_source_diversity_gte`
+> (→ `runs.device_vendors` 배열 겹침, 36번), `calendar_date_match` 음력 2건(→ `lunar_holidays`, 38번).
+> `district_diversity_gte` 는 분기 자체를 삭제했다(37번에서 뱃지 2종·CHECK 제거).
+> 현재 `condition_type` **39종 전량이 실제 판정**이며, `false` 가 나오는 경우는 스텁이 아니라 조건 미충족이다.
+
 > **이후 진행 상황(2026-08-25~26)**: 시즌 조건 19종은 이후 라운드(마이그레이션 31~34)에서
 > 전부 실제 판정 로직으로 교체됐다(§3.6 상단 정정 노트 참고). 2026-08-26에는 사용자 요청으로
 > `seasonCumulativeDistance`/`seasonFinisher` 카테고리와 그 조건 타입 4종
@@ -848,6 +930,8 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 |---|---|
 | `pb_first_achieved` | 세션 거리 ≥ `목표 − min(목표×2%, 300m)`. **상한 없음**. 실외·완주·비플래그만 ⚠️ |
 | `pb_time_lte` | 위 거리 조건 + 기록 시간: 거리가 목표의 102% 이하면 `moving_seconds`, 초과하면 **GPS 샘플 선형 보간으로 목표 거리 통과 시각**. 보간 불가(샘플 없음)면 해당 거리 PB로 인정하지 않는다. 거리 비례 환산 금지 ⚠️ |
+| `season_first_long_distance` | **`pb_first_achieved`와 동일한 거리 허용오차** `목표 − min(목표×2%, 300m)`(고정 98% 폐기, 하프 기준 20,678m → 20,800m). 같은 "목표 거리 완주" 판정에 두 기준을 두지 않는다. 대상 필터(실외·완주·비플래그·시즌 범위)는 유지. ✅ 적용됨(마이그레이션 42) |
+| `session_distance_gte` | 위와 동일한 이유로 동일 허용오차 적용(고정 허용오차 없음 → `목표 − min(목표×2%, 300m)`). 대상 필터(완주·비플래그)는 유지. ✅ 적용됨(마이그레이션 42) |
 | `route_diversity_count_gte` | 시작점 **반경 300m 그리디 클러스터링**. `started_at` 오름차순 처리, 클러스터 대표점(anchor) 갱신 없음 → 결정적 ⚠️ |
 | `loop_course_count_gte` | 출발-도착 haversine **≤150m** + 총 거리 **≥2.0km** + GPS 샘플 ≥10개 ⚠️ |
 | `streak_weeks_gte` | KST 월~일 주. **활동 주 = 완주 1건 이상 AND 주 합산 거리 ≥1.0km**(실내·수동 포함). **1회 유예 크레딧 자동 소모**, 유예 후 4주 연속 활동 시 회복, 스트릭 종료 시 크레딧 리셋. 유예 주는 스트릭 카운트·XP 모두 0. 크레딧은 저장 상태가 아니라 가입 주부터의 **리플레이 파생값**. 판정 대상은 `longest_streak_weeks` ⚠️ |
@@ -859,6 +943,21 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 | `season_weekly_rank_lte` | `bucket ∈ {top1, top10, top10pct}` 3종 확정. 모집단 = 주 종료 시점 해당 티어 + 주간 거리>0. 순위는 PRD §8.2 3단계 타이브레이크 + `user_id` 최종 폴백으로 **고유 순위**. `top1`은 N≥10, `top10`/`top10pct`는 N≥20일 때만 발급 |
 | `device_source_count_gte` / `device_source_diversity_gte` | **정본은 §3.1.2**(중재 결과 — 스칼라 `runs.device_source` 안은 폐기). `runs.device_vendors`(`device_vendor[]`) 배열 겹침 `&&` 단일 규칙. 토큰 5종 `phone`/`watchApple`/`watchGarmin`/`watchOther`/`unknown`. OR 구분자 **`_or_`**, `sources` 배열 원소 간은 **AND**. 대상은 완주·비플래그 세션 |
 | `level_gte` | §3.7 참조 |
+
+> ✅ **위 표 전체가 2026-08-26 마이그레이션 41 로 구현·적용됐다.** 관련 헬퍼 함수:
+> `_run_time_at_distance`(선형 보간) / `_run_km_split_seconds`(보간 기반, 완주된 정수 km만 방출) /
+> `_run_negative_split(samples, distance_m)` / `_run_final_km_faster_pct(samples, pct, distance_m)` /
+> `_run_pace_variance_pct`(스플릿 3개 미만이면 null) / `_route_cluster_count(user_id)`(300m 그리디) /
+> `_pb_best_seconds(user_id, target_km)` / `_device_vendor_tokens(text)`.
+>
+> **구현 노트 — `_route_cluster_count` 의 "첫 매칭에서 멈춤"**: 정본은 "가장 가까운 클러스터에 편입"이지만
+> anchor 를 갱신하지 않으므로 어느 클러스터에 넣든 **클러스터 개수는 동일**하고, 이 함수의 반환값은
+> 개수뿐이라 결과가 정확히 같다. 최근접 탐색을 생략해 상수만 줄인 것이다.
+>
+> **구현 노트 — 스트릭 리플레이 시작 주**: 정본은 "가입 주"지만 서버 `_weekly_streak_state` 와
+> 클라이언트 `GamificationStats.computeWeeklyStreak` 모두 `least(가입 주, 첫 활동 주)` 로 감쌌다.
+> 프로덕션 불변식(가입 ≤ 첫 러닝) 아래에서는 결과가 정본과 동일하고, 시드/임포트 데이터처럼 러닝이
+> 가입보다 앞서는 경우에 러닝을 리플레이에서 잃지 않는다.
 
 **공통**: 모든 날짜·시간대 판정은 KST(UTC+9 고정) · 러닝 귀속은 `started_at` 기준.
 **임계값이 조여진 항목이라도 이미 지급된 뱃지는 회수하지 않는다**(PRD §8.1) —
@@ -917,4 +1016,11 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 7 | 포인트 이코노미(Phase 4) 테이블 설계 | Phase 4 착수 전 — PRD §10.2 |
 | 8 | Apple Watch 벤더 판별의 기기명 의존(§8.4.1) — `HKDevice`/`Metadata.device`를 얻는 얇은 platform channel이 필요한지 | P1 웨어러블 실기기 테스트에서 오분류가 실제로 확인되면 |
 | ~~9~~ | ~~`device_source_diversity_gte`의 OR 표현식 파싱 규약~~ → **해소(2026-08-26)**. 문법·매칭 시맨틱 모두 §3.1.2에 정본화 | — |
-| 10 | `runs.device_vendors` 마이그레이션(§4.0) 미적용 — DDL은 확정됐고 backend-engineer가 작성만 하면 된다. 그때까지 `device_*` 뱃지 5종은 판정 오류가 아니라 정상적으로 `false` | Phase 1 웨어러블 착수 전 |
+| ~~10~~ | ~~`runs.device_vendors` 마이그레이션(§4.0) 미적용~~ → **해소(2026-08-26, 마이그레이션 36)**. 컬럼·GIN 인덱스·백필·판정 로직 전부 적용됐다. 뱃지 5종은 이제 판정 가능하며, 실제 지급은 P1 웨어러블 연동으로 `device_vendors` 에 값이 실리기 시작한 뒤부터다 | — |
+| 11 | **`season_weekly_rank_lte` 최소 모집단(top1 N≥10 / 나머지 N≥20)이 현재 시드 규모에서 절대 충족되지 않는다.** 티어별 모집단이 1~4명이라 이 뱃지 12종은 실사용자가 붙기 전까지 아무도 못 받는다. 판정 로직은 정확하지만 **아직 실데이터로 검증되지 않았다** | 베타 사용자 20명 이상 확보 시 |
+| 12 | **주간 랭킹 확정 배치가 아직 `pg_cron` 에 없다.** 정본(§2.2)은 "매주 월요일 KST 00:10(`10 15 * * 0` UTC)"이고, 현재는 마이그레이션 16의 기존 `refresh_all_leaderboards` 주기 스케줄에 의존한다. 주 경계 직후 확정 시점이 스펙과 다르다 | Phase 2 랭킹 모듈 |
+| ~~13~~ | ~~`season_first_long_distance` 의 거리 허용오차가 PB 조건과 다르다~~ → **해소(2026-08-26, 마이그레이션 42)**. `목표 − min(목표×2%, 300m)` 으로 통일(§10.2 표) — 같은 "목표 거리 완주" 판정이므로 별도 기준을 둘 이유가 없다 | — |
+| ~~15~~ | ~~`session_distance_gte` 5종은 허용오차 없이 정확히 `≥ 목표×1000m`~~ → **해소(2026-08-26, 마이그레이션 42)**. 동일 허용오차 `목표 − min(목표×2%, 300m)`로 통일(완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 채움) | — |
+| 14 | **`tier_change_history` 가 0행이라 XP-4(티어 도달 XP)가 아무에게도 적립되지 않고 있다.** 마이그레이션 34가 "상승 이벤트만 기록"으로 정정하면서 백필을 취소했고(소급 복원 불가는 의도된 결정), 기존 유저는 이번 시즌에 강등 없이는 다시 상승할 기회가 없다. 다음 시즌부터 정상 적립된다 — 그때까지 `total_xp` 는 XP-4 만큼 과소 집계된 상태다 | 2026-Q4 시즌 시작 시 자연 해소 |
+| 16 | **`session_distance_gte`는 실내 러닝을 제외하지 않는데 `pb_first_achieved`/`season_first_long_distance`는 제외한다.** 마이그레이션 42가 세 조건을 "같은 목표 거리 판정"으로 선언해 허용오차만 통일했고 실내 취급 차이는 그대로 남았다 — 트레드밀 42.2km는 `session_dist_full`(풀런)은 받고 `pb_first_full`/`season_first_long_distance`는 못 받는다. PRD §8.3(실내 기록 처리)만으로는 이 셋 중 무엇이 맞는 기준인지 단정할 수 없다 | gamification-designer 확인 대상 |
+| 17 | **클라이언트 진행률 바가 마이그레이션 42의 새 허용오차(§10.2)를 반영하지 않는다.** `badge_condition.dart`의 `sessionDistanceGte` 진행률 계산이 여전히 `distance/목표`(정확 비율)라, 텐런을 9.8km(서버 인정 기준)에서 뛰어도 바는 98.00%로 멈춘다. 실제 지급 시점에 `isEarned`가 `ratio: 1.0`으로 스냅해 자가 치유되므로 사용자에게 "받았는데 바가 98%"로 잠깐 보이는 정도이며, 클라이언트가 값을 내는 조건이 이 하나뿐이라 영향 범위는 좁다 | 다음 gamification-designer/flutter-ui-designer 라운드에서 진행률 계산에 동일 허용오차 반영 |

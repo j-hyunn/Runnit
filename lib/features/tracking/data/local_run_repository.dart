@@ -23,7 +23,7 @@ import 'local_run_database.dart';
 /// 그래서 `upsert`를 쓴다.
 ///
 /// ## 서버가 덮어쓰는 값은 보내지 않는다
-/// `avg_pace_sec_per_km`(항상 재계산), `awarded_points`(서버 산정),
+/// `avg_pace_sec_per_km`(항상 재계산), `awarded_xp`(서버 산정),
 /// `created_at`/`updated_at`(트리거)은 payload에서 제거한다. `runs_guard`
 /// 트리거가 어차피 되돌리지만, 애초에 싣지 않는 편이 의도가 분명하다
 /// (`supabase_user_repository.dart`의 `_editablePatch`와 같은 방침).
@@ -39,7 +39,7 @@ class LocalRunRepository implements RunRepository {
   /// 서버가 소유하는 컬럼. 업로드 payload에서 제거한다.
   static const Set<String> _serverOwnedKeys = <String>{
     'avg_pace_sec_per_km',
-    'awarded_points',
+    'awarded_xp',
     'created_at',
     'updated_at',
   };

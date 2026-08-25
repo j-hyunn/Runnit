@@ -111,14 +111,17 @@ abstract class RunRecord with _$RunRecord {
     ///
     /// ## 뱃지 판정에서의 사용 (device_source_count_gte / _diversity_gte)
     /// - "애플워치로 누적 50회": `deviceVendors`가 `watchApple`을 **포함**하는 러닝 수
-    /// - "폰 단독 기록": `deviceVendors`가 **정확히** `[phone]` (하이브리드 세션 제외)
+    /// - "올라운더"(device_both_used): `phone`을 포함한 러닝과 `watchApple`/`watchGarmin`을
+    ///   포함한 러닝이 각각 1건 이상. **같은 러닝이 둘 다 충족해도 인정된다** —
+    ///   매칭 규칙은 배열 겹침 하나뿐이고 "폰 단독"이라는 두 번째 시맨틱은 없다
+    ///   (TRD §3.1.2 / 2026-08-26 기기 벤더 중재)
     ///
     /// 값 문자열은 뱃지 카탈로그 토큰과 1:1로 같다 — 매핑 테이블이 없다.
     @Default(<DeviceVendor>[]) List<DeviceVendor> deviceVendors,
 
-    /// 서버가 부여한 게이미피케이션 포인트. 클라이언트 계산값은 신뢰하지 않는다
-    /// (서버 재검증 후 확정 — gamification-designer/backend-engineer 합의사항).
-    int? awardedPoints,
+    /// 서버가 산정한 이 러닝의 XP. 클라이언트 계산값은 신뢰하지 않는다
+    /// (서버 재검증 후 확정 — `compute_run_xp()`). DB 컬럼은 `runs.awarded_xp`.
+    int? awardedXp,
 
     /// 레코드 생성/수정 시각(UTC). 서버가 채운다.
     DateTime? createdAt,
