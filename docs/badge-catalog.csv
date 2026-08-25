@@ -79,8 +79,6 @@ route_diverse_25,지도제작자,새로운 경로 25곳 탐험,경로탐험,perm
 route_elev_500,언덕러너,누적 고도상승 500m 달성,경로탐험,permanent,cumulative,elevation_gain_cumulative_gte,"{""meters"": 500}",bronze,평생 누적 고도상승(elevation gain)이 500m를 넘으면 획득
 route_elev_2000,클라이머,누적 고도상승 2000m 달성,경로탐험,permanent,cumulative,elevation_gain_cumulative_gte,"{""meters"": 2000}",silver,평생 누적 고도상승(elevation gain)이 2000m를 넘으면 획득
 route_elev_5000,마운티니어,누적 고도상승 5000m 달성,경로탐험,permanent,cumulative,elevation_gain_cumulative_gte,"{""meters"": 5000}",platinum,평생 누적 고도상승(elevation gain)이 5000m를 넘으면 획득
-route_district_3,동네탐방,3개 지역에서 러닝,경로탐험,permanent,cumulative,district_diversity_gte,"{""distinctDistricts"": 3}",bronze,서로 다른 행정구역(구/동)에서 러닝한 곳이 3곳 이상일 때 획득
-route_district_10,구역정복,10개 지역에서 러닝,경로탐험,permanent,cumulative,district_diversity_gte,"{""distinctDistricts"": 10}",gold,서로 다른 행정구역(구/동)에서 러닝한 곳이 10곳 이상일 때 획득
 route_loop_10,루프마스터,루프 코스 10회 완주,경로탐험,permanent,cumulative,loop_course_count_gte,"{""count"": 10}",silver,출발지와 도착지가 같은 순환(루프) 코스 러닝이 누적 10회일 때 획득
 special_birthday,생일런,생일런,특별한날,permanent,session,calendar_date_match,"{""type"": ""birthday""}",special,내 생일에 러닝을 완료하면 획득
 special_newyear,새해런,새해 첫날 러닝,특별한날,permanent,session,calendar_date_match,"{""date"": ""01-01""}",special,1월 1일에 러닝을 완료하면 획득
