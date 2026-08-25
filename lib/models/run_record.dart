@@ -94,6 +94,28 @@ abstract class RunRecord with _$RunRecord {
     /// 이 세션에 기여한 소스들. 폰+워치 동시 기록 시 둘 다 포함.
     @Default(<RunSampleSource>[]) List<RunSampleSource> sources,
 
+    /// 이 세션에 기여한 **기기 벤더** 목록. [sources]와 직교하는 축이다
+    /// (`enums.dart`의 [DeviceVendor] 주석 참조 — "언제/어떻게" vs "어느 기기").
+    ///
+    /// | 상황 | 값 |
+    /// |---|---|
+    /// | 폰 단독 러닝 (P0 기본) | `[phone]` |
+    /// | 폰 GPS + Apple Watch 심박 | `[phone, watchApple]` |
+    /// | 워치 워크아웃 통째 임포트 (P1, WR-01~03) | `[watchApple]` / `[watchGarmin]` |
+    /// | 수동 입력·기기 정보 없음 | `[]` — 빈 배열은 `[phone]`과 **다른 뜻**이다 |
+    ///
+    /// ## 왜 스칼라가 아니라 배열인가
+    /// 한 세션에 폰(좌표)과 워치(심박)가 **동시에** 기여하는 것이 P1의 기본
+    /// 경로다. 스칼라 `deviceVendor` 하나로는 그 세션을 폰 기록이라 부를지
+    /// 워치 기록이라 부를지 손실 없이 표현할 수 없다.
+    ///
+    /// ## 뱃지 판정에서의 사용 (device_source_count_gte / _diversity_gte)
+    /// - "애플워치로 누적 50회": `deviceVendors`가 `watchApple`을 **포함**하는 러닝 수
+    /// - "폰 단독 기록": `deviceVendors`가 **정확히** `[phone]` (하이브리드 세션 제외)
+    ///
+    /// 값 문자열은 뱃지 카탈로그 토큰과 1:1로 같다 — 매핑 테이블이 없다.
+    @Default(<DeviceVendor>[]) List<DeviceVendor> deviceVendors,
+
     /// 서버가 부여한 게이미피케이션 포인트. 클라이언트 계산값은 신뢰하지 않는다
     /// (서버 재검증 후 확정 — gamification-designer/backend-engineer 합의사항).
     int? awardedPoints,

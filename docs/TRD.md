@@ -72,8 +72,29 @@ class RunSample with _$RunSample {
 }
 ```
 
-- `source`는 ARCHITECTURE §6.2 근거로 `phone`/`watchApple`/`watchGarmin`/`watchOther` 4갈래로 세분화한다 — 뱃지·통계에서 기기별 구분이 필요해질 가능성(예: "애플워치로 완주" 뱃지)에 대비하되, HealthKit/Health Connect 경로 자체는 공통이므로 소스 값만 다르게 태깅한다.
 - `accuracy`는 GPS 스무딩(§8.2) 판정에 쓰인다.
+
+#### 3.1.1 소스 축과 벤더 축의 분리 (2026-08-26 확정 · 구현 반영됨)
+
+위 초안은 `source` **한 축**에 "어떤 경로로 들어왔나"와 "어느 기기가 만들었나"를 함께 담았다. 구현하면서 **직교하는 두 축으로 분리**했다.
+
+| 축 | 타입 | 답하는 질문 | 값 | 위치 |
+|---|---|---|---|---|
+| 소스 | `RunSampleSource` / pg `run_sample_source` | 어떤 경로로 **언제** 들어왔나 | `phone` / `watch`(실시간) / `external`(사후 동기화) | 샘플 단위 + `runs.sources` |
+| 벤더 | `DeviceVendor` / pg `device_vendor` | **어느 기기**가 만들었나 | `phone` / `watchApple` / `watchGarmin` / `watchOther` / `unknown` | **러닝 단위** `runs.device_vendors` |
+
+**분리 사유**
+- 한 축으로 접으면 `watchGarminLive` × `watchGarminImported` 식으로 값이 곱해진다. Garmin은 항상 동기화 경유(§8.4)라 벤더와 실시간성의 상관이 높지만 **동치는 아니다** — Apple Watch 워크아웃도 나중에 HealthKit에서 통째로 임포트하면 `external`이 된다.
+- 실시간성 축은 이미 UI 계약("워치 데이터는 동기화 후 반영됩니다" 배너)이 소비 중이라 벤더로 덮어쓸 수 없다.
+
+**벤더를 샘플이 아니라 러닝 단위에 두는 이유**
+1. 뱃지 조건(`device_source_count_gte` = "애플워치로 누적 50회")이 전부 **러닝 단위 집계**다.
+2. 폰 GPS + 워치 심박 세션에서 좌표는 전부 폰이 만든다. 샘플마다 벤더를 달면 3600개 샘플에 상수를 복제하는 셈이다.
+3. 한 세션에 두 기기가 동시에 기여하는 것이 P1의 기본 경로이므로 **배열**이어야 한다. 스칼라 `device_vendor` 하나로는 그 세션을 폰 기록이라 부를지 워치 기록이라 부를지 손실 없이 표현할 수 없다.
+
+**값 문자열 규약 — 이 목록이 최종 확정본이다.** `phone` / `watchApple` / `watchGarmin` / `watchOther` / `unknown`. 프로젝트의 snake_case 규약에 대한 **유일한 예외**이며, 사유는 이미 시드된 뱃지 카탈로그(`docs/badge-catalog.csv`, `badge_catalog.condition_value` jsonb, `device_watchApple_1` 같은 뱃지 id(PK))가 camelCase를 쓰고 있기 때문이다. 저장 라벨을 따로 두면 토큰↔라벨 매핑이 어긋날 때 **뱃지가 조용히 미지급**된다. 따라서 **뱃지 조건 토큰 / Postgres enum 라벨 / Dart `@JsonValue` / `wire_enums.dart` 네 곳을 같은 문자열로 통일**하고 매핑 테이블을 두지 않는다.
+
+**벤더 판별 시점** — 폰 단독 러닝은 세션 시작 시점부터 `phone` 확정. 워치는 HealthKit `sourceRevision.source.bundleIdentifier`/Health Connect `dataOrigin.packageName`에서 **지표가 도착하는 즉시**(실시간 경로) 또는 **워크아웃 임포트 시점**(P1)에 확정한다. 판별 한계는 §8.4.1.
 
 ### 3.2 `RunRecord` — 완결된 러닝 세션
 
@@ -103,6 +124,7 @@ class RunRecord with _$RunRecord {
 }
 ```
 
+- `deviceVendors: List<DeviceVendor>` (§3.1.1): 이 세션에 기여한 기기 벤더. 폰 단독 = `[phone]`, 폰+애플워치 = `[phone, watchApple]`, 워치 워크아웃 임포트 = `[watchApple]`, 수동 입력 = `[]`(빈 배열은 `[phone]`과 **다른 뜻**). 뱃지 `device_source_count_gte`/`device_source_diversity_gte`의 원천이며, "폰 단독 기록"은 `== [phone]`(정확히 일치), "워치 사용"은 `watchApple`/`watchGarmin` **포함** 여부로 판정한다. enum 선언 순서로 정렬해 payload를 결정적으로 유지한다.
 - `hasRouteSamples`: 클라이언트가 잠정 세팅하지만 **서버가 업로드 시점에 재검증하여 최종값을 확정**한다(ARCHITECTURE §6.3). 이 필드가 `false`면 `type`과 무관하게 티어·랭킹 미반영.
 - `flagged`: §8 서버 검증 실패 시 서버가 설정. 클라이언트에서 직접 쓰지 않는다.
 - 랩 기록(TR-07, 1km 구간)은 `samples`로부터 파생 계산하며 별도 저장 필드를 두지 않는다(중복 저장 방지) — 필요 시 조회 시점에 계산하거나, 성능 이슈가 확인되면 `laps: List<LapSplit>` 캐시 필드를 추가한다.
@@ -596,6 +618,26 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 | 기타 Wear OS | Health Connect | 중간 | 2순위 |
 | 워치 미연동 | 폰 GPS 단독 | — | 기본 폴백(에러 아님) |
 
+#### 8.4.1 벤더 판별 (`DeviceVendor`, §3.1.1)
+
+판별 입력은 `health` 패키지(11.1.1)가 주는 `sourceId`/`sourceName`이다. **플랫폼별로 형태가 다르다** — 소스 코드로 직접 확인한 사실이다:
+
+| 플랫폼 | `sourceId` | `sourceName` |
+|---|---|---|
+| iOS (`SwiftHealthPlugin.swift`) | `sourceRevision.source.bundleIdentifier` | `sourceRevision.source.name` (사용자에게 보이는 기기/앱 이름) |
+| Android (`HealthPlugin.kt`) | **항상 빈 문자열** | `metadata.dataOrigin.packageName` |
+
+→ 두 필드를 합쳐 매칭해야 한다. 한쪽만 보면 Android가 통째로 샌다.
+
+| 벤더 | 판별 근거 | 신뢰도 |
+|---|---|---|
+| `watchGarmin` | `garmin` 부분 문자열 — iOS `com.garmin.connect.mobile`, Android `com.garmin.android.apps.connectmobile`, 표시명 `Garmin Connect`가 모두 포함 | 높음 |
+| `watchApple` | `com.apple.*` 번들 + 기기명에 `watch` | **중간 — 아래 한계 참조** |
+| `watchOther` | Samsung Health / Google Fit / Polar / Coros / Suunto / Fitbit 등 힌트 목록 | 낮음(뱃지 무관) |
+| `unknown` | 위 어디에도 안 걸림. 단, 러닝 중 심박 폴링 경로는 `watchOther`로 저하한다 — 폰은 러닝 중 심박을 연속 측정하지 못하므로 연속 심박의 존재 자체가 웨어러블의 증거다 | — |
+
+⚠️ **Apple Watch 판별의 알려진 한계.** HealthKit에서 Apple Watch가 쓴 데이터의 bundleIdentifier는 `com.apple.health.<기기 UUID>`인데 **iPhone이 쓴 데이터도 같은 형태**라 번들 id만으로는 구분되지 않는다. 기본 기기 이름("○○의 Apple Watch")에 `Watch`가 들어가는 것에 의존하므로 **사용자가 워치 이름을 바꾸면 판별에 실패**해 `watchOther`로 떨어진다. 방향은 안전하다 — 애플워치 뱃지가 **안 붙을 뿐 잘못 붙지는 않는다**. 정확한 판별에는 `HKDevice.manufacturer`/`model`(iOS)과 `Metadata.device`(Health Connect)가 필요한데 `health` 패키지가 노출하지 않는다(§14 #8).
+
 ### 8.5 배터리 모드
 
 | 모드 | `LocationAccuracy` | 폴링 주기 |
@@ -704,3 +746,5 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 5 | 이상치 판정 임계값(가속도, accuracy 등)의 실측 튜닝 | Phase 1 실기기 테스트 후 |
 | 6 | GPX 내보내기 클라이언트 vs 서버 처리 | Phase 1 이후(P1) |
 | 7 | 포인트 이코노미(Phase 4) 테이블 설계 | Phase 4 착수 전 — PRD §10.2 |
+| 8 | Apple Watch 벤더 판별의 기기명 의존(§8.4.1) — `HKDevice`/`Metadata.device`를 얻는 얇은 platform channel이 필요한지 | P1 웨어러블 실기기 테스트에서 오분류가 실제로 확인되면 |
+| 9 | `device_source_diversity_gte`의 `"watchApple_or_watchGarmin"` **OR 표현식 파싱 규약** — 토큰 목록은 §3.1.1에서 확정됐고, 표현식 문법은 gamification-designer 소관 | 뱃지 판정 로직 다음 라운드 |

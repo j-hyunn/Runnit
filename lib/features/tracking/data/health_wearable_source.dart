@@ -30,11 +30,18 @@ class WearableMetricSample {
   const WearableMetricSample({
     required this.heartRateBpm,
     required this.source,
+    this.vendor = DeviceVendor.watchOther,
     this.deviceName,
   });
 
   final int heartRateBpm;
   final RunSampleSource source;
+
+  /// 이 값을 만든 기기의 벤더. [source]와 직교한다 —
+  /// Garmin은 `source=external`(사후 동기화) + `vendor=watchGarmin`,
+  /// Apple Watch는 `source=watch`(실시간) + `vendor=watchApple`.
+  /// `RunRecord.deviceVendors`(뱃지 `device_source_*`의 원천)를 채운다.
+  final DeviceVendor vendor;
 
   /// HealthKit/Health Connect가 알려주는 기록 주체 앱/기기 이름
   /// (예: `Garmin Connect`, `Apple Watch`). UI 안내 문구에 쓴다.
@@ -132,6 +139,14 @@ class HealthWearableMetricsSource implements WearableMetricsSource {
       yield WearableMetricSample(
         heartRateBpm: bpm,
         source: sourceFor(latest.sourceName),
+        // 러닝 중 연속 심박이 들어왔다는 것 자체가 웨어러블의 존재 증거다
+        // (폰은 러닝 중 심박을 연속 측정하지 못한다). 그래서 식별 실패 시
+        // `unknown`이 아니라 `watchOther`로 떨어뜨린다.
+        vendor: vendorFor(
+          sourceId: latest.sourceId,
+          sourceName: latest.sourceName,
+          fallback: DeviceVendor.watchOther,
+        ),
         deviceName: latest.sourceName,
       );
     }
@@ -165,4 +180,70 @@ class HealthWearableMetricsSource implements WearableMetricsSource {
     if (name.contains('garmin')) return RunSampleSource.external;
     return RunSampleSource.watch;
   }
+
+  /// 헬스 데이터의 기록 주체 → [DeviceVendor].
+  ///
+  /// 뱃지 `device_source_count_gte`(애플워치런/가민런 등 4종)와
+  /// `device_source_diversity_gte`(올라운더)의 **유일한 원천**이다.
+  ///
+  /// ## 플랫폼별 입력 형태가 다르다 (health 11.1.1 기준, 직접 확인함)
+  /// - **iOS** (`SwiftHealthPlugin.swift`): `sourceId` =
+  ///   `sourceRevision.source.bundleIdentifier`, `sourceName` =
+  ///   `sourceRevision.source.name`(사용자에게 보이는 이름).
+  /// - **Android** (`HealthPlugin.kt`): `sourceId`는 **항상 빈 문자열**이고
+  ///   `sourceName`에 `metadata.dataOrigin.packageName`이 들어온다.
+  ///   → 그래서 두 필드를 합쳐서 매칭한다. 한쪽만 보면 Android가 통째로 샌다.
+  ///
+  /// ## 한계 (실기기 검증 전 반드시 읽을 것)
+  /// Apple Watch 판정이 **기기 이름 문자열에 의존한다.** HealthKit에서
+  /// Apple Watch가 쓴 데이터의 bundleIdentifier는 `com.apple.health.<기기 UUID>`
+  /// 인데, **iPhone이 쓴 데이터도 같은 형태**라 bundle id만으로는 구분이 안 된다.
+  /// 기본 기기 이름("○○의 Apple Watch")에는 `Watch`가 들어가지만 사용자가
+  /// 기기 이름을 바꾸면 매칭이 실패해 [DeviceVendor.watchOther]로 떨어진다
+  /// (오분류지 오작동은 아니다 — 애플워치 뱃지만 안 붙는다).
+  ///
+  /// **정확한 판정에는 `HKDevice.manufacturer`/`model`(iOS)과
+  /// `Metadata.device`(Health Connect)가 필요한데 health 패키지가 노출하지
+  /// 않는다.** 실기기 테스트에서 오분류가 확인되면 얇은 platform channel로
+  /// 이 두 값을 꺼내오는 것이 후속 과제다(TRD §14).
+  static DeviceVendor vendorFor({
+    String? sourceId,
+    String? sourceName,
+    DeviceVendor fallback = DeviceVendor.unknown,
+  }) {
+    final id = (sourceId ?? '').toLowerCase();
+    final name = (sourceName ?? '').toLowerCase();
+    final probe = '$id $name';
+
+    // Garmin — iOS `com.garmin.connect.mobile`,
+    // Android `com.garmin.android.apps.connectmobile`, 표시명 `Garmin Connect`.
+    // 세 형태 모두 'garmin'을 포함하므로 부분 문자열 하나로 충분하다.
+    if (probe.contains('garmin')) return DeviceVendor.watchGarmin;
+
+    // Apple Watch — 위 "한계" 주석 참조.
+    if (id.startsWith('com.apple.') && name.contains('watch')) {
+      return DeviceVendor.watchApple;
+    }
+
+    for (final hint in _otherWatchHints) {
+      if (probe.contains(hint)) return DeviceVendor.watchOther;
+    }
+
+    return fallback;
+  }
+
+  /// 그 외 웨어러블 벤더의 패키지명/표시명 조각. 현재 어떤 뱃지도
+  /// `watchOther`를 요구하지 않으므로(카탈로그 4종은 Apple/Garmin뿐),
+  /// 이 목록이 불완전해도 뱃지 판정은 틀리지 않는다 — 통계·UI 표기용이다.
+  static const List<String> _otherWatchHints = <String>[
+    'shealth', // com.sec.android.app.shealth (Samsung Health)
+    'samsung',
+    'com.google.android.apps.fitness', // Google Fit
+    'polar',
+    'coros',
+    'suunto',
+    'wahoofitness',
+    'fitbit',
+    'wearos',
+  ];
 }

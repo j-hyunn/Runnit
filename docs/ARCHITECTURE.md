@@ -295,6 +295,8 @@ flowchart TB
 
 **핵심 설계 판단**: Garmin은 별도 SDK 통합이 아니라 **HealthKit/Health Connect 연동의 부산물**로 지원된다. iOS의 HealthKit, Android의 Health Connect 연동을 한 번 구현하면 Apple Watch·Garmin·기타 Wear OS 세 갈래를 하나의 코드 경로로 커버한다. Garmin 전용 실시간 연동(Garmin Health API, 개발자 승인 필요)은 MVP에서 다루지 않고 후속 검토로 남긴다.
 
+**그 대가**: 연동 표면이 하나로 수렴한 만큼, **"어느 기기가 만든 데이터인가"는 경로만으로 알 수 없다.** Apple Watch도 Garmin도 똑같이 HealthKit을 거쳐 들어온다. 기기별 뱃지(`device_source_count_gte` — 애플워치런/가민런 등 4종)를 판정하려면 벤더를 별도로 식별해 기록해야 하며, 그 유일한 단서가 HealthKit `sourceRevision.source.bundleIdentifier` / Health Connect `dataOrigin.packageName`이다. 이를 러닝 단위 `runs.device_vendors` 배열로 남긴다 — 축 분리 근거·값 목록·판별 한계는 **TRD §3.1.1 / §8.4.1**.
+
 ### 6.3 티어·랭킹 반영 판정 — 기기가 아니라 경로 데이터 유무 (PRD §5.7 확정)
 
 ```mermaid

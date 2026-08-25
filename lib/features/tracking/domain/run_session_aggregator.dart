@@ -62,6 +62,10 @@ class RunSessionAggregator {
   final List<LatLngPoint> _route = <LatLngPoint>[];
   final Set<RunSampleSource> _sources = <RunSampleSource>{};
 
+  /// 이 세션에 기여한 기기 벤더. `_sources`와 직교하는 축이며
+  /// 뱃지 `device_source_*`의 원천이다(`RunRecord.deviceVendors` 주석 참조).
+  final Set<DeviceVendor> _deviceVendors = <DeviceVendor>{};
+
   double _maxSpeedMps = 0;
   double _elevationGain = 0;
   double _elevationLoss = 0;
@@ -105,11 +109,17 @@ class RunSessionAggregator {
     int? heartRateBpm,
     int? cadenceSpm,
     RunSampleSource source = RunSampleSource.watch,
+    DeviceVendor vendor = DeviceVendor.watchOther,
   }) {
     if (heartRateBpm == null && cadenceSpm == null) return;
     if (heartRateBpm != null) _pendingHeartRateBpm = heartRateBpm;
     if (cadenceSpm != null) _pendingCadenceSpm = cadenceSpm;
     _pendingMetricSource = source;
+    // 벤더는 **지표가 도착한 시점에 즉시** 기록한다. 아래 [addFix]의 소스
+    // 태깅과 달리 다음 GPS fix를 기다리지 않는다 — 워치가 심박을 보냈는데
+    // 직후 GPS가 끊겨(터널 등) fix가 안 오면 "워치가 붙어 있었다"는 사실이
+    // 통째로 사라지고, 뱃지가 조용히 미지급된다.
+    _deviceVendors.add(vendor);
   }
 
   /// GPS fix 하나를 반영한다. 필터에 걸러졌거나 일시정지 중이면 null.
@@ -152,6 +162,9 @@ class RunSessionAggregator {
     _sources.add(source);
     // 좌표는 언제나 폰 GPS에서 왔으므로 phone도 항상 기여자다.
     _sources.add(RunSampleSource.phone);
+    // 벤더도 같은 이유로 phone이 항상 포함된다. 워치 벤더는
+    // [offerWearableMetrics]가 도착 즉시 넣으므로 여기서 다시 넣지 않는다.
+    _deviceVendors.add(DeviceVendor.phone);
 
     _pendingHeartRateBpm = null;
     _pendingCadenceSpm = null;
@@ -249,6 +262,15 @@ class RunSessionAggregator {
       sources: _sources.isEmpty
           ? const <RunSampleSource>[RunSampleSource.phone]
           : _sources.toList(growable: false),
+      // 이 집계기는 **폰 GPS 세션에서만** 돌아간다(임포트 경로는 이 클래스를
+      // 거치지 않는다). 따라서 아직 fix가 없어도 phone은 확정 기여자다.
+      // enum 선언 순서로 정렬해 payload를 결정적으로 만든다 — Set의 순회
+      // 순서가 바뀌면 동일 세션의 업로드 payload가 매번 달라진다.
+      deviceVendors: (_deviceVendors.isEmpty
+              ? <DeviceVendor>{DeviceVendor.phone}
+              : _deviceVendors)
+          .toList(growable: false)
+        ..sort((a, b) => a.index.compareTo(b.index)),
     );
   }
 }
