@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.1 (초안) |
+| 문서 버전 | v0.2 (초안) |
 | 작성일 | 2026-08-25 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | Phase 0 초안 — 구현 착수 전 검토 필요 |
@@ -12,6 +12,7 @@
 | 버전 | 변경 내용 |
 |------|----------|
 | v0.1 | 최초 작성. `docs/ARCHITECTURE.md`의 구조 결정을 구현 가능한 스펙(데이터 모델 코드, DDL, API, 검증 규칙)으로 세분화 |
+| v0.2 | 뱃지 카탈로그 확장(30종 → 158개 템플릿) 설계 반영. `Badge`에 `category`(16종)·`scope`(permanent/seasonal)·`description`·`seasonId` 필드 추가, `tierLabel`→`badgeGrade`로 개명(시즌 티어 시스템과 명칭 혼동 방지). 카탈로그 원본은 `docs/badge-catalog.csv` |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
 
@@ -190,17 +191,49 @@ class RankingEntry with _$RankingEntry {
 
 ### 3.6 `Badge` / `UserBadge`
 
+뱃지 카탈로그(158개 템플릿, 16개 카테고리)의 확정 스펙은 [`docs/badge-catalog.csv`](./badge-catalog.csv) 참고. `category`·`scope`는 이 카탈로그에서 역산한 필드다.
+
 ```dart
 enum BadgeTriggerType { session, cumulative }
+
+/// 영구 뱃지(평생 누적 기준, 딱 한 번만 존재) vs 시즌 뱃지(시즌 스코프 판정,
+/// 시즌마다 새 인스턴스 재발급 가능 — 획득한 인스턴스는 영구 보존).
+enum BadgeScope { permanent, seasonal }
+
+enum BadgeCategory {
+  cumulativeDistance,        // 누적거리 (permanent)
+  cumulativeCount,           // 누적횟수 (permanent)
+  longestStreak,             // 최장스트릭 (permanent)
+  personalBest,              // PB갱신 (permanent, 검증된 실외 기록만)
+  singleSessionDistance,     // 단일세션거리 (permanent)
+  timeOfDayWeekday,          // 시간대요일 (permanent)
+  routeExploration,          // 경로탐험 (permanent, GPS 기반)
+  specialDay,                // 특별한날 (permanent)
+  paceSpeed,                 // 페이스속도 (permanent)
+  deviceIntegration,         // 기기연동 (permanent)
+  level,                     // 레벨 (permanent) — XP 공식 미정, 값은 GM-04 별도 설계 후 확정
+  seasonTier,                // 시즌티어달성 (seasonal, GM-07)
+  seasonWeeklyRank,          // 시즌주간랭킹 (seasonal, RK-06)
+  seasonCumulativeDistance,  // 시즌누적거리 (seasonal, P1)
+  seasonEvent,               // 시즌한정이벤트 (seasonal, GM-08 P1)
+  seasonFinisher,            // 시즌완주 (seasonal)
+}
 
 @freezed
 class Badge with _$Badge {
   const factory Badge({
-    required String id,        // slug, 예: 'cumulative_100km'
-    required String name,
+    required String id,        // slug, 예: 'dist_cum_1000km'
+    required String name,      // 표시명 (예: '천리길') — badge-catalog.csv의 display_name
+    required String description, // 획득 조건 설명 — 뱃지 갤러리 상세(GM-03)에 노출
+    required BadgeCategory category,
+    required BadgeScope scope,
     required BadgeTriggerType triggerType,
     required Map<String, dynamic> condition,  // 판정 함수 입력 파라미터
-    required String tierLabel,                 // bronze/silver/gold 등 뱃지 자체 등급(표시용)
+    required String badgeGrade,                // bronze/silver/gold/platinum/diamond/special — 뱃지 자체 표시 등급.
+                                                 // ⚠️ scope=seasonal인 시즌티어달성(stier_*) 4종을 제외하면
+                                                 // 실제 시즌 티어 시스템과 무관한 순수 장식용 값이다.
+    String? seasonId,          // scope=seasonal 템플릿이 시즌 시작 시 실제 발급된 인스턴스일 때만 값 존재
+                                 // (예: '2026-Q3'). 카탈로그의 템플릿 자체는 null.
   }) = _Badge;
 
   factory Badge.fromJson(Map<String, dynamic> json) => _$BadgeFromJson(json);
@@ -340,11 +373,15 @@ create index idx_weekly_ranking_tier_week on public.weekly_ranking_cache (season
 -- 5. badges / user_badges
 -- ─────────────────────────────────────────────
 create table public.badges (
-  id text primary key,               -- 'cumulative_100km' 같은 slug
-  name text not null,
+  id text primary key,               -- 'dist_cum_1000km' 같은 slug. scope='seasonal' 인스턴스는 'stier_platinum_2026q3'처럼 season_id를 slug에 포함
+  name text not null,                -- 표시명 (badge-catalog.csv의 display_name)
+  description text not null,
+  category text not null,            -- BadgeCategory 값 (예: 'cumulativeDistance')
+  scope text not null check (scope in ('permanent','seasonal')),
   trigger_type text not null check (trigger_type in ('session','cumulative')),
   condition jsonb not null,
-  tier_label text not null default 'bronze'
+  badge_grade text not null default 'bronze',  -- 표시용 등급. 시즌티어달성 카테고리 제외 시즌 티어 시스템과 무관
+  season_id text references public.seasons(id)  -- scope='seasonal' 템플릿이 실제 발급된 인스턴스일 때만 not null
 );
 
 create table public.user_badges (
@@ -513,6 +550,7 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 - 트리거: (1) 세션 종료 이벤트 → 세션형 뱃지 판정, (2) `profiles.total_distance_m`/`user_season_tier` 갱신 이벤트 → 누적형 뱃지 판정. 두 트리거를 **모두** Edge Function에서 재실행한다.
 - 판정 함수는 `condition jsonb`를 입력으로 받는 범용 평가기로 구현(예: `{"type": "cumulative_distance_gte", "value": 100000}`) — 뱃지 추가 시 코드 배포 없이 데이터로 확장 가능하게 한다.
 - 클라이언트 잠정 판정 → 서버 확정 결과 Realtime 반영까지의 사이, UI는 "확인 중" 상태를 명시(연출 자체는 잠정치로 먼저 보여주되 최종 확정 실패 시 취소 애니메이션 없이 조용히 `verified=false`로 유지 — 게이미피케이션 원칙: 설명 없이 박탈하지 않음).
+- **카탈로그 시딩**: [`docs/badge-catalog.csv`](./badge-catalog.csv)의 158개 행을 `badges` 시드 데이터로 적재한다. `scope='permanent'`(117개)는 그대로 1행 = 1뱃지. `scope='seasonal'`(41개 템플릿)은 시즌 시작 배치 작업이 시즌마다 `id`에 `season_id`를 붙여 실제 인스턴스로 복제 발급한다(예: 템플릿 `stier_platinum` → 인스턴스 `stier_platinum_2026q3`). 템플릿 자체는 `badges`에 유저에게 노출되지 않는 참조용 행으로 유지하거나, 시즌 인스턴스 생성 로직의 입력 메타데이터로만 별도 관리한다 — 어느 쪽으로 할지는 `backend-engineer`가 시딩 스크립트 작성 시 확정.
 
 ---
 
