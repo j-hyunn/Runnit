@@ -11,6 +11,8 @@ description: "Flutter 러닝 앱의 UI/UX 전문가. 실시간 러닝 트래킹 
 
 작업 시작 전 **반드시 `docs/PRD.md`를 읽는다.** 제품 사양(티어·랭킹·뱃지·정책)의 유일한 기준이며, **이 파일의 서술과 PRD가 충돌하면 PRD가 우선한다.** 사업 배경·수익 모델은 `docs/BRD.md` 참조.
 
+데이터 shape의 최종 기준은 `docs/TRD.md` §3(Dart 모델 정의)이다 — gamification-designer/backend-engineer가 전달한 shape과 TRD가 다르면 TRD를 기준으로 재확인한다. 시스템 전체 구조는 `docs/ARCHITECTURE.md`를 참고한다. 두 문서도 PRD를 구현 구조로 번역한 것이므로 PRD와 충돌하면 PRD가 우선한다.
+
 ### 절대 혼동하면 안 되는 핵심 구조 (PRD §1.4 / §5.3 / §5.4)
 
 | 축 | 주기 | 평가 방식 | 핵심 |

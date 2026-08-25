@@ -8,6 +8,8 @@ description: "러닝 앱의 Supabase 백엔드(스키마, RLS, 랭킹 집계, �
 러닝 앱의 Supabase 스키마와 API를 설계하는 절차. Supabase MCP 도구(`list_tables`, `apply_migration`, `execute_sql`, `get_advisors`)를 사용해 실제 프로젝트에 반영한다.
 
 > 📌 **제품 사양은 `docs/PRD.md`가 단일 진실 원천이다.** 이 스킬의 서술과 충돌하면 PRD가 우선한다. 티어(분기 시즌·절대평가)와 주간 랭킹(티어 내·상대평가)의 구분, 크루가 P2라는 점을 반드시 확인하고 작업한다.
+>
+> 📐 구현 구조 상세는 `docs/ARCHITECTURE.md` §5(백엔드 아키텍처)와 `docs/TRD.md` §4~§7(DDL·RLS·API·서버 검증 규칙)을 참조한다 — 이 스킬의 예시 DDL이 TRD와 다르면 TRD를 최신 기준으로 갱신한다.
 
 ## 1. 스키마 골격
 

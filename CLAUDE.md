@@ -16,6 +16,17 @@
 2. 하네스 문서(에이전트·스킬·이 파일)의 서술이 PRD와 충돌하면 **PRD가 우선한다.**
 3. PRD에 없는 신규 기능을 구현했거나 확정 사양을 바꿔야 하면, **사용자 확인 후 `docs/PRD.md`를 갱신하고 변경 이력에 기록한다.** 코드와 PRD가 어긋난 채로 두지 않는다.
 
+## 📐 기술 설계 문서 (PRD를 구현 구조로 번역)
+
+| 문서 | 역할 |
+|------|------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (v0.1 초안) | 시스템 아키텍처 — 클라이언트/백엔드 구조, 데이터 흐름, 모듈 경계 |
+| [docs/TRD.md](docs/TRD.md) (v0.1 초안) | 기술 요구사항 — 데이터 모델 코드, Supabase DDL, API/검증 규칙 스펙 |
+
+PRD와 이 두 문서가 충돌하면 **PRD가 우선**한다. 이 문서들은 사양을 새로 정의하지 않고 구현 구조로 번역한 것이다.
+
+**모든 에이전트·스킬은 기능을 설계·구현·검증하기 전에 `docs/PRD.md`와 함께 이 두 문서의 관련 섹션을 확인한다.** 구현이 발전해 이 문서들과 달라지면(스키마 확장, 배치 전략 변경 등) 문서를 갱신해 코드와 어긋나지 않게 한다 — PRD처럼 고정된 확정 사양이 아니라, 구현과 함께 갱신되는 살아있는 문서다.
+
 **핵심 구조 (자주 혼동되는 부분)**
 
 | 축 | 주기 | 평가 방식 | 요약 |
@@ -37,3 +48,4 @@
 | 2026-08-19 | 백엔드 Supabase 확정(변경 없음, 기존 기본값 유지), 웨어러블 우선순위를 Apple Watch·Garmin으로 명시 — Garmin은 Garmin Connect→HealthKit/Health Connect 동기화 경유로 설계, references/garmin-integration.md 추가 | agents/gps-tracking-engineer.md, skills/gps-wearable-tracking/ | 사용자가 백엔드/워치 우선순위를 확정 |
 | 2026-08-19 | **PRD/BRD 작성 및 하네스 연결** — CLAUDE.md에 제품 사양 진입점 추가, 에이전트 6개·스킬 7개 전체에 `docs/PRD.md` 참조 주입, 오케스트레이터 Phase 0에 PRD 선독 단계 추가 | CLAUDE.md, agents/* (6), skills/* (7), docs/PRD.md, docs/BRD.md | 제품 사양이 확정되어 하네스가 이를 기준으로 작업하도록 연결 |
 | 2026-08-19 | **폐기된 전제 정리** — 크루 중심 랭킹/챌린지, 상대평가 리그를 티어(절대평가)+주간 랭킹(상대평가) 이중 구조로 교체. backend 스키마 가이드에 seasons/user_season_tier/weekly_ranking_cache 분리 명시 | agents/gamification-designer.md, agents/backend-engineer.md, agents/mobile-architect.md, skills/gamification-system-design/, skills/supabase-running-backend/ | 하네스가 PRD 확정 이전 전제로 설계하는 것을 방지 |
+| 2026-08-25 | **아키텍처/TRD 초안 작성 (Phase 0 산출물)** — PRD v1.3과 하네스 에이전트·스킬에 이미 반영돼 있던 기술 결정(데이터 모델, Supabase 스키마 골격, GPS/웨어러블 연동 경로, 서버 검증 파이프라인)을 종합해 `docs/ARCHITECTURE.md`, `docs/TRD.md` 신규 작성 | CLAUDE.md, docs/ARCHITECTURE.md(신규), docs/TRD.md(신규) | PRD §11 Phase 0(아키텍처·데이터 모델·Supabase 스키마 확정) 산출물을 문서화해 Phase 1 착수 근거를 마련 |
