@@ -105,3 +105,55 @@ void _encodeValue(StringBuffer buffer, int value) {
   }
   buffer.writeCharCode(v + 63);
 }
+
+/// [encodePolyline]의 역변환.
+///
+/// 2026-08-26 공유 카드(HI-08)를 위해 추가했다. 카드는 `RunRecord.routePolyline`
+/// 하나만 들고 경로를 그려야 하는 경우가 있다 — 목록/랭킹 경로로 받은 레코드는
+/// `samples`가 비어 있고(payload 절감, 모델 주석 참조) 썸네일용 폴리라인만 온다.
+/// 그 상황에서 샘플을 다시 조회하려고 네트워크를 타면, 공유 버튼을 누른 직후
+/// 카드가 뜨기까지 왕복이 하나 더 생긴다.
+///
+/// 손상된 문자열이 오면 그때까지 해독한 점만 돌려준다(예외를 던지지 않는다) —
+/// 경로는 카드의 장식이지 본체가 아니므로, 깨진 폴리라인 하나가 공유 자체를
+/// 막아서는 안 된다.
+List<LatLngPoint> decodePolyline(String encoded) {
+  final points = <LatLngPoint>[];
+  var index = 0;
+  var lat = 0;
+  var lon = 0;
+
+  while (index < encoded.length) {
+    final dLat = _decodeValue(encoded, index);
+    if (dLat == null) break;
+    index = dLat.nextIndex;
+
+    final dLon = _decodeValue(encoded, index);
+    if (dLon == null) break;
+    index = dLon.nextIndex;
+
+    lat += dLat.value;
+    lon += dLon.value;
+    points.add(LatLngPoint(lat / 1e5, lon / 1e5));
+  }
+  return points;
+}
+
+({int value, int nextIndex})? _decodeValue(String encoded, int start) {
+  var index = start;
+  var shift = 0;
+  var result = 0;
+  int chunk;
+
+  do {
+    if (index >= encoded.length) return null;
+    chunk = encoded.codeUnitAt(index) - 63;
+    if (chunk < 0) return null;
+    result |= (chunk & 0x1f) << shift;
+    shift += 5;
+    index++;
+  } while (chunk >= 0x20);
+
+  final value = (result & 1) != 0 ? ~(result >> 1) : result >> 1;
+  return (value: value, nextIndex: index);
+}

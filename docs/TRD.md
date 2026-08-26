@@ -373,6 +373,9 @@ class UserBadge with _$UserBadge {
     required DateTime earnedAt,
     @Default(false) bool verified,   // 서버 재검증 결과
     @Default(false) bool isSeen,     // 획득 연출(GM-02)을 봤는지. RLS상 클라이언트가 쓸 수 있는 유일한 컬럼.
+    String? sourceRunId,             // 이 뱃지를 촉발한 러닝. 2026-08-26 공유 카드(HI-08)를 위해
+                                     // 모델에 노출 — 카드에 그 러닝의 경로/거리를 얹어야 한다(§3.9).
+                                     // cumulative 뱃지·원본 삭제 시 null.
     Badge? badge,                    // 조인 임베드(선택) — 갤러리 조회 왕복 절감
   }) = _UserBadge;
 
@@ -474,6 +477,80 @@ old→new 전이 감지를 요구한다 ③ 원천이 3개 테이블에 흩어�
 
 ⚠️ **`challenges.reward_points` 는 `total_xp` 에 들어가지 않는다.** XP 4원천에 챌린지가 없고
 `reward_points` 는 Phase 4 포인트 이름이다 — 구 `recompute_profile_stats` 가 이 항을 더하던 것을 39번에서 제거했다.
+
+### 3.9 공유 카드 뷰모델 (PRD HI-08 / HI-10) — 2026-08-26 확정
+
+구현: `lib/features/sharing/domain/share_card_data.dart` (유니온) ·
+`share_card_builder.dart` (조합 규칙) · 설계 근거는
+[`_workspace/20260826_050000_architect_sharing-cards.md`](../_workspace/20260826_050000_architect_sharing-cards.md).
+
+**신규 테이블·컬럼은 없다.** 카드 4종(성취 3종 + 러닝 기록 1종)이 필요한 값은 전부 이미 저장돼 있다:
+
+| 카드 | 데이터 출처 |
+|---|---|
+| 티어 승급 | `profiles.current_tier` / `season_distance_meters` / `tier_season_id`, `user_badges`의 `stier_{tier}@{seasonId}` 인스턴스, `leaderboard_entries`(순위·모집단) |
+| 뱃지 획득 | `badges` + `user_badges` (+ `source_run_id` → `runs`의 경로) |
+| PB 갱신 | `badges.condition->>'distanceKm'` + `user_badges.source_run_id` → `runs` |
+| 러닝 기록(`runRecap`) | `runs`(거리·시간·페이스·칼로리·경로) — 뱃지를 터뜨리지 않은 대부분의 러닝을 위한 4번째 카드. 서버 확정 성취(뱃지·PB·티어)를 주장하지 않으므로 `AchievementGate`를 적용하지 않고 `isFlagged=true`만 제외한다(2026-08-26 UI 라운드, §7.4.1) |
+
+공유 **행위**를 기록하는 테이블(`share_events` 등)도 두지 않는다 — OS 공유 시트는 사용자가
+실제로 게시했는지 앱에 돌려주지 않으므로(iOS는 취소 여부만, 대상 앱은 미공개) 게시 여부를
+모르는 행은 분석에도 쓸 수 없다. 전환율이 필요해지면 도메인 테이블이 아니라 텔레메트리 이벤트로 붙인다.
+
+```dart
+enum ShareCardKind { tierPromotion, badgeEarned, personalBest, runRecap }
+
+sealed class ShareCardData {
+  ShareAthlete get athlete;      // displayName / tier / level / avatarUrl (신체 정보는 넘기지 않는다)
+  DateTime get achievedAt;       // 서버 확정 시각 (UserBadge.earnedAt)
+  ShareRoute? get route;         // 좌표 ≤240점. samples 우선, 없으면 routePolyline 해독
+  ShareCardKind get kind;
+  String get headline;           // 카드 큰 글씨
+  String? get subhead;
+  String get shareText;          // 공유 시트에 곁들이는 텍스트
+}
+
+final class TierPromotionCardData extends ShareCardData { Tier tier; String seasonId;
+  double seasonDistanceMeters; int? rank; int? participantCount; /* topPercent 파생 */ }
+final class BadgeEarnedCardData  extends ShareCardData { Badge badge; String badgeAssetPath; }
+final class PersonalBestCardData extends ShareCardData { double targetKm; int? certifiedSeconds;
+  double? runDistanceMeters; String badgeAssetPath; }
+final class RunRecapCardData     extends ShareCardData { double distanceMeters; int movingSeconds;
+  int elapsedSeconds; double? avgPaceSecPerKm; int? caloriesKcal; }
+```
+
+`RunRecapCardData`는 2026-08-26 UI 구현에서 추가됐다. HI-08은 "**기록**·성취 이미지 공유 카드"이고
+대부분의 러닝은 뱃지를 터뜨리지 않으므로, 성취 카드 3종만으로는 요약 화면의 공유 버튼이 열 번 중
+아홉 번 아무것도 만들지 못한다. 이 카드는 서버가 확정한 성취를 **주장하지 않는다** — 사용자가 방금
+기록한 자기 러닝의 거리·시간·경로만 그리므로 PRD §8.4에 걸리지 않는다(반대로 이 카드에 뱃지·PB
+문구를 얹으면 그 순간 위반이 된다). 그림은 `presentation/widgets/share_card_body.dart`가 4종을
+`switch` 하나로 그리며, `sealed` union이라 카드가 늘면 컴파일 에러로 알려준다.
+
+`freezed`를 쓰지 않는다 — 직렬화되지 않고 `copyWith`도 필요 없어 코드 생성이 순수 비용이다
+(같은 계층의 `GamificationStats`/`BadgeProgress`와 동일한 판단).
+
+#### 3.9.1 PB 카드의 `certifiedSeconds`가 null일 수 있는 이유
+
+§10.2 `pb_time_lte`는 세션 거리가 목표의 **102%를 넘으면 GPS 샘플 선형 보간으로 목표 거리 통과
+시각**을 쓴다. 그 보간값은 현재 **어디에도 저장되지 않는다**(`user_badges`에 값 컬럼이 없음).
+따라서 클라이언트 규칙은:
+
+- 세션 거리 ≤ 목표×102% → `runs.moving_seconds`. 이 구간에서는 그것이 **서버 규칙 그 자체**라 값이 정확히 일치한다.
+- 초과 → **null**. 카드는 시간 없이 "5km PB 갱신"만 말한다.
+
+클라이언트가 보간을 흉내 내지 않는 이유: 서버 확정값을 클라이언트가 재유도하면 정본이 둘이 되고,
+어긋나는 순간 사용자가 인스타에 올린 기록이 앱 화면과 다른 값이 된다.
+
+🔵 **해소 방법(P1, backend-engineer)**: `user_badges.achieved_value numeric null` 한 컬럼.
+서버가 판정 시점에 확정한 값(PB 초, 스트릭 주, 주간 순위 …)을 그대로 적으면 위 폴백이 사라지고
+모든 뱃지 카드가 서버 값만 그린다. §14 #18 참조.
+
+#### 3.9.2 렌더링 방식 — 클라이언트 위젯 캡처 (확정)
+
+`RenderRepaintBoundary.toImage()`. 출력은 항상 **1080×1920 (9:16)** 이며,
+`pixelRatio = 1080 / 카드논리폭`으로 역산해 기기 DPI와 무관하게 같은 결과를 낸다.
+별도 캡처 패키지(`screenshot` 등)는 추가하지 않는다 — 그 래퍼는 우리가 직접 계산해야 하는
+경계 크기를 감춘다. 공유 시트만 `share_plus: ^10.1.4`. 근거는 §14 #3 해소 항목.
 
 ---
 
@@ -703,6 +780,8 @@ create table public.lunar_holidays (
 | `AppUser.totalXp` | `profiles.total_xp` | integer | ⚠️ 구 `totalPoints`/`total_points` 개명(2026-08-26). **PRD §5.6 Phase 4 포인트와 다른 개념** |
 | `AppUser.level` | `profiles.level` | integer | CHECK `between 1 and 60` |
 | `RunRecord.awardedXp` | `runs.awarded_xp` | integer nullable | ⚠️ 구 `awardedPoints`/`awarded_points` 개명. 서버 전용 쓰기(`_serverOwnedKeys`) |
+| `RunRecord.isFlagged` | `runs.is_flagged` | boolean nullable | 2026-08-26 읽기 전용 노출(공유 게이트). **`@Default(false)`가 아니라 nullable** — `null`(아직 모름) / `false`(서버가 정상 확정) / `true`(플래그) 세 상태를 구분해야 미검증 기록을 축하·공유해 버리는 사고를 막는다. 업로드 payload에서 제거(`_serverOwnedKeys`), 로컬 `summaryJson`에는 보존. **채워지는 유일한 경로는 업로드 응답**(`_push()`의 `.upsert(payload).select(...).single()`) — `trg_runs_guard`가 BEFORE 트리거에서 동기 확정하므로 재조회·realtime 없이 그 응답에 이미 들어 있다 |
+| `RunRecord.flagReason` | `runs.flag_reason` | text nullable | 위와 동일 규칙. 내부 코드성 문구라 사용자에게 그대로 노출하지 않는다 |
 | *(대응 필드 없음)* | `profiles.current_streak_weeks` | integer | 리플레이 결과 캐시 |
 | *(대응 필드 없음)* | `profiles.longest_streak_weeks` | integer | 리플레이 결과 캐시 · **`streak_weeks_gte` 판정의 유일한 소스** |
 | *(대응 필드 없음)* | `profiles.streak_freeze_credits` | smallint | 리플레이 파생값 캐시(표시용, 0 또는 1) |
@@ -723,12 +802,17 @@ create table public.lunar_holidays (
 | `UserBadge.verified` | `user_badges.verified` | boolean | 서버 재검증 결과 |
 | `UserBadge.isSeen` | `user_badges.is_seen` | boolean | 클라이언트가 쓸 수 있는 유일한 컬럼 |
 | *(대응 필드 없음)* | `user_badges.revoked` | boolean | **서버 전용.** 부정 기록 회수(PRD §8.1) — 행은 남기고 플래그만 세운다. 타인 조회 RLS 술어에 쓰인다 |
-| *(대응 필드 없음)* | `user_badges.source_run_id` | uuid nullable | **서버 전용 감사 컬럼.** 회수 판정 시 "어느 기록 때문에 지급됐나" 추적용 |
+| `UserBadge.sourceRunId` | `user_badges.source_run_id` | uuid nullable | **쓰기는 여전히 서버 전용**(가드 트리거가 되돌린다). 2026-08-26 읽기 전용으로 Dart 모델에 노출 — 공유 카드가 "이 뱃지를 만든 러닝"의 경로를 그려야 한다(§3.9) |
 
-> 서버 전용 컬럼(`revoked` / `source_run_id`)은 `select *`로 클라이언트에 내려가지만
-> `json_serializable`이 미지 키를 무시하므로 무해하다. Dart 모델에 추가하지 않는다 —
-> 클라이언트가 회수 여부를 렌더링할 이유가 없고(타인 것은 애초에 RLS가 가린다),
-> 필드를 늘리면 서버 전용이라는 경계가 흐려진다.
+> **`source_run_id` 노출 이력 (2026-08-26)**: 이 표는 원래 "Dart 모델에 추가하지 않는다"고
+> 못 박고 있었다. 당시엔 소비자가 회수 판정(서버) 하나뿐이었기 때문이다. 공유 카드(HI-08)가
+> 두 번째 소비자로 등장하면서 뒤집었다 — 카드에 그 러닝의 경로·거리를 얹으려면 "어느 러닝인가"를
+> 알아야 하고, 이 값이 없으면 클라이언트가 `earned_at` 근처 러닝을 **시간으로 추측**하게 되는데
+> 같은 날 두 번 뛴 사용자에게서 조용히 틀린다. 노출은 **읽기뿐**이고 쓰기 경계는 그대로다.
+>
+> `revoked`는 여전히 서버 전용이며 Dart 모델에 없다 — `select *`로 내려가도
+> `json_serializable`이 미지 키를 무시하므로 무해하다. 클라이언트가 회수 여부를 렌더링할
+> 이유가 없다(타인 것은 애초에 RLS가 가린다).
 
 이 표는 필드 추가 시마다 갱신한다 — 암묵적 매핑은 QA 단계에서 필드 불일치 버그로 드러난다(`backend-engineer` 작업 원칙).
 
@@ -1007,9 +1091,9 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 
 | # | 이슈 | 확정 필요 시점 |
 |---|---|---|
-| 1 | 로컬 영속 저장소 패키지(Hive/Drift/Isar) | Phase 1 트래킹 모듈 착수 시 |
+| ~~1~~ | ~~로컬 영속 저장소 패키지(Hive/Drift/Isar)~~ → **해소. drift로 확정·구현 완료**(`lib/features/tracking/data/local_run_database.dart`) | — |
 | 2 | `run_samples` jsonb → 별도 테이블 전환 임계 규모 | Phase 1 실측 후 |
-| 3 | 공유 카드(HI-08) 이미지 렌더링 방식(클라이언트 위젯 캡처 vs 서버 렌더링) | Phase 2 |
+| ~~3~~ | ~~공유 카드(HI-08) 이미지 렌더링 방식(클라이언트 위젯 캡처 vs 서버 렌더링)~~ → **해소(2026-08-26). 클라이언트 위젯 캡처 확정** — `RenderRepaintBoundary.toImage()`로 1080×1920 PNG. 서버 렌더링을 버린 이유: (a) 디자인 시스템(`AppTokens`·Pretendard 가변 폰트·뱃지 SVG 146종)이 전부 Flutter 자산이라 서버에 **두 번째 구현**이 필요하고 어긋나면 앱에서 본 카드와 올라간 카드가 달라진다, (b) 마케팅 예산 0원(BRD)인데 유일한 성장 레버에 서버 비용·왕복을 얹을 이유가 없다, (c) HI-10은 러닝 종료 직후에 동작해야 하는데 그 지점은 신호가 나쁠 수 있다(오프라인 우선 §9의 연장), (d) 경로 좌표가 이미지 한 장 만들자고 기기 밖으로 나가지 않는다. 서버 렌더링은 **링크 공유의 OG 이미지**가 필요해질 때 이 경로를 대체하는 게 아니라 추가된다 — PRD가 요구하는 건 스토리에 올릴 이미지 파일이다. 스펙은 §3.9.2 | — |
 | 4 | 시즌 롤오버 시 `user_season_tier` 신규 row를 lazy insert할지 전원 일괄 생성할지 | Phase 2, 실제 사용자 수 확인 후 |
 | 5 | 이상치 판정 임계값(가속도, accuracy 등)의 실측 튜닝 | Phase 1 실기기 테스트 후 |
 | 6 | GPX 내보내기 클라이언트 vs 서버 처리 | Phase 1 이후(P1) |
@@ -1023,4 +1107,9 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | ~~15~~ | ~~`session_distance_gte` 5종은 허용오차 없이 정확히 `≥ 목표×1000m`~~ → **해소(2026-08-26, 마이그레이션 42)**. 동일 허용오차 `목표 − min(목표×2%, 300m)`로 통일(완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 채움) | — |
 | 14 | **`tier_change_history` 가 0행이라 XP-4(티어 도달 XP)가 아무에게도 적립되지 않고 있다.** 마이그레이션 34가 "상승 이벤트만 기록"으로 정정하면서 백필을 취소했고(소급 복원 불가는 의도된 결정), 기존 유저는 이번 시즌에 강등 없이는 다시 상승할 기회가 없다. 다음 시즌부터 정상 적립된다 — 그때까지 `total_xp` 는 XP-4 만큼 과소 집계된 상태다 | 2026-Q4 시즌 시작 시 자연 해소 |
 | 16 | **`session_distance_gte`는 실내 러닝을 제외하지 않는데 `pb_first_achieved`/`season_first_long_distance`는 제외한다.** 마이그레이션 42가 세 조건을 "같은 목표 거리 판정"으로 선언해 허용오차만 통일했고 실내 취급 차이는 그대로 남았다 — 트레드밀 42.2km는 `session_dist_full`(풀런)은 받고 `pb_first_full`/`season_first_long_distance`는 못 받는다. PRD §8.3(실내 기록 처리)만으로는 이 셋 중 무엇이 맞는 기준인지 단정할 수 없다 | gamification-designer 확인 대상 |
+| 18 | **`user_badges`에 "판정 확정값" 컬럼이 없다** — PB 카드가 서버가 확정한 기록(초)을 그릴 수 없는 구간이 생긴다(§3.9.1). 제안: `achieved_value numeric null` 한 컬럼에 서버가 판정 시점 값(PB 초 / 스트릭 주 / 주간 순위)을 적는다. **P0는 이것 없이 성립**한다(102% 이내는 `moving_seconds`가 곧 서버 규칙, 초과 구간은 시간을 비운 카드) — 이 컬럼이 생기면 폴백 분기가 사라진다 | P1, backend-engineer |
+| ~~19~~ | ~~성취 큐에 소비자가 없어 밀린 `is_seen=false` 뱃지가 한꺼번에 쏟아진다~~ → **해소(2026-08-26, UI 구현)**. `isAchievementBacklog()`(`features/sharing/domain/achievement_backlog.dart`)가 **개수(>5) 또는 획득 시각 간격(>24h)** 중 하나라도 걸리면 큐를 "밀린 성취"로 보고 "그동안 받은 뱃지 N개" 한 장으로 접은 뒤 **일괄** `markBadgesSeen` 한다. 요약 화면·전역 호스트 양쪽에 같은 판정이 걸려 있다. **로컬 "이미 처리함" 플래그는 두지 않았다** — 접고 나면 서버 행이 `is_seen=true`가 되어 큐에서 영구히 빠지므로 그 상태는 이미 서버가 들고 있고, 같은 사실을 두 곳에 적으면 재설치·기기 변경에서 어긋난다 | — |
 | 17 | **클라이언트 진행률 바가 마이그레이션 42의 새 허용오차(§10.2)를 반영하지 않는다.** `badge_condition.dart`의 `sessionDistanceGte` 진행률 계산이 여전히 `distance/목표`(정확 비율)라, 텐런을 9.8km(서버 인정 기준)에서 뛰어도 바는 98.00%로 멈춘다. 실제 지급 시점에 `isEarned`가 `ratio: 1.0`으로 스냅해 자가 치유되므로 사용자에게 "받았는데 바가 98%"로 잠깐 보이는 정도이며, 클라이언트가 값을 내는 조건이 이 하나뿐이라 영향 범위는 좁다 | 다음 gamification-designer/flutter-ui-designer 라운드에서 진행률 계산에 동일 허용오차 반영 |
+| 20 | **성취 억제 카운터와 전역 축하 다이얼로그 사이에 프레임 경합이 있다**(QA F-2, `achievement_celebration.dart`). `suppressAchievementCelebrations()`는 다음 프레임에 +1 하고 `AchievementCelebrationHost._present`도 같은 프레임에 post-frame으로 등록되는데, 호스트가 조상이라 먼저 실행돼 억제 카운터를 아직 0으로 본다. 정상 흐름(러닝 종료 후 뱃지가 뒤늦게 도착)에서는 발생하지 않고, "요약 화면 진입 시점에 이미 큐가 차 있는 경우"(밀린 뱃지 등)에 한정된다 — 전역 다이얼로그와 인라인 축하가 동시에 뜰 수 있다 | flutter-ui-designer, `_present` 진입부에서 `endOfFrame` 후 재확인 한 줄로 해소 가능 |
+| 21 | **뱃지 아트 경로 규칙이 다시 두 곳이다**(QA O-4) — `badge_assets.dart`의 정본 `badgeAssetPath`와 `share_card_body.dart`의 `tierEmblemAssetPath`가 별도로 존재한다. 현재는 `assets/badges/tier/{bronze,silver,gold,platinum}.svg` 파일명이 우연히 일치해 문제가 드러나지 않지만, 이번 라운드가 없앤 이원화와 같은 형태다 | flutter-ui-designer, 정본으로 통합 |
+| 22 | **`share_card_renderer.dart` 주석의 뱃지 SVG 종수가 158종으로 적혀 있으나 정본(`docs/badge-catalog.csv`)은 현재 146개다.** 판정 로직에 쓰이는 숫자는 아니고 서술뿐이지만, 카탈로그 삭제(마이그레이션 35/37)가 반영 안 된 흔적이다 | 문서 정리, 낮은 우선순위 |

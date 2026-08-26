@@ -63,6 +63,15 @@ dependencies:
   # 그대로 렌더링 — 손으로 다시 그리지 않고 원본 SVG를 쓴다.
   flutter_svg: ^2.0.10+1
 
+  # ── 공유 (HI-08 / HI-10) ──────────────────────────────────
+  # share_plus: OS 공유 시트(iOS UIActivityViewController / Android ACTION_SEND).
+  #   인스타 스토리로 카드 PNG를 넘기는 유일한 경로다.
+  #   ⚠️ 이미지 **캡처**용 패키지는 추가하지 않는다 — `screenshot` 등은 Flutter 내장
+  #   `RenderRepaintBoundary.toImage()`를 30줄 감싼 래퍼일 뿐이고, 우리는 출력 해상도를
+  #   1080×1920으로 고정하려고 pixelRatio를 직접 계산해야 해서 래퍼가 오히려 방해된다.
+  #   (`features/sharing/data/share_card_renderer.dart` 참조)
+  share_plus: ^10.1.4
+
   # ── 유틸 ─────────────────────────────────────────────────
   intl: ^0.19.0          # 날짜/숫자 로케일 포맷 (페이스 표시)
   collection: ^1.18.0

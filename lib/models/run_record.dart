@@ -123,6 +123,29 @@ abstract class RunRecord with _$RunRecord {
     /// (서버 재검증 후 확정 — `compute_run_xp()`). DB 컬럼은 `runs.awarded_xp`.
     int? awardedXp,
 
+    /// 서버 재검증 이상치 플래그 (PRD §8.4). DB 컬럼 `runs.is_flagged`.
+    ///
+    /// **읽기 전용**이다 — `_serverOwnedKeys`가 업로드 payload에서 제거하고,
+    /// 서버 `trg_runs_guard`가 한 번 더 되돌린다.
+    ///
+    /// ## 왜 `@Default(false)`가 아니라 nullable인가
+    /// 세 가지 상태를 구분해야 하기 때문이다:
+    /// - `null` = **아직 모른다** (로컬 저장만 됐거나 서버 응답을 못 받음)
+    /// - `false` = 서버가 정상으로 확정
+    /// - `true` = 서버가 이상치로 플래그
+    ///
+    /// 기본값을 `false`로 두면 "아직 검증 전"이 "정상 확정"으로 둔갑해,
+    /// 나중에 플래그될 기록을 축하하고 공유까지 시켜 버린다. 공유 카드는 앱 밖으로
+    /// 나가면 회수할 수 없으므로(`gamification/domain/achievement_moment.dart`의
+    /// 게이트 판정), 이 구분이 곧 안전장치다.
+    ///
+    /// 2026-08-26 추가 — gamification-designer의 공유 트리거 타이밍 설계 요청.
+    bool? isFlagged,
+
+    /// 플래그 사유. DB 컬럼 `runs.flag_reason`. [isFlagged]와 같은 규칙으로
+    /// 서버 전용이다. 사용자에게 그대로 노출할 문구는 아니다(내부 코드에 가깝다).
+    String? flagReason,
+
     /// 레코드 생성/수정 시각(UTC). 서버가 채운다.
     DateTime? createdAt,
     DateTime? updatedAt,
