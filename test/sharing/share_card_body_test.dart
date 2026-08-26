@@ -1,5 +1,8 @@
+import 'dart:ui' as ui;
+
 // Material의 `Badge` 위젯과 도메인 모델 `Badge`가 이름 충돌한다.
 import 'package:flutter/material.dart' hide Badge;
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runnit/features/sharing/domain/share_card_data.dart';
 import 'package:runnit/features/sharing/presentation/widgets/share_card_body.dart';
@@ -20,9 +23,14 @@ void main() {
   );
   final achievedAt = DateTime.utc(2026, 8, 26, 15);
 
-  Future<void> pumpCard(WidgetTester tester, ShareCardData card) async {
+  Future<void> pumpCard(
+    WidgetTester tester,
+    ShareCardData card, {
+    GlobalKey? boundaryKey,
+  }) async {
     // 실기기 폭에 가까운 값. 출력은 어차피 1080px로 역산되므로 이 크기는
-    // 비율 계산이 성립하는지만 확인하는 용도다.
+    // 비율 계산이 성립하는지만 확인하는 용도다. 카드는 9:16이라 320 폭이면
+    // 높이 568.9 — 실제로 그려질 수 있는 화면비다.
     tester.view.physicalSize = const Size(400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -34,7 +42,7 @@ void main() {
             child: SizedBox(
               width: 320,
               child: ShareCardSurface(
-                boundaryKey: GlobalKey(),
+                boundaryKey: boundaryKey ?? GlobalKey(),
                 child: ShareCardBody(card: card),
               ),
             ),
@@ -57,16 +65,17 @@ void main() {
           participantCount: participantCount,
         );
 
-    testWidgets('티어·시즌·누적 거리와 러너 정보가 모두 보인다', (tester) async {
+    testWidgets('티어·시즌·누적 거리가 보이고 브랜드 워드마크가 찍힌다', (tester) async {
       await pumpCard(tester, card());
 
       expect(find.text('골드 달성'), findsOneWidget);
       expect(find.text('2026-Q3'), findsOneWidget);
       expect(find.text('128.4km'), findsOneWidget);
       // 브랜드 마크는 무료 광고 1회가 목적이라 어떤 카드에서도 빠지지 않는다.
+      // 세로 9:16 재설계(2026-08-26)에서 사용자 레퍼런스를 따라 워드마크
+      // 하나만 상단 중앙에 남기고(러너 이름·레벨 표시는 제거) 나머지는
+      // 아트 + 수치 스택으로 옮겼다.
       expect(find.text('Runnit'), findsOneWidget);
-      expect(find.text('지현'), findsOneWidget);
-      expect(find.text('Lv.12 · 골드'), findsOneWidget);
     });
 
     testWidgets('순위는 절대 등수가 아니라 상위 %로 그린다', (tester) async {
@@ -137,7 +146,13 @@ void main() {
   });
 
   group('기록 카드', () {
-    testWidgets('거리·시간·페이스를 그리고 경로가 있으면 경로를 그린다', (tester) async {
+    // 2026-08-26: 사용자가 준 정확한 레퍼런스를 그대로 따른다 — 헤드라인
+    // ("완주") 문구 없이 Distance/Pace/Time 세 칸을 영문 라벨로 세로로
+    // 쌓는다. 콜론 표기(`4:59 /km`)도 레퍼런스 그대로다(도메인의
+    // `paceLabel`은 `4'59"/km` 형식이라 공유 캡션 등 다른 곳에서 계속 쓰인다
+    // — 카드 그림에서만 다르게 표기한다).
+    testWidgets('Distance·Pace·Time을 영문 라벨로 그리고 경로가 있으면 경로를 그린다',
+        (tester) async {
       await pumpCard(
         tester,
         RunRecapCardData(
@@ -158,10 +173,13 @@ void main() {
         ),
       );
 
-      expect(find.text('5.01km 완주'), findsOneWidget);
-      expect(find.text('25:00'), findsAtLeastNWidgets(1));
-      expect(find.text("4'59\"/km"), findsAtLeastNWidgets(1));
-      expect(find.text('320'), findsOneWidget);
+      expect(find.text('5.01km 완주'), findsNothing);
+      expect(find.text('Distance'), findsOneWidget);
+      expect(find.text('5.01km'), findsOneWidget);
+      expect(find.text('Pace'), findsOneWidget);
+      expect(find.text('4:59 /km'), findsOneWidget);
+      expect(find.text('Time'), findsOneWidget);
+      expect(find.text('25:00'), findsOneWidget);
       expect(find.byType(CustomPaint), findsWidgets);
     });
 
@@ -177,13 +195,13 @@ void main() {
         ),
       );
 
-      expect(find.text('3.00km 완주'), findsOneWidget);
+      expect(find.text('Distance'), findsOneWidget);
+      expect(find.text('3.00km'), findsOneWidget);
       // 경로가 없으면 빈 사각형 대신 활동 아이콘을 놓는다.
       expect(find.byIcon(Icons.directions_run_rounded), findsOneWidget);
-      expect(find.text('칼로리'), findsNothing);
     });
 
-    testWidgets('거리가 0이면 페이스 칸이 빠진다', (tester) async {
+    testWidgets('거리가 0이면 Pace 칸이 빠진다', (tester) async {
       await pumpCard(
         tester,
         RunRecapCardData(
@@ -195,12 +213,13 @@ void main() {
         ),
       );
 
-      expect(find.text('페이스'), findsNothing);
-      expect(find.text('00:00'), findsAtLeastNWidgets(1));
+      expect(find.text('Pace'), findsNothing);
+      expect(find.text('Time'), findsOneWidget);
+      expect(find.text('00:00'), findsOneWidget);
     });
   });
 
-  testWidgets('날짜는 KST로 찍힌다', (tester) async {
+  testWidgets('날짜+시각은 KST로 찍힌다', (tester) async {
     // UTC 15시는 KST로 다음 날 0시 — 밤 러닝이 하루 전날로 찍히면 안 된다.
     await pumpCard(
       tester,
@@ -213,6 +232,39 @@ void main() {
       ),
     );
 
-    expect(find.text('2026.08.27'), findsOneWidget);
+    expect(find.text('2026.08.27  00:00'), findsOneWidget);
+  });
+
+  testWidgets('카드에 불투명 배경이 없다 — 캡처된 이미지의 알파가 살아 있다', (tester) async {
+    // 오버레이 스티커의 존재 이유가 걸린 회귀 테스트다. 누군가 카드 안에
+    // `ColoredBox`/`Container(color:)`를 다시 넣으면 사용자 사진이 통째로
+    // 가려진 PNG가 인스타로 나간다 — 코드 리뷰가 아니라 테스트로 막는다.
+    final key = GlobalKey();
+    await pumpCard(
+      tester,
+      RunRecapCardData(
+        athlete: athlete,
+        achievedAt: achievedAt,
+        distanceMeters: 5012,
+        movingSeconds: 1500,
+        elapsedSeconds: 1560,
+      ),
+      boundaryKey: key,
+    );
+
+    final boundary =
+        key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    // `toImage`/`toByteData`는 엔진 스레드 작업이라 `runAsync` 밖에서는
+    // 영원히 완료되지 않는다(테스트가 그대로 멈춘다).
+    final bytes = await tester.runAsync(() async {
+      final image = await boundary.toImage();
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      image.dispose();
+      return data;
+    });
+
+    // 좌상단 모서리. 카드 패딩 안쪽이라 어떤 카드에서도 아무것도 그려지지
+    // 않는 자리다(중앙 정렬 컬럼이라 모서리는 항상 비어 있다).
+    expect(bytes!.getUint8(3), 0, reason: '카드 모서리가 불투명하다 — 배경이 칠해졌다');
   });
 }

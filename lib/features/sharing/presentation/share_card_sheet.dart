@@ -10,6 +10,15 @@
 /// 2026-08-26: 바텀시트에서 **풀페이지**로 전환했다(사용자 요청) — 카드가
 /// 세로로 긴 9:16 규격이라 시트로 접으면 실제 크기를 가늠하기 어려웠다.
 ///
+/// 2026-08-26(2): 카드가 **투명 오버레이 스티커**로 바뀌면서 미리보기도
+/// 다시 잡았다. **체커보드 바탕**을 카드 뒤에 깐다 — 배경이 없다는 사실을
+/// 말로만 설명하면 사용자는 "왜 카드가 반투명해 보이지?"로 읽는다. 체커는
+/// 캡처 경계([ShareCardSurface]) **바깥**에 있어 PNG에 구워지지 않는다.
+///
+/// 2026-08-26(3): 사용자가 준 정확한 레퍼런스 이미지가 9:16 세로였다 —
+/// (2)에서 가로 16:9로 바꾼 건 되돌리고, 폭 제약을 다시 세로 카드에 맞는
+/// 값으로 좁혔다.
+///
 /// ## flutter-ui-designer에게
 /// 이 파일은 **동작하는 골격**이다. 페이지 프레임·버튼·상태 표시는 자유롭게
 /// 바꾸되 아래 세 가지는 유지해야 캡처가 성립한다:
@@ -23,6 +32,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_tokens.dart';
+import '../data/share_card_renderer.dart';
 import '../data/share_providers.dart';
 import '../data/share_service.dart';
 import '../domain/share_card_data.dart';
@@ -140,10 +150,31 @@ class _ShareCardPageState extends ConsumerState<ShareCardPage> {
               Expanded(
                 child: Center(
                   child: ConstrainedBox(
+                    // 세로 9:16 카드라 폭이 좁아야 화면 안에 온전히 들어온다.
+                    // 태블릿에서 무한정 커지지 않게 상한도 겸한다.
                     constraints: const BoxConstraints(maxWidth: 360),
-                    child: ShareCardSurface(
-                      boundaryKey: _boundaryKey,
-                      child: ShareCardBody(card: widget.card),
+                    child: AspectRatio(
+                      aspectRatio: shareCardAspectRatio,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // ⚠️ 캡처 경계 밖이다 — 체커는 PNG에 찍히지 않는다.
+                          ClipRRect(
+                            borderRadius:
+                                BorderRadius.circular(AppTokens.rLg),
+                            child: CustomPaint(
+                              painter: _TransparencyChecker(
+                                light: theme.colorScheme.surfaceContainerHighest,
+                                dark: theme.colorScheme.surfaceContainerHigh,
+                              ),
+                            ),
+                          ),
+                          ShareCardSurface(
+                            boundaryKey: _boundaryKey,
+                            child: ShareCardBody(card: widget.card),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -174,10 +205,10 @@ class _ShareCardPageState extends ConsumerState<ShareCardPage> {
                 ),
               ),
               const SizedBox(height: AppTokens.s8),
-              // 카드가 어떤 규격으로 나가는지 미리 알려 준다 — 인스타 스토리에
-              // 올릴 때 잘리지 않는다는 신호(PRD HI-08 "9:16").
+              // 무엇이 저장되는지 미리 알려 준다. "배경 없는 스티커"라는 점을
+              // 말해 주지 않으면 사용자는 이걸 그대로 올리려다 실망한다.
               Text(
-                '인스타그램 스토리 규격(9:16)으로 저장돼요.',
+                '배경이 없는 9:16 스티커로 저장돼요. 스토리에 올린 사진 위에 얹어 보세요.',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
@@ -188,4 +219,35 @@ class _ShareCardPageState extends ConsumerState<ShareCardPage> {
       ),
     );
   }
+}
+
+/// 미리보기 뒤에 깔리는 체커보드. "이 카드에는 배경이 없다"를 그림으로
+/// 말한다 — 이미지 편집기의 투명 표시와 같은 관습이라 설명이 필요 없다.
+///
+/// **캡처 경계 밖에서만 쓴다.** 안으로 들어가면 체커가 그대로 PNG에 구워진다.
+class _TransparencyChecker extends CustomPainter {
+  const _TransparencyChecker({required this.light, required this.dark});
+
+  final Color light;
+  final Color dark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cell = 12.0;
+    canvas.drawRect(Offset.zero & size, Paint()..color = light);
+    final paint = Paint()..color = dark;
+    for (var y = 0; y * cell < size.height; y++) {
+      for (var x = 0; x * cell < size.width; x++) {
+        if ((x + y).isEven) continue;
+        canvas.drawRect(
+          Rect.fromLTWH(x * cell, y * cell, cell, cell),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TransparencyChecker oldDelegate) =>
+      oldDelegate.light != light || oldDelegate.dark != dark;
 }

@@ -1,25 +1,31 @@
-/// 공유 카드의 **9:16 프레임 + 캡처 계약**. 안쪽 그림은 flutter-ui-designer 담당.
+/// 공유 카드의 **9:16 투명 프레임 + 캡처 계약**. 안쪽 그림은 `share_card_body.dart`.
 ///
 /// ## 이 파일이 확정하는 것 (바꾸면 캡처가 깨진다)
-/// 1. 카드는 항상 `AspectRatio(9/16)`이고 [RepaintBoundary]로 감싸여 있다.
+/// 1. 카드는 항상 `AspectRatio(shareCardAspectRatio)`(9:16)이고 [RepaintBoundary]로
+///    감싸여 있다.
 /// 2. 그 경계의 [GlobalKey]를 밖에서 주입받는다 — 캡처하는 쪽이 키를 소유해야
 ///    "지금 화면에 있는 그 카드"를 정확히 굽는다.
 /// 3. 카드 안에서는 `MediaQuery` 크기나 `Theme`의 화면 의존 값을 읽지 않는다.
 ///    카드는 1080×1920으로 구워지는 **고정 규격 인쇄물**이고, 기기마다 다르게
-///    보이면 안 된다. 크기는 전부 카드 폭 대비 비율로 잡는다.
-/// 4. 다크 모드를 따라가지 않는다. 인스타 스토리에 올라간 카드는 보는 사람의
-///    테마와 무관하며, 브랜드 카드가 기기 설정에 따라 두 얼굴을 갖는 건 손해다.
+///    보이면 안 된다. 크기는 전부 카드 **높이** 대비 비율로 잡는다.
+/// 4. 다크 모드를 따라가지 않는다. 스티커가 얹히는 곳은 사용자의 사진이지
+///    보는 사람의 테마가 아니다.
+/// 5. **배경을 칠하지 않는다.** ← 2026-08-26 변경의 핵심.
 ///
-/// ## 안쪽 그림
-/// 2026-08-26 UI 작업에서 `widgets/share_card_body.dart`의 [ShareCardBody]가
-/// 자리표시자(`DefaultShareCardBody`)를 대체했다. 자리표시자는 **삭제**했다 —
-/// 남겨 두면 두 벌의 카드 디자인이 갈라지고, 어느 쪽이 실제로 공유되는지
-/// 코드를 읽어야 알 수 있게 된다(뱃지 아트 경로가 두 벌이던 것과 같은 문제).
+/// ## 왜 배경(그리고 둥근 모서리)이 사라졌는가
+/// 이전에는 `ClipRRect` + `ColoredBox(0xFF101216)`로 불투명 카드를 만들었다.
+/// 지금 카드는 사용자가 **자기 사진 위에 얹는 오버레이 스티커**다(렌더러 문서
+/// 참조). 배경색을 칠하면 사진이 가려져 스티커의 존재 이유가 사라지고, 둥근
+/// 모서리는 "여기 판때기가 하나 붙어 있다"는 프레임 신호를 남긴다 — 사진 위에
+/// 자연스럽게 앉으려면 글자와 선만 남아야 한다.
+///
+/// 글자와 경로 선에 그림자/halo도 달지 않는다(2026-08-26, 사용자 요청) —
+/// 레퍼런스 이미지가 순수한 흰 선·글자였다. 밝은 사진 위 대비는 이 카드가
+/// 책임지지 않는다.
 library;
 
 import 'package:flutter/material.dart';
 
-import '../../../../core/theme/app_tokens.dart';
 import '../../data/share_card_renderer.dart';
 
 /// 캡처 대상 프레임. 카드 위젯은 **반드시** 이걸 통해 화면에 올라간다.
@@ -41,20 +47,15 @@ class ShareCardSurface extends StatelessWidget {
       aspectRatio: shareCardAspectRatio,
       child: RepaintBoundary(
         key: boundaryKey,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(AppTokens.rLg),
-          // 캡처된 PNG에 투명 영역이 남지 않도록 배경을 명시한다 —
-          // 스토리 배경이 비쳐 글자가 안 보이는 사고를 막는다.
-          child: ColoredBox(
-            color: const Color(0xFF101216),
-            // 카드는 1080×1920으로 구워지는 고정 규격 "인쇄물"이라, 보는
-            // 사람의 시스템 글꼴 배율과 무관해야 한다(캡처 계약 ④, QA O-1).
-            // 이게 없으면 `Text`가 `MediaQuery.textScalerOf`를 암묵적으로
-            // 읽어 시스템 글꼴을 키운 사용자만 다른 글씨 크기가 찍힌 카드를
-            // 얻는다.
-            child: MediaQuery.withNoTextScaling(child: child),
-          ),
-        ),
+        // ⚠️ 여기에 ColoredBox/DecoratedBox/Container(color:)를 넣지 않는다.
+        // 하나라도 들어가면 캡처된 PNG의 알파가 사라지고 스티커가 아니라
+        // 사진을 덮는 판때기가 된다.
+        //
+        // 카드는 1080×1920으로 구워지는 고정 규격 "인쇄물"이라, 보는 사람의
+        // 시스템 글꼴 배율과 무관해야 한다(캡처 계약 ③, QA O-1). 이게 없으면
+        // `Text`가 `MediaQuery.textScalerOf`를 암묵적으로 읽어 시스템 글꼴을
+        // 키운 사용자만 다른 글씨 크기가 찍힌 카드를 얻는다.
+        child: MediaQuery.withNoTextScaling(child: child),
       ),
     );
   }

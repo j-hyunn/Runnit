@@ -115,3 +115,7 @@ flutter:
     - family: Pretendard Variable
       fonts:
         - asset: assets/fonts/PretendardVariable.ttf
+    # 공유 카드(오버레이 스티커) 전용 — 가변 폰트, 굵기는 TextStyle.fontWeight로 매핑.
+    - family: Orbitron
+      fonts:
+        - asset: assets/fonts/Orbitron-VariableFont_wght.ttf

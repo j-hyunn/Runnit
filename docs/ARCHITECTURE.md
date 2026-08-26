@@ -122,12 +122,12 @@ lib/
         share_card_builder.dart   # 기존 모델 → 카드 조합(순수 함수, I/O 없음)
         achievement_backlog.dart  # 밀린 성취를 한 장으로 접을지 판정(TRD §14 #19)
       data/
-        share_card_renderer.dart  # RepaintBoundary → 1080×1920 PNG
+        share_card_renderer.dart  # RepaintBoundary → 1080×1920 투명 PNG(9:16 오버레이)
         share_service.dart        # 임시 PNG 기록 + OS 공유 시트(share_plus)
         share_providers.dart      # 성취 큐 · 카드 조립 Provider
       presentation/
         share_card_sheet.dart     # 미리보기 + 공유(캡처 전 SVG 프리캐시, 캡처 중 버튼 잠금)
-        widgets/share_card_surface.dart      # 9:16 프레임 + 캡처 계약
+        widgets/share_card_surface.dart      # 9:16 투명 프레임 + 캡처 계약(배경 금지)
         widgets/share_card_body.dart         # 카드 4종의 실제 그림 + 경로 페인터
         widgets/achievement_celebration.dart # 축하 연출 + 전역 큐 호스트(트리거 #2)
     notifications/            # 알림 설정/수신(NT-01~08)

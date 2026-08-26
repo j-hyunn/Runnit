@@ -1,20 +1,39 @@
 /// 공유 카드 4종의 **실제 그림**. [ShareCardSurface]의 `child`로 들어간다.
 ///
+/// ## 2026-08-26 재설계 — 세로 9:16 투명 오버레이 스티커
+/// 사용자가 준 정확한 레퍼런스 이미지(396×704 = 9:16, 투명 배경 + 흰색 콘텐츠)를
+/// 그대로 따른다: 위에서 아래로 **워드마크 → 촬영 시각 → 경로/엠블럼 → 수치
+/// 스택** 한 줄기 중앙 정렬 컬럼이다. 좌우로 나눠 쓰던 가로 밴드 레이아웃은
+/// 폐기했다 — 카드는 다시 세로다.
+///
+/// 1. **배경이 없다.** 어떤 위젯도 불투명 배경을 칠하지 않는다(칠하는 순간
+///    알파가 사라져 스티커가 아니라 사진을 덮는 판때기가 된다).
+/// 2. **그림자/halo가 없다.** 레퍼런스 이미지가 순수한 흰 선·글자였고,
+///    사용자가 명시적으로 그림자를 걷어내라고 했다(2026-08-26). 밝은 사진
+///    위 대비를 카드가 대신 책임지지 않는다.
+/// 3. **세로가 빡빡한 축이다.** 카드 **높이**(`s`)를 기준 단위로 삼는다 —
+///    9:16에서 요소가 조금만 커져도 세로 예산을 넘기기 쉽다.
+///
 /// ## 이 파일이 지키는 계약 (아키텍처 문서 §5.1)
 /// 1. `MediaQuery`·`Theme`·다크모드를 **읽지 않는다.** 카드는 1080×1920으로
-///    구워지는 고정 규격 인쇄물이고, 스토리에 올라간 뒤에는 보는 사람의 테마와
-///    무관하다. 모든 치수는 [LayoutBuilder]가 준 카드 폭(`w`) 대비 비율이다.
-/// 2. 폰트도 앰비언트 테마에 맡기지 않고 `Pretendard Variable`을 명시한다 —
-///    카드를 띄우는 화면의 `DefaultTextStyle`이 무엇이든 결과가 같아야 한다.
-/// 3. 네트워크 이미지(`athlete.avatarUrl`)를 그리지 않는다. 캡처는 프레임 하나만
-///    기다리는데 네트워크 이미지는 그 안에 도착한다는 보장이 없어, 아바타가 빈
-///    사각형으로 구워질 수 있다. 대신 이니셜 원을 그린다.
+///    구워지는 고정 규격 인쇄물이다.
+/// 2. 폰트를 앰비언트 테마에 맡기지 않는다. 수치·라벨·워드마크는
+///    `Orbitron`(사용자 지정 디스플레이 서체), 한글은 `Pretendard Variable`로
+///    폴백한다 — Orbitron에는 한글 글리프가 없어 폴백을 명시하지 않으면 기기
+///    기본 글꼴이 튀어나온다.
+/// 3. 네트워크 이미지(`athlete.avatarUrl`)를 그리지 않는다. 캡처는 프레임
+///    하나만 기다리는데 네트워크 이미지는 그 안에 도착한다는 보장이 없다.
 ///
-/// ## 레이아웃 원칙
-/// 세로 9:16은 **위/가운데/아래 3단**으로 읽힌다: 브랜드 → 성취 → 러너.
-/// 가운데 성취 영역만 카드 종류에 따라 달라지고, 위아래는 4종이 공유한다.
-/// 가운데 영역의 요소(메달·헤드라인·부제·수치 타일)는 **전부 없을 수 있으므로**
-/// 각각 null 검사 후 리스트에 넣는다 — 빈 자리가 생겨도 [Spacer]가 흡수한다.
+/// ## 레퍼런스와의 의도적 차이
+/// - 레퍼런스는 러닝 기록 카드([RunRecapCardData]) 한 장이었고, 그 카드는
+///   러너 신원(이름/티어)을 아예 보여주지 않는다 — 그대로 따랐다.
+/// - 성취 카드(티어/뱃지/PB) 3종은 레퍼런스에 없었다. 같은 시각 언어(워드마크
+///   → 시각 → 아트 → 수치 스택)를 쓰되, "무엇을 달성했는가"를 말해야 하므로
+///   아트 아래에 헤드라인/서브헤드를 추가했다.
+///
+/// ## 경로(route)를 어디에 그리는가
+/// **기록 카드에서만** 그린다. 성취 카드에 경로를 얹으면 임의의 사진 위에서
+/// "안 보이거나(밝은 사진) 지저분한 낙서로 보이거나" 둘 중 하나가 된다.
 library;
 
 import 'dart:math' as math;
@@ -26,7 +45,52 @@ import '../../../../core/theme/app_tokens.dart';
 import '../../../../models/enums.dart';
 import '../../domain/share_card_data.dart';
 
+// ════════════════════════ 타이포 · 가독성 토큰 ════════════════════════
+
+/// 수치·라벨·워드마크용 디스플레이 서체(사용자 지정). 가변 폰트라 굵기는
+/// `TextStyle.fontWeight`가 축으로 매핑된다.
+const String shareCardDisplayFont = 'Orbitron';
+
+/// Orbitron에는 한글 글리프가 없다. 폴백을 명시하지 않으면 한글만 기기 기본
+/// 글꼴로 찍혀 카드가 두 얼굴이 된다.
+const List<String> shareCardFontFallback = ['Pretendard Variable'];
+
+/// 카드 안 모든 텍스트가 이 함수를 통과한다 — 서체·폴백을 한 곳에서
+/// 보장하기 위해서다(사용자 지정 Orbitron + 한글 폴백).
+///
+/// 2026-08-26: 그림자/halo를 걷어냈다(사용자 요청) — 레퍼런스 이미지 자체가
+/// 그림자 없는 순수한 흰 선·글자였다. 밝은 사진 위 대비는 이 카드의 관심사가
+/// 아니다 — 사용자가 어떤 사진에 얹을지 미리 알 수 없고, 대비를 강제로
+/// 만들면 레퍼런스와 다른 그림이 된다.
+TextStyle shareCardTextStyle({
+  required double size,
+  required FontWeight weight,
+  Color color = Colors.white,
+  double height = 1.0,
+  double letterSpacing = 0,
+}) =>
+    TextStyle(
+      fontFamily: shareCardDisplayFont,
+      fontFamilyFallback: shareCardFontFallback,
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+      height: height,
+      letterSpacing: letterSpacing,
+      decoration: TextDecoration.none,
+    );
+
+// ════════════════════════ 카드 본문 ════════════════════════
+
 /// 카드 본문. 4종 분기가 **여기 한 곳**에만 있다.
+///
+/// 세로 컬럼 하나: 워드마크 → 시각 → (여백) → 아트 → (여백) →
+/// [성취 카드만] 헤드라인/서브헤드 → 수치 스택. 카드 종류에 따라 아트·글자
+/// 크기 예산이 달라 [isRecap] 분기로 두 세트의 치수를 쓴다 — 기록 카드는
+/// 러너 신원·헤드라인이 없어 여유가 더 크고, 성취 카드는 헤드라인이 들어가는
+/// 만큼 아트/수치를 보수적으로 잡는다. 둘 다 `Spacer`로 남는 세로 공간을
+/// 흡수하므로, 실제 합이 예산보다 작아도(경로 없음, 뱃지처럼 수치 0개 등)
+/// 레이아웃이 어색하게 뜨지 않는다.
 class ShareCardBody extends StatelessWidget {
   const ShareCardBody({required this.card, super.key});
 
@@ -35,355 +99,107 @@ class ShareCardBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = shareCardAccent(card);
+    final stats = _statsOf(card);
+    final isRecap = card is RunRecapCardData;
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final w = constraints.maxWidth;
+        // 9:16에서 빡빡한 축은 세로다 — 카드 높이를 기준 단위로 잡아야
+        // 미리보기든 1080×1920 출력이든 같은 비율이 나온다.
+        final s = constraints.maxHeight;
 
-        return DefaultTextStyle(
-          style: TextStyle(
-            fontFamily: 'Pretendard Variable',
-            color: Colors.white,
-            fontSize: w * 0.045,
-            height: 1.25,
-            // 카드는 어떤 화면 위에 있어도 같은 글씨여야 한다.
-            decoration: TextDecoration.none,
+        final heroWidth = s * (isRecap ? 0.34 : 0.30);
+        final heroHeight = s * (isRecap ? 0.20 : 0.24);
+        final statLabelSize = s * (isRecap ? 0.024 : 0.019);
+        final statValueSize = s * (isRecap ? 0.074 : 0.052);
+
+        return Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: s * 0.06,
+            vertical: s * 0.058,
           ),
-          child: Stack(
-            fit: StackFit.expand,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _Backdrop(accent: accent),
-              // 성취 카드에서 경로는 **배경 워터마크**다. 주인공은 메달과 문구고,
-              // 경로는 "어디를 뛰어서 얻었는지"를 흐리게 덧붙인다.
-              if (card.kind != ShareCardKind.runRecap && card.route != null)
-                Positioned.fill(
-                  child: Opacity(
-                    opacity: 0.16,
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: w * 0.1),
-                      child: CustomPaint(
-                        painter: ShareRoutePainter(
-                          route: card.route!,
-                          color: Colors.white,
-                          strokeWidth: w * 0.012,
-                          showEndpoints: false,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  w * 0.085,
-                  w * 0.09,
-                  w * 0.085,
-                  w * 0.085,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _BrandRow(w: w, accent: accent, achievedAt: card.achievedAt),
-                    const Spacer(),
-                    _CardCenter(card: card, w: w, accent: accent),
-                    const Spacer(),
-                    _AthleteFooter(card: card, w: w, accent: accent),
-                  ],
+              Text(
+                'Runnit',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                style: shareCardTextStyle(
+                  size: s * 0.082,
+                  weight: FontWeight.w500,
+                  letterSpacing: s * 0.002,
                 ),
               ),
+              SizedBox(height: s * 0.016),
+              Text(
+                formatShareDateTime(card.achievedAt),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                style: shareCardTextStyle(
+                  size: s * 0.026,
+                  weight: FontWeight.w400,
+                  color: Colors.white.withValues(alpha: 0.75),
+                  letterSpacing: s * 0.001,
+                ),
+              ),
+              const Spacer(flex: 2),
+              SizedBox(
+                width: heroWidth,
+                height: heroHeight,
+                child: _HeroArt(card: card, accent: accent),
+              ),
+              const Spacer(flex: 1),
+              // 헤드라인은 성취 카드(티어/뱃지/PB)에만 있다 — 기록 카드는
+              // "무엇을 달성했는가"를 주장하지 않고 수치가 바로 그 답이다.
+              if (!isRecap) ...[
+                Text(
+                  card.headline,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: shareCardTextStyle(
+                    size: s * 0.038,
+                    weight: FontWeight.w700,
+                    height: 1.1,
+                  ),
+                ),
+                if (card.subhead != null) ...[
+                  SizedBox(height: s * 0.01),
+                  Text(
+                    card.subhead!,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: shareCardTextStyle(
+                      size: s * 0.022,
+                      weight: FontWeight.w500,
+                      color: Colors.white.withValues(alpha: 0.82),
+                    ),
+                  ),
+                ],
+                SizedBox(height: s * 0.028),
+              ],
+              if (stats.isNotEmpty)
+                _StatStack(
+                  stats: stats,
+                  s: s,
+                  labelSize: statLabelSize,
+                  valueSize: statValueSize,
+                ),
             ],
           ),
         );
       },
     );
   }
-}
 
-// ════════════════════════ 공통 3단 ════════════════════════
-
-/// 카드 바탕. 위쪽에서 강조색이 번지고 아래로 갈수록 잠긴다 — 아래 절반에
-/// 흰 글씨(러너 정보)가 앉으므로 그쪽 대비를 확보해야 한다.
-class _Backdrop extends StatelessWidget {
-  const _Backdrop({required this.accent});
-
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Color.alphaBlend(accent.withValues(alpha: 0.30), _cardBase),
-            Color.alphaBlend(accent.withValues(alpha: 0.10), _cardBase),
-            _cardBase,
-          ],
-          stops: const [0, 0.45, 1],
-        ),
-      ),
-    );
-  }
-}
-
-class _BrandRow extends StatelessWidget {
-  const _BrandRow({
-    required this.w,
-    required this.accent,
-    required this.achievedAt,
-  });
-
-  final double w;
-  final Color accent;
-  final DateTime achievedAt;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          'RUNNIT',
-          style: TextStyle(
-            color: accent,
-            fontSize: w * 0.048,
-            fontWeight: FontWeight.w800,
-            letterSpacing: w * 0.012,
-          ),
-        ),
-        Text(
-          formatShareDate(achievedAt),
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.55),
-            fontSize: w * 0.038,
-            fontWeight: FontWeight.w500,
-            letterSpacing: w * 0.002,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 하단 러너 신원 — **브랜드 마크와 함께 4종 공통**이다. 무료 광고 1회가
-/// 이 카드의 목적이므로(BRD §5.2) 이름과 브랜드는 어떤 카드에서도 빠지지 않는다.
-class _AthleteFooter extends StatelessWidget {
-  const _AthleteFooter({
-    required this.card,
-    required this.w,
-    required this.accent,
-  });
-
-  final ShareCardData card;
-  final double w;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    final athlete = card.athlete;
-    final initial = _initialOf(athlete.displayName);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(height: w * 0.003, color: Colors.white.withValues(alpha: 0.16)),
-        SizedBox(height: w * 0.05),
-        Row(
-          children: [
-            Container(
-              width: w * 0.12,
-              height: w * 0.12,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: accent.withValues(alpha: 0.22),
-                border: Border.all(
-                  color: accent.withValues(alpha: 0.6),
-                  width: w * 0.004,
-                ),
-              ),
-              child: Text(
-                initial,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: w * 0.055,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            SizedBox(width: w * 0.035),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    athlete.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: w * 0.046,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  SizedBox(height: w * 0.008),
-                  Text(
-                    'Lv.${athlete.level} · ${tierLabel(athlete.tier)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
-                      fontSize: w * 0.036,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(width: w * 0.03),
-            _BrandMark(w: w, accent: accent),
-          ],
-        ),
-      ],
-    );
-  }
-
-  static String _initialOf(String name) {
-    final trimmed = name.trim();
-    return trimmed.isEmpty ? 'R' : trimmed.characters.first.toUpperCase();
-  }
-}
-
-/// 오른쪽 아래 브랜드 마크. 캡처된 이미지가 어디로 퍼지든 출처가 남아야 한다.
-class _BrandMark extends StatelessWidget {
-  const _BrandMark({required this.w, required this.accent});
-
-  final double w;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: w * 0.035, vertical: w * 0.018),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(w * 0.1),
-        border: Border.all(color: accent.withValues(alpha: 0.45), width: w * 0.003),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: w * 0.022,
-            height: w * 0.022,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: accent),
-          ),
-          SizedBox(width: w * 0.018),
-          Text(
-            'Runnit',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: w * 0.034,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ════════════════════════ 가운데 — 카드별 ════════════════════════
-
-class _CardCenter extends StatelessWidget {
-  const _CardCenter({
-    required this.card,
-    required this.w,
-    required this.accent,
-  });
-
-  final ShareCardData card;
-  final double w;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    // sealed union이라 4종이 빠짐없이 다뤄진다 — 카드가 늘면 컴파일 에러가 난다.
-    final (Widget emblem, List<_Stat> stats) = switch (card) {
-      final TierPromotionCardData c => (
-          ShareCardEmblem(
-            assetPath: tierEmblemAssetPath(c.tier),
-            size: w * 0.42,
-            accent: accent,
-          ),
-          _tierStats(c),
-        ),
-      final BadgeEarnedCardData c => (
-          ShareCardEmblem(
-            assetPath: c.badgeAssetPath,
-            size: w * 0.42,
-            accent: accent,
-          ),
-          const <_Stat>[],
-        ),
-      final PersonalBestCardData c => (
-          ShareCardEmblem(
-            assetPath: c.badgeAssetPath,
-            size: w * 0.42,
-            accent: accent,
-          ),
-          _pbStats(c),
-        ),
-      // 기록 카드에는 메달이 없다 — 경로 그림이 그 자리를 대신한다.
-      final RunRecapCardData c => (
-          _RouteHero(route: c.route, w: w, accent: accent),
-          _recapStats(c),
-        ),
-    };
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        emblem,
-        SizedBox(height: w * 0.06),
-        Text(
-          card.headline,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: w * 0.105,
-            height: 1.15,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -w * 0.002,
-          ),
-        ),
-        if (card.subhead != null) ...[
-          SizedBox(height: w * 0.028),
-          Text(
-            card.subhead!,
-            textAlign: TextAlign.center,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.72),
-              fontSize: w * 0.046,
-              height: 1.35,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-        // 타일이 하나도 없으면 행 자체를 그리지 않는다 — 빈 구분선만 남는
-        // 카드(예: 시간 없는 PB, 경로 없는 실내 러닝)를 만들지 않기 위해서다.
-        if (stats.isNotEmpty) ...[
-          SizedBox(height: w * 0.07),
-          _StatRow(stats: stats, w: w, accent: accent),
-        ],
-      ],
-    );
-  }
+  static List<_Stat> _statsOf(ShareCardData card) => switch (card) {
+        final TierPromotionCardData c => _tierStats(c),
+        BadgeEarnedCardData() => const <_Stat>[],
+        final PersonalBestCardData c => _pbStats(c),
+        final RunRecapCardData c => _recapStats(c),
+      };
 
   /// 티어 카드: 시즌 · 시즌 누적 거리 · (있으면) 상위 %.
   ///
@@ -424,15 +240,146 @@ class _CardCenter extends StatelessWidget {
     ];
   }
 
-  /// 기록 카드: 시간 · 페이스 · (있으면) 칼로리.
+  /// 기록 카드: Distance · (있으면) Pace · Time — **레퍼런스 그대로 영문
+  /// 라벨**이다. 다른 3종의 라벨이 한글인 것과 다르지만, 사용자가 지정한
+  /// 정확한 레퍼런스가 이 카드에 한정돼 있어 그대로 옮겼다.
   static List<_Stat> _recapStats(RunRecapCardData card) {
-    final pace = card.paceLabel;
-    final kcal = card.caloriesKcal;
+    final pace = _paceColonLabel(card);
     return [
-      _Stat(label: '시간', value: card.timeLabel),
-      if (pace != null) _Stat(label: '페이스', value: pace),
-      if (kcal != null) _Stat(label: '칼로리', value: '$kcal'),
+      _Stat(label: 'Distance', value: card.distanceLabel),
+      if (pace != null) _Stat(label: 'Pace', value: '$pace /km'),
+      _Stat(label: 'Time', value: card.timeLabel),
     ];
+  }
+
+  /// `4:10` 형식(콜론). 도메인의 [RunRecapCardData.paceLabel]은 `4'10"` 형식
+  /// (다른 카드·공유 캡션과의 표기 통일이 목적)이라, 레퍼런스가 요구하는
+  /// 콜론 표기는 이 위젯 계층에서 별도로 만든다. **null 판정 로직은 도메인과
+  /// 동일하게 유지**해야 "거리 0이면 페이스 칸이 빠진다" 같은 계약이
+  /// 어긋나지 않는다.
+  static String? _paceColonLabel(RunRecapCardData card) {
+    final seconds = card.avgPaceSecPerKm ??
+        (card.distanceMeters > 0 && card.movingSeconds > 0
+            ? card.movingSeconds / (card.distanceMeters / 1000)
+            : null);
+    if (seconds == null || seconds <= 0 || !seconds.isFinite) return null;
+    final total = seconds.round();
+    return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+  }
+}
+
+class _Stat {
+  const _Stat({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
+/// 수치 블록을 **세로로** 쌓는다 — 레퍼런스가 Distance/Pace/Time을 한 줄에
+/// 나열하지 않고 각각 자기 줄을 갖는 것과 같다. 가로 밴드 시절의 좌우 나열
+/// (`_StatRow`)은 폐기했다.
+class _StatStack extends StatelessWidget {
+  const _StatStack({
+    required this.stats,
+    required this.s,
+    required this.labelSize,
+    required this.valueSize,
+  });
+
+  final List<_Stat> stats;
+  final double s;
+  final double labelSize;
+  final double valueSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < stats.length; i++) ...[
+          if (i > 0) SizedBox(height: s * 0.03),
+          _StatBlock(stat: stats[i], labelSize: labelSize, valueSize: valueSize),
+        ],
+      ],
+    );
+  }
+}
+
+class _StatBlock extends StatelessWidget {
+  const _StatBlock({
+    required this.stat,
+    required this.labelSize,
+    required this.valueSize,
+  });
+
+  final _Stat stat;
+  final double labelSize;
+  final double valueSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          stat.label,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: shareCardTextStyle(
+            size: labelSize,
+            weight: FontWeight.w500,
+            color: Colors.white.withValues(alpha: 0.75),
+            letterSpacing: labelSize * 0.03,
+          ),
+        ),
+        SizedBox(height: labelSize * 0.28),
+        Text(
+          stat.value,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: shareCardTextStyle(size: valueSize, weight: FontWeight.w700),
+        ),
+      ],
+    );
+  }
+}
+
+// ════════════════════════ 아트 ════════════════════════
+
+/// 성취 카드(티어/뱃지/PB)의 아트 또는 기록 카드의 경로를 고른다.
+class _HeroArt extends StatelessWidget {
+  const _HeroArt({required this.card, required this.accent});
+
+  final ShareCardData card;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    // sealed union이라 4종이 빠짐없이 다뤄진다 — 카드가 늘면 컴파일 에러가 난다.
+    return switch (card) {
+      final TierPromotionCardData c => ShareCardEmblem(
+          assetPath: tierEmblemAssetPath(c.tier),
+          size: double.infinity,
+          accent: accent,
+          scrim: true,
+        ),
+      final BadgeEarnedCardData c => ShareCardEmblem(
+          assetPath: c.badgeAssetPath,
+          size: double.infinity,
+          accent: accent,
+          scrim: true,
+        ),
+      final PersonalBestCardData c => ShareCardEmblem(
+          assetPath: c.badgeAssetPath,
+          size: double.infinity,
+          accent: accent,
+          scrim: true,
+        ),
+      // 기록 카드에는 메달이 없다 — 경로 그림이 그 자리를 대신한다.
+      final RunRecapCardData c => _RouteHero(route: c.route, accent: accent),
+    };
   }
 }
 
@@ -448,37 +395,63 @@ class ShareCardEmblem extends StatelessWidget {
     required this.assetPath,
     required this.size,
     required this.accent,
+    this.scrim = false,
     super.key,
   });
 
   final String assetPath;
+
+  /// `double.infinity`를 주면 부모가 준 상자를 채운다(공유 카드가 그렇게 쓴다).
   final double size;
   final Color accent;
+
+  /// 임의의 사진 위에 얹히는 공유 카드용. 메달 뒤에 **어두운** 원을 깔아
+  /// 밝은 사진 위에서도 메달의 실루엣이 살아 있게 한다. 앱 안 축하 연출은
+  /// 이미 어두운 배경 위라 필요 없다(기본값 false).
+  final bool scrim;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size,
       height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // 메달 뒤 광채 — 어두운 배경에서 메달이 떠 보이게 한다.
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  accent.withValues(alpha: 0.38),
-                  accent.withValues(alpha: 0),
-                ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final d = math.min(constraints.maxWidth, constraints.maxHeight);
+
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              if (scrim)
+                Container(
+                  width: d,
+                  height: d,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [Color(0x73000000), Color(0x00000000)],
+                      stops: [0.55, 1],
+                    ),
+                  ),
+                ),
+              // 메달 뒤 광채 — 메달이 바탕에서 떠 보이게 한다.
+              Container(
+                width: d,
+                height: d,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      accent.withValues(alpha: 0.38),
+                      accent.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ),
-          SvgPicture.asset(assetPath, width: size * 0.78),
-        ],
+              SvgPicture.asset(assetPath, width: d * 0.78),
+            ],
+          );
+        },
       ),
     );
   }
@@ -487,108 +460,46 @@ class ShareCardEmblem extends StatelessWidget {
 /// 기록 카드의 주인공 — 경로 그림.
 ///
 /// 경로가 없으면(실내 러닝·좌표 없는 기록) 그림 대신 활동 아이콘을 놓는다.
-/// **빈 사각형을 남기지 않는다** — 카드 가운데가 비면 완성도가 무너져 보인다.
+/// **빈 사각형을 남기지 않는다** — 아트 칸이 비면 카드 가운데가 뜯겨 보인다.
+///
+/// 레퍼런스의 선은 **순백**이고 시작/끝 점 마커가 없는 단순한 선이다 —
+/// 이전(가로 밴드) 디자인의 티어색 선 + 시작/끝 원 마커를 걷어냈다.
 class _RouteHero extends StatelessWidget {
-  const _RouteHero({required this.route, required this.w, required this.accent});
+  const _RouteHero({required this.route, required this.accent});
 
   final ShareRoute? route;
-  final double w;
   final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    final size = w * 0.6;
     final drawable = route;
 
-    if (drawable == null || !drawable.isDrawable) {
-      return SizedBox(
-        width: size,
-        height: size * 0.6,
-        child: Center(
-          child: Icon(
-            Icons.directions_run_rounded,
-            size: w * 0.28,
-            color: accent.withValues(alpha: 0.85),
-          ),
-        ),
-      );
-    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        final minSide = math.min(w, h);
 
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: ShareRoutePainter(
-          route: drawable,
-          color: accent,
-          strokeWidth: w * 0.016,
-        ),
-      ),
-    );
-  }
-}
-
-// ════════════════════════ 수치 타일 ════════════════════════
-
-class _Stat {
-  const _Stat({required this.label, required this.value});
-
-  final String label;
-  final String value;
-}
-
-class _StatRow extends StatelessWidget {
-  const _StatRow({required this.stats, required this.w, required this.accent});
-
-  final List<_Stat> stats;
-  final double w;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < stats.length; i++) ...[
-          if (i > 0)
-            Container(
-              width: w * 0.003,
-              height: w * 0.09,
-              margin: EdgeInsets.symmetric(horizontal: w * 0.045),
-              color: Colors.white.withValues(alpha: 0.18),
+        if (drawable == null || !drawable.isDrawable) {
+          return Center(
+            child: Icon(
+              Icons.directions_run_rounded,
+              size: minSide * 0.85,
+              color: Colors.white,
             ),
-          Flexible(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  stats[i].value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: w * 0.058,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                SizedBox(height: w * 0.012),
-                Text(
-                  stats[i].label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: accent.withValues(alpha: 0.9),
-                    fontSize: w * 0.032,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: w * 0.002,
-                  ),
-                ),
-              ],
-            ),
+          );
+        }
+
+        return CustomPaint(
+          size: Size(w, h),
+          painter: ShareRoutePainter(
+            route: drawable,
+            color: Colors.white,
+            strokeWidth: minSide * 0.045,
+            showEndpoints: false,
           ),
-        ],
-      ],
+        );
+      },
     );
   }
 }
@@ -607,14 +518,20 @@ class ShareRoutePainter extends CustomPainter {
     required this.color,
     required this.strokeWidth,
     this.showEndpoints = true,
+    this.haloColor,
   });
 
   final ShareRoute route;
   final Color color;
   final double strokeWidth;
 
-  /// 시작/끝 점을 찍을지. 배경 워터마크로 쓸 때는 끈다.
+  /// 시작/끝 점을 찍을지.
   final bool showEndpoints;
+
+  /// 경로 아래에 먼저 깔리는 굵은 어두운 획. 투명 배경 카드에서 임의의
+  /// 사진 위 대비를 만드는 유일한 수단이라 **공유 카드에서는 반드시 준다.**
+  /// null이면 halo 없이 선만 그린다.
+  final Color? haloColor;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -635,7 +552,9 @@ class ShareRoutePainter extends CustomPainter {
     final spanX = math.max((maxLng - minLng) * latScale, 1e-9);
     final spanY = math.max(maxLat - minLat, 1e-9);
 
-    final inset = strokeWidth * 1.6;
+    // halo가 선보다 굵으므로 여백도 halo 기준으로 잡는다 — 아니면 경로가
+    // 상자 밖으로 삐져나간다.
+    final inset = strokeWidth * (haloColor == null ? 1.6 : 2.4);
     final boxW = math.max(size.width - inset * 2, 1.0);
     final boxH = math.max(size.height - inset * 2, 1.0);
     final scale = math.min(boxW / spanX, boxH / spanY);
@@ -656,6 +575,20 @@ class ShareRoutePainter extends CustomPainter {
     for (final p in points.skip(1)) {
       final o = project(p.lat, p.lng);
       path.lineTo(o.dx, o.dy);
+    }
+
+    final halo = haloColor;
+    if (halo != null) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = halo
+          ..strokeWidth = strokeWidth * 2.1
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, strokeWidth * 0.5),
+      );
     }
 
     canvas.drawPath(
@@ -692,17 +625,17 @@ class ShareRoutePainter extends CustomPainter {
       oldDelegate.route != route ||
       oldDelegate.color != color ||
       oldDelegate.strokeWidth != strokeWidth ||
-      oldDelegate.showEndpoints != showEndpoints;
+      oldDelegate.showEndpoints != showEndpoints ||
+      oldDelegate.haloColor != haloColor;
 }
 
 // ════════════════════════ 공용 헬퍼 ════════════════════════
 
-/// 카드 바탕색. 스토리 배경이 비쳐 글자가 안 보이는 사고를 막기 위해
-/// [ShareCardSurface]가 깔아 두는 색과 같은 계열의 완전 불투명 색이다.
-const Color _cardBase = Color(0xFF101216);
-
 /// 카드 성격에 맞는 강조색. 티어 카드는 그 티어 색, 뱃지/PB는 등급 색,
-/// 기록 카드는 러너의 현재 티어 색을 쓴다(그 사람의 카드라는 신호).
+/// 기록 카드는 러너의 현재 티어 색을 쓴다(그 사람의 카드라는 신호). 카드
+/// 본문에서는 더 이상 브랜드 라인·러너 이름 색으로 쓰이지 않지만, 메달 뒤
+/// 광채(`ShareCardEmblem`)와 축하 연출(`achievement_celebration.dart`)이
+/// 여전히 이 값을 쓴다.
 Color shareCardAccent(ShareCardData card) => switch (card) {
       TierPromotionCardData(:final tier) => tierAccentColor(tier),
       BadgeEarnedCardData(:final badge) => badgeGradeAccentColor(badge.badgeGrade),
@@ -733,13 +666,17 @@ Color badgeGradeAccentColor(String grade) => switch (grade) {
 /// (`assets/badges/tier/{등급}.svg`) — 두 화면의 그림이 갈라지지 않게.
 String tierEmblemAssetPath(Tier tier) => 'assets/badges/tier/${tier.name}.svg';
 
-/// 카드에 찍히는 날짜. 서버 시각은 UTC로 오므로 **KST로 옮겨** 표기한다 —
-/// 밤 러닝이 하루 전날로 찍히는 일을 막는다(PRD의 주간 경계도 KST 기준).
-String formatShareDate(DateTime utc) {
+/// 카드에 찍히는 날짜+시각. 서버 시각은 UTC로 오므로 **KST로 옮겨** 표기한다
+/// — 밤 러닝이 하루 전날로 찍히는 일을 막는다(PRD의 주간 경계도 KST 기준).
+/// 레퍼런스가 `2026.08.26  19:34`처럼 시각까지 보여줘서, 날짜만 찍던 이전
+/// `formatShareDate`를 대체한다.
+String formatShareDateTime(DateTime utc) {
   final kst = utc.toUtc().add(const Duration(hours: 9));
-  final m = kst.month.toString().padLeft(2, '0');
+  final mo = kst.month.toString().padLeft(2, '0');
   final d = kst.day.toString().padLeft(2, '0');
-  return '${kst.year}.$m.$d';
+  final h = kst.hour.toString().padLeft(2, '0');
+  final mi = kst.minute.toString().padLeft(2, '0');
+  return '${kst.year}.$mo.$d  $h:$mi';
 }
 
 /// 이 카드가 그리는 메달/엠블럼 자산. 기록 카드는 메달이 없어 null
