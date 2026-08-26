@@ -1,15 +1,18 @@
-/// 카드 미리보기 + 공유 시트. **HI-10의 공통 종착점**이다 — 티어 승급·뱃지
+/// 카드 미리보기 + 공유 페이지. **HI-10의 공통 종착점**이다 — 티어 승급·뱃지
 /// 획득·PB 갱신 어느 지점에서 눌러도 여기로 온다.
 ///
 /// ## 왜 미리보기를 거치는가 (바로 공유 시트를 열지 않고)
 /// 캡처는 화면에 실제로 그려진 위젯만 구울 수 있다([captureCard] 문서 참조).
-/// 미리보기 시트는 그 제약을 만족시키면서 동시에 **사용자가 무엇을 올리게 되는지
+/// 미리보기는 그 제약을 만족시키면서 동시에 **사용자가 무엇을 올리게 되는지
 /// 보고 결정**하게 한다 — 내 GPS 경로가 그려진 이미지를 예고 없이 공유 시트에
 /// 실어 보내는 건 프라이버시 측면에서도 나쁘다.
 ///
+/// 2026-08-26: 바텀시트에서 **풀페이지**로 전환했다(사용자 요청) — 카드가
+/// 세로로 긴 9:16 규격이라 시트로 접으면 실제 크기를 가늠하기 어려웠다.
+///
 /// ## flutter-ui-designer에게
-/// 이 파일은 **동작하는 골격**이다. 시트 프레임·버튼·상태 표시는 자유롭게 바꾸되
-/// 아래 세 가지는 유지해야 캡처가 성립한다:
+/// 이 파일은 **동작하는 골격**이다. 페이지 프레임·버튼·상태 표시는 자유롭게
+/// 바꾸되 아래 세 가지는 유지해야 캡처가 성립한다:
 /// 1. 카드가 [ShareCardSurface]로 감싸여 화면에 실제로 올라가 있을 것
 ///    (`Offstage`/`Visibility(visible: false)` 금지 — 페인트를 건너뛴다).
 /// 2. 같은 [GlobalKey]를 surface와 `shareCard(...)` 양쪽에 넘길 것.
@@ -26,30 +29,33 @@ import '../domain/share_card_data.dart';
 import 'widgets/share_card_body.dart';
 import 'widgets/share_card_surface.dart';
 
-/// 카드 미리보기 시트를 띄운다. HI-10의 모든 공유 버튼이 이 함수를 부른다.
+/// 카드 미리보기 페이지를 연다. HI-10의 모든 공유 버튼이 이 함수를 부른다.
+///
+/// 이름은 과거 바텀시트 시절 그대로 유지한다 — 호출부 4곳이 이 시그니처만
+/// 알면 되고, `Future<void>`로 "닫히면 끝"이라는 계약은 페이지 전환에서도
+/// 동일하다.
 Future<void> showShareCardSheet(
   BuildContext context,
   ShareCardData card,
 ) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Theme.of(context).colorScheme.surface,
-    builder: (_) => ShareCardSheet(card: card),
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (_) => ShareCardPage(card: card),
+    ),
   );
 }
 
-class ShareCardSheet extends ConsumerStatefulWidget {
-  const ShareCardSheet({required this.card, super.key});
+class ShareCardPage extends ConsumerStatefulWidget {
+  const ShareCardPage({required this.card, super.key});
 
   final ShareCardData card;
 
   @override
-  ConsumerState<ShareCardSheet> createState() => _ShareCardSheetState();
+  ConsumerState<ShareCardPage> createState() => _ShareCardPageState();
 }
 
-class _ShareCardSheetState extends ConsumerState<ShareCardSheet> {
+class _ShareCardPageState extends ConsumerState<ShareCardPage> {
   /// 캡처 대상 경계. State가 소유해야 리빌드 사이에 안정적으로 같은 위젯을 가리킨다.
   final _boundaryKey = GlobalKey();
 
@@ -104,56 +110,71 @@ class _ShareCardSheetState extends ConsumerState<ShareCardSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(AppTokens.s20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 320),
-                child: ShareCardSurface(
-                  boundaryKey: _boundaryKey,
-                  child: ShareCardBody(card: widget.card),
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      appBar: AppBar(
+        backgroundColor: theme.colorScheme.surface,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: '닫기',
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: const Text('공유하기'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppTokens.s20),
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: ShareCardSurface(
+                      boundaryKey: _boundaryKey,
+                      child: ShareCardBody(card: widget.card),
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: AppTokens.s16),
-            if (_error != null) ...[
-              Text(
-                _error!,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.error),
+              const SizedBox(height: AppTokens.s16),
+              if (_error != null) ...[
+                Text(
+                  _error!,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.error),
+                ),
+                const SizedBox(height: AppTokens.s8),
+              ],
+              FilledButton.icon(
+                // 캡처 중 잠금(연타하면 8MB 이미지를 여러 장 동시에 굽는다) +
+                // 아트 준비 전 잠금.
+                onPressed: (_sharing || !_artReady) ? null : _share,
+                icon: _sharing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.ios_share),
+                label: Text(_sharing ? '이미지 만드는 중…' : '공유하기'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(AppTokens.minTapTarget),
+                ),
               ),
               const SizedBox(height: AppTokens.s8),
-            ],
-            FilledButton.icon(
-              // 캡처 중 잠금(연타하면 8MB 이미지를 여러 장 동시에 굽는다) +
-              // 아트 준비 전 잠금.
-              onPressed: (_sharing || !_artReady) ? null : _share,
-              icon: _sharing
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.ios_share),
-              label: Text(_sharing ? '이미지 만드는 중…' : '공유하기'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(AppTokens.minTapTarget),
+              // 카드가 어떤 규격으로 나가는지 미리 알려 준다 — 인스타 스토리에
+              // 올릴 때 잘리지 않는다는 신호(PRD HI-08 "9:16").
+              Text(
+                '인스타그램 스토리 규격(9:16)으로 저장돼요.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
-            ),
-            const SizedBox(height: AppTokens.s8),
-            // 카드가 어떤 규격으로 나가는지 미리 알려 준다 — 인스타 스토리에
-            // 올릴 때 잘리지 않는다는 신호(PRD HI-08 "9:16").
-            Text(
-              '인스타그램 스토리 규격(9:16)으로 저장돼요.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
