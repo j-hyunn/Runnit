@@ -34,11 +34,20 @@ import 'widgets/share_card_surface.dart';
 /// 이름은 과거 바텀시트 시절 그대로 유지한다 — 호출부 4곳이 이 시그니처만
 /// 알면 되고, `Future<void>`로 "닫히면 끝"이라는 계약은 페이지 전환에서도
 /// 동일하다.
+///
+/// **`rootNavigator: true`가 핵심이다.** 호출부는 전부 `AppShell`의 탭별
+/// 중첩 Navigator(`StatefulShellRoute.indexedStack`의 `homeKey`/`trackingKey`
+/// 등) 안에 있다. 여기서 `Navigator.of(context)`(루트 지정 없이)를 쓰면
+/// 그 중첩 Navigator에 push되어, 결국 `AppShell`의 `Scaffold`(플로팅 알약
+/// 하단 네비바 포함) **안에서** 렌더링된다 — 풀페이지로 바꾼 의미가 없어지고
+/// 네비바가 카드 위에 계속 떠 있게 된다(2026-08-26 확인된 회귀). 셸 바깥
+/// 루트 Navigator로 push해야 `login` 라우트처럼 네비바 없는 진짜 전체 화면이
+/// 된다.
 Future<void> showShareCardSheet(
   BuildContext context,
   ShareCardData card,
 ) {
-  return Navigator.of(context).push<void>(
+  return Navigator.of(context, rootNavigator: true).push<void>(
     MaterialPageRoute<void>(
       fullscreenDialog: true,
       builder: (_) => ShareCardPage(card: card),
