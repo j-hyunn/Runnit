@@ -2,11 +2,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.2 (초안) |
+| 문서 버전 | v0.3 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
-| 상태 | Phase 0 초안 — 실제 구현 착수 전 검토 필요 |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), `.claude/agents/*`, `.claude/skills/*` (하네스 기술 컨벤션) |
+| 상태 | **살아있는 문서 — 구현 반영본.** Phase 0 산출물로 출발했으나 현재는 실제 코드(`lib/`, `supabase/migrations/`)를 따라간다. 구현이 발전하면 이 문서를 갱신한다(CLAUDE.md 규칙 3) |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), 실제 구현(`lib/`, `supabase/migrations/00~42`) |
 | 하위 문서 | [`docs/TRD.md`](./TRD.md) — 이 문서의 결정을 구현 가능한 스펙으로 세분화 |
 
 **변경 이력**
@@ -14,6 +14,7 @@
 |------|----------|
 | v0.1 | 최초 작성. `claude/phase-0-start` 브랜치에서 구성된 하네스(에이전트 6개·스킬 7개)에 이미 반영되어 있던 아키텍처 결정을 PRD v1.3 기준으로 정리·문서화. PRD §11의 Phase 0 산출물(아키텍처·데이터 모델·Supabase 스키마 확정)에 해당 |
 | v0.2 | **성취 축하 구조를 "두 소비 지점 + 억제 카운터"에서 "전역 풀페이지 단일 지점"으로 갱신**(§7.4.1, PRD v1.4·TRD §3.9.3). 요약 화면 인라인 축하와 `achievementCelebrationSuppressors`를 제거하고 `AchievementCelebrationHost` 하나가 항상 풀페이지(`rootNavigator` + `fullscreenDialog`)로 축하한다. 공유 카드(§3.1 파일 트리)도 같은 날 9:16 투명 오버레이로 최종 확정된 상태를 반영 |
+| v0.3 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** Phase 1~2 구현이 진행되면서 확정된 사실을 반영: (1) **백엔드는 Deno Edge Function을 쓰지 않는다** — 업로드는 `supabase_flutter`의 PostgREST 직접 upsert이고, 서버 검증·티어/랭킹/뱃지 판정·XP는 전부 **Postgres 트리거·함수**(마이그레이션 00~42)다(§2, §5, §8). (2) **지도는 `flutter_map`(OSM 타일)** — `flutter_naver_map`은 채택하지 않았다(§12-#2, PRD §7과 불일치 → 사용자 확인 대기). (3) **로컬 저장소 = drift 확정**(§9, §12-#1). (4) `run_samples`는 별도 테이블이 아니라 `runs.samples jsonb`로 확정(§12-#4). (5) 시즌은 `seasons` 테이블 대신 순수 계산 함수(`Season.idAt` / SQL `season_id_at`). 데이터 모델 필드 상세는 TRD §3 대신 `lib/models/*.dart`가 정본 |
 
 > 📌 **원천 우선순위**: 이 문서와 `docs/PRD.md`가 충돌하면 **PRD가 우선**한다. 이 문서는 PRD의 제품 사양을 구현 구조로 번역한 것이며, 사양 자체를 새로 정의하지 않는다.
 
@@ -22,16 +23,16 @@
 ## 1. 개요
 
 ### 1.1 목적
-PRD v1.3에서 확정된 기능 요구사항(티어·주간 랭킹·뱃지·GPS 트래킹·웨어러블 연동)을 **구현 가능한 시스템 구조**로 변환한다. 이 문서는 PRD §11 로드맵의 **Phase 0(아키텍처·데이터 모델·Supabase 스키마 확정, 3주/65h)** 산출물이다.
+PRD에서 확정된 기능 요구사항(티어·주간 랭킹·뱃지·GPS 트래킹·웨어러블 연동)을 **구현된 시스템 구조**로 서술한다. Phase 0 산출물로 출발했고, 지금은 실제 코드(`lib/`, `supabase/migrations/`)와 어긋나지 않도록 유지하는 살아있는 문서다. 필드 단위 스펙은 `lib/models/*.dart`가, 스키마 단위 스펙은 마이그레이션 파일이 정본이다.
 
 ### 1.2 범위
 - **P0(MVP) 중심**으로 설계하되, P1(웨어러블 연동)은 데이터 모델 레벨에서 처음부터 수용한다 (PRD §5.7 근거 — 나중에 스키마 마이그레이션 없이 붙는다).
-- P2(크루/그룹), Phase 4(포인트 이코노미)는 **테이블/모듈을 지금 만들지 않는다.** 다만 확장을 막지 않는 형태로 경계를 설계한다 (§12).
+- P2(크루/그룹), Phase 4(포인트 이코노미)는 **테이블/모듈을 지금 만들지 않는다.** 다만 확장을 막지 않는 형태로 경계를 설계한다 (§12). — 단 `crew_id`/`ranking_scope='crew'`/`challenges` 등 일부 확장 지점은 이미 모델·enum에 자리만 잡혀 있다.
 
 ### 1.3 설계 원칙 (하네스 전반에 이미 합의된 원칙)
 1. **데이터 모델이 먼저, 팀 전체가 따른다** — `RunSample`/`RunRecord`가 GPS 트래킹·게이미피케이션·백엔드·UI 네 모듈을 관통하는 단일 기준이다.
 2. **폰 GPS와 워치 센서는 소스만 다를 뿐 같은 데이터다** — `RunSample.source`로만 구분하고, 소스별 별도 모델을 만들지 않는다.
-3. **클라이언트 계산값은 잠정치, 서버가 최종 판정자다** — 뱃지·티어·랭킹은 반드시 서버(Supabase Edge Function)가 원시 데이터로 재검증한다.
+3. **클라이언트 계산값은 잠정치, 서버가 최종 판정자다** — 뱃지·티어·랭킹은 반드시 서버(Postgres 트리거·함수)가 원시 데이터로 재검증한다.
 4. **티어(절대평가)와 주간 랭킹(상대평가)은 평가 방식과 집계 주기가 다르므로 테이블·로직을 분리한다** — 하나로 합치면 시즌 리셋과 주간 리셋이 서로를 오염시킨다.
 5. **단순함을 기본값으로** — 리더보드는 실시간 전체 재집계 대신 배치 캐시로 시작하고, 필요해지면 트리거/머티리얼라이즈드 뷰로 승격한다.
 
@@ -50,17 +51,16 @@ flowchart LR
     subgraph External["외부 서비스"]
         Watch["Apple Watch\n(HKWorkoutSession)"]
         GarminApp["Garmin Connect 앱"]
-        Naver["Naver Map SDK"]
-        FCM["Firebase Cloud Messaging"]
-        Social["소셜 로그인\n(Apple / Google / Kakao)"]
+        OSM["OSM 타일 서버\n(flutter_map)"]
+        Social["소셜 로그인\n(Kakao — Apple/Google 미구현)"]
     end
 
     subgraph Backend["Supabase"]
-        Auth["Auth"]
-        PG["Postgres\n(run_records, seasons,\nuser_season_tier,\nweekly_ranking_cache, badges…)"]
-        EF["Edge Functions\n(업로드 검증, 랭킹/뱃지 재계산)"]
+        Auth["Auth (OAuth 웹 플로우)"]
+        PG["Postgres\n(runs, profiles, badges,\nuser_badges, leaderboard_entries,\nseason_histories, tier_change_history…)"]
+        TRG["Postgres 트리거·함수\n(runs_guard 검증, recompute_stats,\nevaluate_badges, XP·티어 판정)"]
         RT["Realtime"]
-        Cron["pg_cron / 스케줄 함수\n(배치 집계)"]
+        Cron["pg_cron\n(랭킹 캐시 갱신, 챌린지 상태)"]
     end
 
     Watch -->|"실시간, HealthKit 경유"| HK
@@ -68,22 +68,23 @@ flowchart LR
     GarminApp -->|"동기화(지연 있음)"| HC
     App -->|"health 패키지"| HK
     App -->|"health 패키지"| HC
-    App --> Naver
+    App --> OSM
     App --> Social
     Social --> Auth
 
-    App -->|"RunRecord 업로드"| EF
-    EF --> PG
-    EF -->|"검증 실패/성공 알림"| FCM
+    App -->|"RunRecord upsert (PostgREST)"| PG
+    PG -->|"BEFORE/AFTER 트리거"| TRG
+    TRG --> PG
     Cron -->|"주기 집계"| PG
     PG -->|"변경 구독"| RT
     RT -->|"랭킹/뱃지 실시간 반영"| App
-    FCM -->|"푸시"| App
 ```
 
 **핵심 관찰**
 - Garmin은 Runnit과 직접 통신하지 않는다. **Garmin Connect → HealthKit/Health Connect → Runnit** 경로를 경유하므로, 아키텍처상 Runnit이 다뤄야 하는 외부 연동 표면은 사실상 **HealthKit/Health Connect 하나**로 수렴한다 (§6.2).
-- Supabase가 **단일 백엔드**다. 별도 마이크로서비스를 두지 않고, Postgres + Edge Function + Realtime + pg_cron 조합으로 검증·집계·실시간 반영을 모두 처리한다 — 1인 개발 기준 운영 복잡도를 최소화하기 위한 선택.
+- Supabase가 **단일 백엔드**다. 별도 마이크로서비스도, **Deno Edge Function도 두지 않는다.** 클라이언트는 `supabase_flutter`로 `runs` 등에 직접 upsert하고, 서버 검증·티어/랭킹/뱃지/XP 판정은 전부 **Postgres 트리거·함수**(마이그레이션 00~42)가 같은 트랜잭션 또는 `pg_cron` 배치로 처리한다 — 1인 개발 기준 운영 복잡도를 최소화하기 위한 선택. (이 문서 곳곳에 남아 있는 "Edge Function" 서술은 초기 설계 표현이며, 실제 구현 위치는 트리거/함수다.)
+- **푸시(FCM)와 Apple/Google 로그인은 아직 없다** — Phase 2 알림 모듈과 계정 모듈에서 붙인다. 로그인은 현재 카카오 OAuth 웹 플로우(`signInWithOAuth`)만 동작한다.
+- **지도는 `flutter_map` + OSM 타일**이다. PRD §7이 확정한 `flutter_naver_map`은 도입하지 않았다 — 이 불일치는 사용자 확인 후 PRD를 갱신하거나 지도 SDK를 교체해 해소해야 한다(§12-#2).
 
 ---
 
@@ -96,27 +97,32 @@ flowchart LR
 ```
 lib/
   core/                     # 공통 유틸, 라우터(go_router), 테마, DI
-    api/                    # Supabase 클라이언트 래퍼
-    router/
-    theme/
-  models/                   # 공유 데이터 모델 — §4 참조 (모든 모듈이 이 모델을 기준으로 함)
-    run_sample.dart
-    run_record.dart
-    user.dart
-    badge.dart
-    season.dart
-    ranking_entry.dart
+    api/                    # Supabase 클라이언트 래퍼, wire_enums, realtime_refetch
+    auth/                   # 카카오 OAuth 플로우, auth_controller/state/config
+    config/  error/  providers/  theme/  utils/  widgets/
+    repositories/           # run/user/ranking/gamification 리포지토리 인터페이스
+    router/                 # app_router, route_access
+    sync/                   # run_sync_coordinator — 오프라인 큐 동기화
+  models/                   # 공유 데이터 모델 — 필드 정본은 이 파일들 (freezed)
+    enums.dart              # 전 enum 집약 (RunSampleSource/DeviceVendor/Tier/BadgeCategory…)
+    run_sample.dart  run_record.dart  app_user.dart  badge.dart
+    season.dart(순수 계산)  season_history.dart  ranking_entry.dart  challenge.dart
+    models.dart            # 배럴
   features/
-    tracking/               # GPS/웨어러블 트래킹 — §6
+    tracking/               # GPS/웨어러블 트래킹 — §6 (local_run_database = drift)
       data/  domain/  presentation/
-    history/                # 기록 히스토리, PB, 시즌 이력(HI-01~09)
-      data/  domain/  presentation/
+    history/                # 기록 히스토리, PB, 월간 차트(HI-01~09)
+      data/  presentation/
     gamification/           # 뱃지/레벨/티어 판정 로직 — §7
       data/  domain/  presentation/
-    ranking/                 # 주간 랭킹 화면 · 명예의 전당
-      data/  domain/  presentation/
-    profile/                 # 계정/프로필(AC-01~06)
-      data/  domain/  presentation/
+    ranking/                 # 주간 랭킹 리포지토리(Supabase)
+      data/
+    home/                    # 홈 화면 + 전체 랭킹 페이지
+      presentation/
+    profile/                 # 계정/프로필(AC-01~06) — 표시 위주, 편집 미구현
+      data/  presentation/
+    auth/                    # 로그인 화면 · 게스트 프롬프트
+      presentation/
     sharing/                  # 공유 카드 생성(HI-08, HI-10) — P0 · 2026-08-26 구현 완료
       domain/
         share_card_data.dart      # 카드 4종 sealed 유니온 (TRD §3.9)
@@ -131,8 +137,11 @@ lib/
         widgets/share_card_surface.dart      # 9:16 투명 프레임 + 캡처 계약(배경 금지)
         widgets/share_card_body.dart         # 카드 4종의 실제 그림 + 경로 페인터
         widgets/achievement_celebration.dart # 축하 연출(풀페이지+애니메이션) + 전역 큐 호스트, 성취 축하의 유일한 소비 지점(§7.4.1)
-    notifications/            # 알림 설정/수신(NT-01~08)
+    # notifications/          # 알림 설정/수신(NT-01~08) — 아직 없음. Phase 2, FCM 도입과 함께 생성
 ```
+
+> ⚠️ **Riverpod은 코드 생성(`riverpod_generator`)을 쓰지 않는다.** Provider는 수동
+> 선언(`*_providers.dart`)이다. `freezed`/`json_serializable`만 `build_runner`로 생성한다.
 
 각 `features/{name}/`은 `data`(외부 연동) / `domain`(비즈니스 로직, 순수 함수) / `presentation`(위젯)으로 나눈다. 이 경계 덕분에 UI 담당은 `presentation/`만, 백엔드 담당은 `data/`만 건드리게 되어 파일 충돌이 줄어든다.
 
@@ -155,8 +164,8 @@ sequenceDiagram
     participant User as 사용자
     participant Tracking as tracking 모듈
     participant Game as gamification 모듈
-    participant Backend as backend(core/api)
-    participant Supabase as Supabase Edge Function
+    participant Backend as backend(core/api · repositories)
+    participant Supabase as Supabase (PostgREST + 트리거)
 
     User->>Tracking: [START] 러닝 시작
     loop 트래킹 중
@@ -167,9 +176,9 @@ sequenceDiagram
     Tracking-->>Game: 세션 종료 이벤트 (RunRecord)
     Tracking-->>Backend: 세션 종료 이벤트 (RunRecord)
     Game->>Game: 뱃지/티어 진행률 잠정 판정 (순수 함수)
-    Backend->>Supabase: RunRecord 업로드
-    Supabase->>Supabase: 서버 재검증 (§8) → 티어/랭킹/뱃지 확정
-    Supabase-->>Backend: 확정 결과 (Realtime)
+    Backend->>Supabase: runs upsert (PostgREST)
+    Supabase->>Supabase: runs_guard/AFTER 트리거 — 서버 재검증 (§8) → 티어/랭킹/뱃지/XP 확정
+    Supabase-->>Backend: upsert 응답(동기: is_flagged 등) + Realtime(뱃지·랭킹)
     Backend-->>Game: 확정 결과 반영 (잠정치 대체)
     Game-->>User: 승급/뱃지 연출 (요약 화면)
 ```
@@ -180,37 +189,40 @@ sequenceDiagram
 
 ## 4. 핵심 데이터 모델
 
-> 상세 필드 스펙(Dart 클래스 정의)은 [`docs/TRD.md`](./TRD.md) §3 참조. 여기서는 모델의 **책임과 관계**만 정리한다.
+> **필드 단위 정본은 [`lib/models/*.dart`](../lib/models)다** (TRD §3의 Dart 코드 블록은 Phase 0 설계 시점 버전이라 필드명이 어긋난 곳이 있다). 여기서는 모델의 **책임과 관계**만 정리한다.
 
-| 모델 | 책임 | 비고 |
+| 모델 (파일) | 책임 | 비고 |
 |---|---|---|
-| `RunSample` | 단일 GPS/센서 포인트 (위치·시간·선택적 심박수) | **폰/워치 공통.** `source: phone \| watch` 필드로만 구분 |
-| `RunRecord` | 완결된 러닝 세션 (샘플 목록 + 집계값) | 티어·랭킹·뱃지의 **원천 데이터** |
-| `User`(`Profile`) | 프로필, 누적 통계 캐시 | 캐시 필드 포함 여부는 배치 재계산 비용과 트레이드오프 (§5.3) |
-| `Season` | 분기 시즌 정의 (시작/종료 시각) | PRD §8.5 — 역년 분기 |
-| `UserSeasonTier` | 사용자별 **시즌 누적 거리 + 현재 티어** | 절대평가. `Season`과 N:1 |
-| `RankingEntry`(`WeeklyRankingCache`) | 티어 내 주간 순위 스냅샷 | 상대평가. 매주 리셋, `Season`과 무관하게 주 단위로 존재 |
-| `Badge` / `UserBadge` | 뱃지 카탈로그 / 획득 기록 | `verified` 플래그로 서버 재검증 상태 표시 |
-| `Challenge` (P1) | 개인 기간 한정 목표 | MVP 범위 밖이나 모델 확장 지점만 남겨둠 |
+| `RunSample` (`run_sample.dart`) | 단일 GPS/센서 포인트 (위치·시간·선택적 심박수·케이던스) | **폰/워치 공통.** `source: phone \| watch \| external` 로만 구분. `runs.samples jsonb`에 임베드 저장 |
+| `RunRecord` (`run_record.dart`) | 완결된(또는 진행 중) 러닝 세션 (샘플 목록 + 집계값) | 티어·랭킹·뱃지의 **원천 데이터**. `activityType`(outdoor/indoor/trail/walk) × `status`(recording/paused/completed/discarded), `syncStatus`, `deviceVendors`, 서버 확정 `isFlagged`/`awardedXp` |
+| `AppUser` (`app_user.dart`, 테이블 `profiles`) | 프로필 + 누적 통계 캐시 + **현재 시즌 티어/누적 거리** + XP/레벨 + 주간 스트릭 | `UserSeasonTier`를 별도 테이블로 두지 않고 `profiles.current_tier`/`season_distance_meters`/`tier_season_id` 컬럼으로 흡수 |
+| `Season` (`season.dart`) | 시즌·주간 경계 **계산 함수** (테이블 아님) | 역년 분기가 결정론적이라 `seasons` 테이블을 만들지 않음. SQL 대응: `season_id_at()`/`season_start()`/`season_end()` |
+| `SeasonHistory` (`season_history.dart`, 테이블 `season_histories`) | 시즌 마감 시점의 최종 티어·누적 거리 영구 스냅샷 (HI-06) | 유저·시즌당 1행. 사후 부정 판정은 행 수정 대신 `isVoided` |
+| `RankingEntry` (`ranking_entry.dart`, 테이블 `leaderboard_entries`) | 리더보드 한 행 (서버 집계 결과, 읽기 전용) | `period`×`metric`×`scope`×`tier` 4축. 앱 기본 랭킹 = `weekly`×`distance`×`global`×`tier!=null`. `ownerTier`(행 소유자 실제 티어) 별도 |
+| `Badge` / `UserBadge` (`badge.dart`) | 뱃지 카탈로그(146 템플릿/14 카테고리) / 획득 기록 | `verified`·`revoked` 플래그로 서버 재검증·회수 상태. seasonal 인스턴스 id = `{templateId}@{seasonId}` |
+| `Challenge` / `ChallengeParticipation` (`challenge.dart`, 테이블 `challenges`/`challenge_participations`) | 기간제 챌린지 (GM-09 P1) | 테이블·트리거는 이미 존재(마이그레이션 12), 클라이언트 UI는 미구현 |
 
 ### 4.1 관계도
 
 ```mermaid
 erDiagram
-    USER ||--o{ RUN_RECORD : "기록함"
-    RUN_RECORD ||--|{ RUN_SAMPLE : "포함"
-    USER ||--o{ USER_SEASON_TIER : "시즌마다 1건"
-    SEASON ||--o{ USER_SEASON_TIER : "시즌 정의"
-    USER ||--o{ RANKING_ENTRY : "주간 순위"
-    USER_SEASON_TIER ||--o{ RANKING_ENTRY : "티어가 랭킹 스코프를 결정"
-    USER ||--o{ USER_BADGE : "획득"
-    BADGE ||--o{ USER_BADGE : "카탈로그"
+    PROFILES ||--o{ RUNS : "기록함"
+    RUNS ||--|{ RUN_SAMPLE_JSONB : "samples jsonb 임베드"
+    PROFILES ||--o{ SEASON_HISTORIES : "시즌 마감마다 1건"
+    PROFILES ||--o{ LEADERBOARD_ENTRIES : "주간 순위"
+    PROFILES ||--o{ USER_BADGES : "획득"
+    BADGES ||--o{ USER_BADGES : "카탈로그"
+    PROFILES ||--o{ TIER_CHANGE_HISTORY : "티어 상승 이벤트"
+    PROFILES ||--o{ CHALLENGE_PARTICIPATIONS : "참가"
+    CHALLENGES ||--o{ CHALLENGE_PARTICIPATIONS : "정의"
 ```
 
-**왜 `UserSeasonTier`와 `RankingEntry`를 분리하는가 (PRD §5.3~§5.4 핵심 결정)**
-- 티어는 **시즌(3개월) 단위 절대평가**, 랭킹은 **주(1주) 단위 상대평가**다. 집계 주기와 리셋 시점이 다른 두 개념을 하나의 테이블/모델에 넣으면, 주간 리셋 로직이 시즌 누적값을 실수로 건드리는 사고가 나기 쉽다.
-- `RankingEntry`는 `UserSeasonTier.currentTier`를 **파티션 키**로 참조한다 — "같은 티어 내에서만 순위를 매긴다"는 PRD §5.4의 원칙이 데이터 모델 레벨에서 강제된다.
-- 주중 승급 시(PRD §8.6) `RankingEntry`의 주간 누적 거리는 **그대로 유지한 채 파티션 키(티어)만 갱신**한다 — 재초기화하지 않는다.
+`profiles.current_tier` 자체가 시즌 절대평가 상태를 들고 있고(별도 `user_season_tier` 테이블 없음), `season_id`는 `season_id_at()` 계산 함수가 유도한다.
+
+**왜 티어(절대평가)와 주간 랭킹(상대평가)을 분리하는가 (PRD §5.3~§5.4 핵심 결정)**
+- 티어는 **시즌(3개월) 단위 절대평가**, 랭킹은 **주(1주) 단위 상대평가**다. 집계 주기와 리셋 시점이 다른 두 개념을 하나의 로직에 넣으면, 주간 리셋이 시즌 누적값을 실수로 건드리는 사고가 나기 쉽다. → 티어는 `profiles` 컬럼 + 업로드 트랜잭션 내 동기 갱신, 랭킹은 `leaderboard_entries` + `pg_cron` 배치.
+- `leaderboard_entries.tier`가 **파티션 키**다 — "같은 티어 내에서만 순위를 매긴다"는 PRD §5.4의 원칙이 집계 쿼리에서 강제된다.
+- 주중 승급 시(PRD §8.6) 주간 누적 거리는 **그대로 유지한 채 티어 파티션만 갱신**한다 — 재계산 기준이 `runs`의 주간 합계라 별도 이관 로직 없이 성립한다.
 
 ---
 
@@ -220,60 +232,62 @@ erDiagram
 
 | 구성 요소 | 역할 |
 |---|---|
-| **Postgres** | 단일 진실 원천 — 기록/시즌/티어/랭킹/뱃지 테이블 |
-| **Auth** | 소셜 로그인(Apple/Google/Kakao) 세션 관리, `auth.users` |
-| **Edge Functions** | (1) 업로드 시 서버 재검증, (2) 뱃지/티어 판정 재계산, (3) 랭킹 배치 집계 |
-| **Realtime** | `weekly_ranking_cache`, `user_badges` 변경을 클라이언트에 push |
-| **pg_cron / 스케줄 함수** | 주기적 랭킹 캐시 갱신, 시즌 경계 배치 작업(D-14/D-3 알림 트리거 등) |
+| **Postgres** | 단일 진실 원천 — `runs`/`profiles`/`badges`/`user_badges`/`leaderboard_entries`/`season_histories`/`tier_change_history`/`challenges` 등 (마이그레이션 00~42) |
+| **Auth** | 소셜 로그인 세션 관리, `auth.users`. 현재 **카카오 OAuth 웹 플로우만** 연결됨 (Apple/Google는 Phase 2 AC-01) |
+| **Postgres 트리거·함수** | (1) `runs_guard` BEFORE 트리거 — 업로드 시 서버 재검증(거리/페이스 재계산·플래그·`awarded_xp` 확정), (2) `runs_03_evaluate_badges` / `evaluate_badges()` — 뱃지 판정, (3) `recompute_profile_stats()` — 누적 통계·XP·레벨·티어 재집계. **Deno Edge Function은 쓰지 않는다** |
+| **Realtime** | `leaderboard_entries`, `user_badges` 변경을 클라이언트에 push (`realtime_refetch.dart`) |
+| **pg_cron** | `refresh_all_leaderboards`(랭킹 캐시 갱신), `transition_challenge_statuses`(챌린지 상태). 시즌 경계·D-14/D-3 알림 배치는 Phase 2에서 추가 |
 
 ### 5.2 기록 업로드 → 검증 → 집계 파이프라인
 
 ```mermaid
 sequenceDiagram
     participant App as Flutter App
-    participant EF as Edge Function (upload-run-record)
+    participant PR as PostgREST (supabase_flutter)
+    participant TG as runs 트리거 체인
     participant DB as Postgres
 
-    App->>EF: RunRecord + RunSample[] 업로드
-    EF->>EF: 원시 샘플로 거리/페이스 재계산 (§8 검사)
+    App->>PR: runs upsert (id = 클라이언트 UUID, 멱등)
+    PR->>TG: BEFORE INSERT/UPDATE — runs_guard
+    TG->>TG: 원시 samples로 거리/페이스 재계산 (§8 검사)
     alt 검증 통과
-        EF->>DB: run_records insert (flagged=false)
-        EF->>DB: user_season_tier 누적 거리 갱신 → 승급 판정
-        EF->>DB: weekly_ranking_cache 갱신 트리거
-        DB-->>App: Realtime push (승급/순위 변동)
+        TG->>DB: is_flagged=false, awarded_xp 확정
     else 검증 실패/의심
-        EF->>DB: run_records insert (flagged=true)
-        EF-->>App: 업로드는 성공, 티어/랭킹 미반영 + 사유 반환
+        TG->>DB: is_flagged=true, flag_reason 기록 (행은 보존)
     end
-    EF->>DB: badges 판정 재실행 (트리거 + 마일스톤 유형 모두)
-    DB-->>App: Realtime push (뱃지 획득)
+    PR->>TG: AFTER — runs_01_recompute_stats / _02_challenge_progress / _03_evaluate_badges
+    TG->>DB: profiles 누적·XP·레벨·current_tier 갱신, user_badges INSERT
+    PR-->>App: upsert 응답 (.select().single()) — is_flagged/flag_reason/awarded_xp 동봉
+    DB-->>App: Realtime push (leaderboard_entries / user_badges)
 ```
 
-이 파이프라인이 PRD §8.4("클라이언트 계산값을 신뢰하지 않고 서버에서 원본 샘플로 재계산")를 아키텍처로 구현한 것이다. 클라이언트는 **잠정 결과를 먼저 보여주고**, 서버 확정 결과가 Realtime으로 도착하면 교체한다(낙관적 UI).
+이 파이프라인이 PRD §8.4("클라이언트 계산값을 신뢰하지 않고 서버에서 원본 샘플로 재계산")를 구현한 것이다. **BEFORE 트리거가 같은 요청 안에서 동기 확정**하므로 클라이언트는 재조회 없이 upsert 응답만으로 `isFlagged`를 채운다(§9). 뱃지·랭킹처럼 지연이 허용되는 결과는 Realtime으로 뒤따라 도착한다(낙관적 UI).
 
 ### 5.3 티어·랭킹 집계 전략
 
-사용자 수가 늘면 매 조회마다 `run_records`를 전체 집계하는 쿼리는 느려진다. 초기 규모에서는 **배치 캐시**를 기본값으로 한다:
+사용자 수가 늘면 매 조회마다 `runs`를 전체 집계하는 쿼리는 느려진다. 초기 규모에서는 **배치 캐시**를 기본값으로 한다:
 
-1. **1단계(초기, 기본값)**: `weekly_ranking_cache` 테이블을 Edge Function + `pg_cron`으로 주기 갱신(예: 5분). 구현이 단순하고 리더보드 조회 1초 이내(PRD §6) 요구를 쉽게 만족.
-2. **2단계(필요 시 승급)**: `run_records` insert 트리거로 해당 사용자의 순위만 증분 재계산 — 실시간성이 더 필요해질 때.
+1. **1단계(현재)**: `leaderboard_entries` 테이블(마이그레이션 03)을 `refresh_all_leaderboards()` + `pg_cron` 5분 주기로 갱신. `period='weekly', metric='distance', scope='global', tier=<4단계>`로 티어별 4개 보드가 유지된다. 지난 주차 행은 삭제하지 않고 누적 보존.
+2. **2단계(필요 시 승급)**: `runs` 트리거로 해당 사용자의 순위만 증분 재계산 — 실시간성이 더 필요해질 때.
 3. **3단계(규모 확대 시)**: 머티리얼라이즈드 뷰 — 다중 스코프(주간/시즌/명예의 전당 등)로 늘어날 때.
 
-`UserSeasonTier.currentDistance`(시즌 누적)는 **승급 판정에 지연이 없어야 하므로**(PRD TI-03 "기록 저장 즉시 판정") 캐시가 아니라 업로드 트랜잭션 내에서 즉시 갱신한다. 반면 `weekly_ranking_cache`(주간 순위)는 사용자 체감상 약간의 지연(수 분)이 허용되므로 배치로 처리한다 — **같은 파이프라인 안에서도 티어는 동기, 랭킹은 비동기**로 분리하는 것이 핵심 설계 결정이다.
+**티어**(`profiles.current_tier`/`season_distance_meters`)는 **승급 판정에 지연이 없어야 하므로**(PRD TI-03) 캐시가 아니라 `runs` 업로드 트랜잭션의 트리거에서 즉시 갱신한다. 반면 **주간 랭킹**(`leaderboard_entries`)은 수 분 지연이 허용되므로 배치로 처리한다 — **티어는 동기(트리거), 랭킹은 비동기(pg_cron)** 로 분리하는 것이 핵심 설계 결정이다.
 
 ### 5.4 실시간 동기화
 
-`weekly_ranking_cache`, `user_season_tier`, `user_badges` 변경을 Supabase Realtime으로 구독한다. 단, 랭킹 캐시가 배치(5분 등)로 갱신된다면 실시간 구독의 체감 효과는 제한적이므로, **"마지막 갱신 시각"을 UI에 노출**해 사용자가 지연을 인지하게 한다.
+`leaderboard_entries`, `user_badges` 변경을 Supabase Realtime으로 구독한다(`core/api/realtime_refetch.dart` — 이벤트를 트리거 삼아 관련 Provider를 refetch). 랭킹 캐시가 5분 배치라 실시간 구독의 체감 효과는 제한적이므로, **"마지막 갱신 시각"(`computed_at`)을 UI에 노출**해 지연을 인지하게 한다.
 
 ### 5.5 RLS 정책 원칙
 
 | 테이블 | 정책 |
 |---|---|
-| `run_records`, `run_samples` | insert/update는 `user_id = auth.uid()`만, select도 본인만 (랭킹 공개는 캐시 테이블을 통해) |
-| `weekly_ranking_cache`, `user_season_tier`(공개 필드만) | 전체 select 허용, insert/update는 service role(Edge Function)만 |
-| `user_badges` | select는 본인 것만(타인 프로필 조회는 AC-03 별도 API로 공개 범위 필터링), insert는 service role만 |
+| `runs` | insert/update/select 모두 본인만(`user_id = auth.uid()`). 랭킹 공개는 `leaderboard_entries` 경유. 서버 전용 컬럼(`is_flagged`/`awarded_xp` 등)은 가드 트리거가 클라이언트 값을 덮어씀 |
+| `leaderboard_entries` | 전체 select 허용, 쓰기는 `refresh_all_leaderboards()`(SECURITY DEFINER)만 |
+| `season_histories` / `tier_change_history` | 본인 행만 select, 쓰기는 서버 함수만 |
+| `badges` / `lunar_holidays` | 전체 select(공개 상수), 쓰기 없음 |
+| `user_badges` | 본인 전체 select, 타인은 `revoked=false and verified=true`만. insert는 서버(트리거)만, 클라이언트가 쓸 수 있는 컬럼은 `is_seen` 하나 |
 
-세부 DDL·RLS 문구는 [`docs/TRD.md`](./TRD.md) §4~§5 참조.
+세부 DDL·RLS 현황은 마이그레이션 `07_rls.sql` + 이후 각 기능 마이그레이션, 요약은 [`docs/TRD.md`](./TRD.md) §5 참조.
 
 ---
 
@@ -350,7 +364,7 @@ PRD §6 "1시간 러닝 시 배터리 소모 10% 이하" 요구는 **표준 모�
 
 ### 7.2 클라이언트-서버 판정 미러링
 
-게이미피케이션 판정 로직(뱃지 조건, 랭킹 산정)은 **순수 함수**로 작성한다 — 입력(RunRecord, 누적 통계)만으로 출력(획득 뱃지, 승급 여부)이 결정되고 부수효과가 없다. 이렇게 하면 클라이언트의 잠정 판정 로직을 백엔드 Edge Function이 그대로 이식하거나 참조해 **동일한 규칙으로 재검증**할 수 있다. 규칙이 클라이언트/서버에서 따로 구현되면 (예: 임계값 오타 하나로) 두 결과가 어긋나는 버그가 조용히 누적된다.
+게이미피케이션 판정 로직(뱃지 조건, 랭킹 산정)은 **순수 함수**로 작성한다 — 입력(RunRecord, 누적 통계)만으로 출력이 결정되고 부수효과가 없다. 클라이언트는 `features/gamification/domain/`(`badge_condition.dart`·`level_curve.dart` 등)에서, 서버는 대응 SQL 함수(`evaluate_badge_condition` 디스패치, `xp_level_thresholds()` 등)에서 **같은 임계값을 양쪽에 정수 배열로 심어** 재검증한다(TRD §3.8.3). 규칙이 한쪽에만 있거나 부동소수 역함수로 재유도되면 두 결과가 어긋나는 버그가 조용히 누적된다.
 
 ### 7.3 티어 vs 주간 랭킹 — 아키텍처 레벨 재확인
 
@@ -359,7 +373,7 @@ PRD §6 "1시간 러닝 시 배터리 소모 10% 이하" 요구는 **표준 모�
 | 평가 방식 | 절대평가 (기준선 돌파) | 상대평가 (티어 내 순위) |
 | 집계 주기 | 시즌(3개월) 누적, **판정은 즉시** | 주(1주), **집계는 배치 허용** |
 | 강등 | 시즌 중 없음 | 매주 리셋(그 자체가 리셋) |
-| 데이터 소유 모델 | `UserSeasonTier` | `RankingEntry`/`WeeklyRankingCache` |
+| 데이터 소유 모델 | `profiles.current_tier` 등 컬럼 | `leaderboard_entries` (`RankingEntry`) |
 | 인원 불균형 대응 | 해당 없음(개인 단위 절대 판정) | 매칭 로직 미도입 — "격차 우선, 상위% 병기"로 표시만 완화 (PRD §5.4.1) |
 
 ⚠️ 이 표를 벗어나 두 개념을 하나의 서비스/테이블로 합치는 구현은 **아키텍처 원칙 위반**으로 간주한다.
@@ -418,12 +432,12 @@ PRD §8.4의 검사 항목을 업로드 파이프라인의 어느 단계에서 �
 
 | 검사 | 수행 위치 | 실패 시 조치 |
 |---|---|---|
-| 비현실적 평균 페이스 | Edge Function (원본 샘플 재계산) | 티어·랭킹 제외 + `flagged=true` |
-| 순간 속도 이상(구간 25km/h 초과) | Edge Function | 해당 구간 제거 후 재계산 |
-| 시간 대비 거리 불일치 | Edge Function | 기록 거부(4xx 응답) |
-| 중복 업로드(동일 시간대) | Edge Function → DB unique 제약 보조 | 병합 또는 거부 |
-| GPS 샘플 부재 | 업로드 시점 판정 | 수동 기록으로 분류(§6.3) |
-| 경로 비현실성(직선/순간 이동) | Edge Function | 플래그 후 수동 검토 큐 적재 |
+| 비현실적 평균 페이스 | `runs_guard` BEFORE 트리거 (원본 `samples` 재계산) | 티어·랭킹 제외 + `is_flagged=true` |
+| 순간 속도 이상(구간 25km/h 초과) | `runs_guard` 트리거 | 해당 구간 제거 후 재계산 |
+| 시간 대비 거리 불일치 | `runs_guard` 트리거 / CHECK 제약 | 플래그 또는 거부 |
+| 중복 업로드(동일 시간대) | 클라이언트 UUID PK 멱등 + 트리거 | 같은 id면 upsert로 흡수, 시간 겹침은 플래그 |
+| GPS 샘플 부재 | 트리거 (`samples` 길이 판정) | `has_route_samples=false` → 수동 기록으로 분류(§6.3) |
+| 경로 비현실성(직선/순간 이동) | 트리거 | 플래그 후 수동 검토 대상 |
 | 다계정 의심 | Phase 4 대상 | 포인트 적립 보류(현재는 로깅만) |
 
 **원칙**: 의심 기록은 **삭제하지 않고 `flagged`로만 표시**한다 — 오탐 가능성이 있으므로 이의 제기 시 근거 데이터가 남아있어야 한다(PRD §8.4).
@@ -458,11 +472,13 @@ flowchart LR
 | GPS 거리 오차 | ±3% 이내 | §6.4 스무딩 + Haversine, §8 서버 재계산 |
 | 배터리 소모 | 1시간 10% 이하 | §6.5 배터리 모드, 백그라운드 렌더링 최소화 |
 | 콜드 스타트 | 3초 이내 | Riverpod 지연 초기화, 초기 라우트 최소 의존성 |
-| 랭킹 조회 | 1초 이내 | §5.3 배치 캐시(`weekly_ranking_cache`) |
-| 기록 손실 | 0건 | §9 로컬 영속 저장 + 업로드 큐 |
+| 랭킹 조회 | 1초 이내 | §5.3 배치 캐시(`leaderboard_entries`) |
+| 기록 손실 | 0건 | §9 로컬 영속 저장(drift) + 업로드 큐(`run_sync_coordinator`) |
 | 오프라인 | 트래킹·저장 가능, 복귀 시 동기화 | §9 |
-| 티어·랭킹 정합성 | 서버가 단일 진실 원천 | §5.2, §7.2, §8 |
+| 티어·랭킹 정합성 | 서버가 단일 진실 원천 | §5.2, §7.2, §8 (모두 Postgres 트리거·함수) |
 | 플랫폼 | iOS 15+ / Android 8.0+ | `health`, `geolocator` 등 패키지 최소 지원 버전 확인(TRD §2) |
+
+> ⚠️ 다수 항목이 **실기기 검증 미완**이다(배터리 10%, GPS ±3%, 콜드 스타트 3초, 크래시 기록 손실 0). Phase 3 성능·베타 단계 과제.
 
 ---
 
@@ -482,18 +498,26 @@ flowchart LR
 
 ## 12. 미확정 아키텍처 결정 (Open Items)
 
-| # | 이슈 | 현재 판단 | 확정 시점 |
+| # | 이슈 | 현재 판단 | 상태 |
 |---|---|---|---|
-| 1 | 로컬 영속 저장소 (Hive / Drift / Isar / sqflite) | 미정 — §9 오프라인 큐 구현 시 결정 | Phase 1 착수 시 |
-| 2 | 지도 SDK 클라이언트 패키지 | PRD상 Naver Map 확정(`flutter_naver_map`), 실제 API 키/쿼터 검증 필요 | Phase 1 |
-| ~~3~~ | ~~공유 카드(HI-08) 이미지 생성 방식 (클라이언트 렌더링 vs 서버 렌더링)~~ | **해소(2026-08-26) — 클라이언트 위젯 캡처 확정.** 잠정 권고를 뒤집을 이유가 없었고, 오히려 근거가 더 강해졌다: 디자인 시스템(뱃지 SVG 146종·Pretendard 가변 폰트·티어 색 토큰)이 전부 Flutter 자산이라 서버 렌더링은 **두 번째 구현**을 요구한다. 상세 근거·스펙은 TRD §3.9.2 / §14 #3 | — |
-| 4 | `run_samples` 저장 방식 (jsonb 컬럼 vs 별도 테이블) | 초기엔 `run_records.samples jsonb`, 샘플 수 많아지면 별도 테이블 분리 검토 | Phase 1, 실측 후 |
-| 5 | P2(크루)·Phase 4(포인트) 스키마 확장 여지 | 지금 테이블을 만들지 않되, `RunRecord.userId` 등 기존 FK 구조가 그룹 스코프 추가를 막지 않는지만 확인 | 해당 Phase 착수 시 |
+| ~~1~~ | ~~로컬 영속 저장소 (Hive / Drift / Isar / sqflite)~~ | **해소 — drift 확정·구현**(`lib/features/tracking/data/local_run_database.dart`). §9. | — |
+| 2 | 지도 SDK | **PRD §7은 `flutter_naver_map` 확정이나 실제 구현은 `flutter_map`(OSM 타일)이다.** Naver Map은 API 키·이용약관·쿼터 부담이 있고, 초기 개발/베타에는 OSM으로 충분하다는 판단으로 우선 `flutter_map`을 썼다. **PRD와의 불일치이므로 (a) 사용자 확인 후 PRD를 `flutter_map`으로 갱신하거나 (b) 국내 지도 품질이 필요한 시점에 `flutter_naver_map`으로 교체**해야 한다. | ⚠️ **사용자 결정 필요** |
+| ~~3~~ | ~~공유 카드(HI-08) 이미지 생성 방식~~ | **해소(2026-08-26) — 클라이언트 위젯 캡처 확정.** 디자인 시스템(뱃지 SVG·Pretendard·티어 색 토큰)이 전부 Flutter 자산이라 서버 렌더링은 두 번째 구현을 요구한다. TRD §3.9.2 / §14 #3 | — |
+| ~~4~~ | ~~`run_samples` 저장 방식 (jsonb vs 별도 테이블)~~ | **해소 — `runs.samples jsonb` 확정**(마이그레이션 01). 별도 테이블은 만들지 않았다. 대규모에서 분리 검토는 TRD §14 #2로 유지. | — |
+| 5 | P2(크루)·Phase 4(포인트) 스키마 확장 여지 | 테이블은 안 만들되 `runs.user_id`·`profiles.crew_id`·`ranking_scope='crew'`·`challenges` 등 확장 지점은 이미 자리 잡음. Phase 4 포인트는 `total_xp`와 이름을 분리해 충돌 방지(TRD §3.8.1). | 해당 Phase 착수 시 |
+| 6 | 푸시(FCM) / Apple·Google 로그인 | **미구현.** Phase 2 알림 모듈(NT-01~08) + 계정 모듈(AC-01)에서 도입. `firebase_messaging` 의존성 아직 없음. | Phase 2 |
 
 ---
 
-## 13. 다음 단계
+## 13. 현재 진행 상황 (Phase 1~2)
 
-1. 이 문서의 데이터 모델(§4)을 [`docs/TRD.md`](./TRD.md)에서 실제 Dart `freezed` 클래스와 Supabase DDL로 구체화한다.
-2. `mobile-architect` 에이전트가 `lib/models/*.dart` 실 코드를 생성하고, `backend-engineer`가 대응 마이그레이션을 적용한다(Phase 0 완료 기준은 TRD §13).
-3. Phase 1(P0 전반: GPS 트래킹, 기록 저장/히스토리, 계정) 착수.
+**완료(구현·테스트 존재)**: 데이터 모델(`lib/models/`), Supabase 스키마·트리거(마이그레이션 00~42), GPS 트래킹 코어(스무딩·백그라운드·집계), 오프라인 저장(drift)+동기화, 히스토리 목록·월간 차트, 주간 랭킹 + 티어 + Realtime, 뱃지 판정(39 condition_type 전량)·갤러리·레벨·주간 스트릭·XP, 공유 카드(PB)·풀페이지 성취 축하, 카카오 OAuth 로그인.
+
+**남은 P0(요약 — 상세는 사용자에게 별도 정리)**:
+1. 기록 상세 화면(HI-02, 현재 `RunDetailPlaceholder`) — 경로 지도·랩 테이블·페이스 그래프
+2. 푸시 알림 전체(NT-01~06, 08) — FCM 미도입
+3. 계정 삭제/데이터 완전 삭제(AC-04, 심사 필수), 프로필 편집(AC-02), 타 사용자 프로필(AC-03), 공개 범위(AC-05), Apple/Google 로그인(AC-01)
+4. 과거 시즌 전체 랭킹, 역대 시즌 기록 화면(HI-06) UI 연결
+5. Phase 3: 성능·배터리·GPS 실기기 검증, 접근성, 스토어 심사, 클로즈드 베타
+
+**지도 SDK 불일치(§12-#2)는 착수 전 사용자 확인 대상.**

@@ -2,11 +2,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.9 (초안) |
+| 문서 버전 | v0.10 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
-| 상태 | Phase 0 초안 — 구현 착수 전 검토 필요 |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.2 |
+| 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~42`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.3, 실제 구현(`lib/`, `supabase/migrations/`) |
 
 **변경 이력**
 | 버전 | 변경 내용 |
@@ -19,6 +19,7 @@
 | v0.6 | **뱃지 백로그 7건 실제 구현·적용 완료**(마이그레이션 36~41, Supabase `xwtbwexcofcgmbvktwdo`). §3.8·§10.2가 설계 확정 문서였던 것을 라이브 스키마 사실로 갱신 — `device_vendor` enum + `runs.device_vendors`(36), `district_diversity_gte` 삭제 + `condition_type` CHECK 39종·`category` CHECK 14종·`bucket` 도메인 CHECK(37), `lunar_holidays` 테이블 2026~2040(38), `total_points`→`total_xp`/`awarded_points`→`awarded_xp` 개명 + XP 4원천 + 60레벨 정수 배열 + 주간 스트릭 4컬럼 + XP 갱신 트리거 2개 + `evaluate_badges` 3패스 수렴 루프(39), `leaderboard_entries.reached_at` + PRD §8.2 3단계 타이브레이크(40), 판정 스텁 5종 전량 해제 + §5 임계값 정본화 + 스플릿 선형 보간(41). **`evaluate_badge_condition`의 `raise notice … 보류` 스텁이 0개가 됐다.** §4.2 신설(음력 룩업), §4.3 신설(랭킹 캐시 실제 테이블명) |
 | v0.7 | **거리 허용오차 통일**(마이그레이션 42) — `session_first_long_distance`(고정 98%)와 `session_distance_gte` 5종(허용오차 없음)을 `pb_first_achieved`/`pb_time_lte`와 동일한 `목표 − min(목표×2%, 300m)`로 통일. gamification-designer 확인 완료(§14 #13·#15 해소). 완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 즉시 채움 |
 | v0.8 | **공유 카드 규격 확정 — 9:16 투명 오버레이 스티커**(§3.9.2). 같은 날 16:9 가로 밴드로 바꿨다가, 사용자가 준 정확한 레퍼런스 이미지(9:16 세로, 투명 배경 + 흰색 콘텐츠, 그림자 없음)를 확인하고 되돌렸다 — 최종 확정은 **9:16, 배경/그림자/모서리 전부 없음, 세로 1열 중앙 정렬**(워드마크 → 시각 → 아트 → [성취 3종만 헤드라인] → 수치 스택), 기록 카드 수치 라벨은 레퍼런스 그대로 영문(`Distance`/`Pace`/`Time`). 규격 변경 히스토리 표는 §3.9.2 참조 |
+| v0.10 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** (1) §2 확정 스택을 실제 `pubspec.yaml`에 맞춤 — 지도 `flutter_naver_map` → **`flutter_map`+`latlong2`**(PRD §7과 불일치, ARCHITECTURE §12-#2), 로컬 저장소 `🔴 미정` → **drift 확정**, `riverpod_generator` 제거(수동 Provider), FCM `NT-01~08` → **미도입(Phase 2)**, 누락 패키지(`flutter_svg`/`share_plus`/`shared_preferences`/`intl`/`collection`/`uuid`/`logger`) 추가. (2) §3 상단에 "Dart 코드는 설계 스냅샷, 정본은 `lib/models/`" 노트 추가 — 실제 enum은 `RunRecordType`이 아니라 `ActivityType`+`RunStatus`+`SyncStatus`, 랭킹은 `RankingPeriod`/`RankingMetric`/`RankingScope` 4축. (3) **§6 "API / Edge Function 사양"은 폐기** — Deno Edge Function은 구현되지 않았고, 업로드는 PostgREST upsert + `runs` 트리거 체인이다(§6.0 노트). (4) §13 Phase 0 DoD를 실제 완료 상태로 갱신 |
 | v0.9 | **성취 축하 연출을 다이얼로그→풀페이지로 전환, 공유 버튼을 PB 전용으로 축소**(§3.9.3, PRD v1.4·HI-10). `AchievementCelebrationHost`가 `showDialog` 대신 `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute(fullscreenDialog: true)`로 진짜 풀페이지를 띄운다(하단 네비바 우회, §7 구조와 동일 패턴). 글로우 링·컨페티·엘라스틱 팝인으로 구성된 `_AchievementBurst` 애니메이션 신설. **일반 뱃지·티어 승급은 공유 버튼을 받지 않는다** — PB만 받는다(사용자 확정, 2026-08-27). `summary_achievements.dart`의 인라인 축하·억제 카운터(`achievementCelebrationSuppressors`)를 전부 제거 — 전역 호스트 하나가 유일한 소비 지점이 되면서 §14 #20(프레임 경합)이 원인 자체가 사라져 해소됨 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
@@ -35,27 +36,42 @@
 
 PRD §7의 확정 스택을 실제 패키지 단위로 구체화한다.
 
+> ⚠️ **실제 정본은 `pubspec.yaml`이다.** 아래는 현재 반영 상태.
+
 | 영역 | 선택 | 패키지 | 비고 |
 |---|---|---|---|
 | 앱 프레임워크 | Flutter | — | iOS/Android 동시 출시, iOS 15+ / Android 8.0(API 26)+ |
-| 상태관리 | Riverpod | `flutter_riverpod`, `riverpod_generator` | `StreamProvider`/`NotifierProvider`/`FutureProvider` 구분은 ARCHITECTURE §3.2 |
-| 불변 모델·직렬화 | freezed | `freezed`, `json_serializable`, `freezed_annotation` | 수동 `toJson`/`fromJson` 금지 — 필드 추가 시 누락 방지 |
+| 상태관리 | Riverpod | `flutter_riverpod` | **코드 생성 안 씀** — Provider는 `*_providers.dart`에 수동 선언 |
+| 불변 모델·직렬화 | freezed | `freezed`, `json_serializable`, `freezed_annotation`, `json_annotation` | `build_runner`로 생성. 수동 `toJson`/`fromJson` 금지 |
 | GPS | `geolocator` | 백그라운드 지원, 정확도 옵션(`LocationAccuracy`) |
+| 백그라운드 | `flutter_background_service` | 화면 꺼짐/앱 전환 시 트래킹 세션 유지 |
 | 웨어러블 센서 | `health` | HealthKit(iOS)/Health Connect(Android) 통합 래퍼 |
 | 권한 | `permission_handler` | iOS/Android 권한 흐름 통합 |
-| 라우팅 | `go_router` | 딥링크, 중첩 라우트 |
-| 지도 | `flutter_naver_map` | PRD §7 확정 — 국내 지도 품질·무료 한도 우위 |
-| 차트 | `fl_chart` | 페이스/거리 추이(HI-02) |
-| 백엔드 클라이언트 | `supabase_flutter` | Auth/Postgres/Realtime/Edge Function 호출 |
-| 푸시 | Firebase Cloud Messaging | `firebase_messaging` | NT-01~08 |
-| 로컬 영속 저장소 | 🔴 미정 (Hive / Drift / Isar 중 선정) | ARCHITECTURE §12-#1 — Phase 1 착수 시 결정 |
-| 백엔드 인프라 | Supabase | Postgres + Auth + Realtime + Edge Functions (Deno) | |
+| 라우팅 | `go_router` | 딥링크(OAuth 콜백), 중첩 라우트(바텀 네비 shell) |
+| 지도 | **`flutter_map` + `latlong2`** | ⚠️ **PRD §7은 `flutter_naver_map` 확정이나 실제 구현은 `flutter_map`(OSM 타일)**. `run_map_view.dart`. 불일치 해소 필요 — ARCHITECTURE §12-#2 |
+| 차트 | `fl_chart` | 월간 통계 막대(`monthly_chart.dart`). HI-02 페이스 그래프는 미구현 |
+| SVG | `flutter_svg` | 뱃지 아트·아이콘 |
+| 공유 | `share_plus` | 공유 시트(HI-08) |
+| 백엔드 클라이언트 | `supabase_flutter` | Auth/Postgres(PostgREST)/Realtime. **Edge Function 호출 없음** |
+| 푸시 | Firebase Cloud Messaging | *(미도입)* | NT-01~08 — Phase 2. `firebase_messaging` 의존성 아직 없음 |
+| 로컬 영속 저장소 | **drift** | `drift`, `sqlite3_flutter_libs`, `path`, `path_provider` | `tracking/data/local_run_database.dart`. §14-#1 해소 |
+| 로컬 KV | `shared_preferences` | 경량 설정·플래그 |
+| 유틸 | `intl`(날짜/페이스 포맷), `collection`, `uuid`(클라이언트 RunRecord id), `logger` | |
+| 백엔드 인프라 | Supabase | Postgres + Auth + Realtime + **pg_cron** (Deno Edge Function 미사용) | 서버 로직은 전부 마이그레이션 SQL(트리거·함수) |
 
 ---
 
 ## 3. 데이터 모델 사양 (Dart)
 
 모든 모델은 `lib/models/`에 위치하며 `freezed` + `json_serializable`로 생성한다.
+
+> ⚠️ **이 절의 Dart 코드 블록은 Phase 0 설계 스냅샷이다. 필드 단위 정본은 [`lib/models/*.dart`](../lib/models)** — 구현이 발전하면서 아래와 어긋난 곳이 있다:
+> - 모든 enum은 `lib/models/enums.dart`에 집약. `RunSampleSource` = `phone`/`watch`/`external`(§3.1.1), `DeviceVendor` = `phone`/`watchApple`/`watchGarmin`/`watchOther`/`unknown`.
+> - `RunRecord`는 `RunRecordType` 대신 **`ActivityType`(outdoor_run/indoor_run/trail_run/walk) × `RunStatus`(recording/paused/completed/discarded)** 를 쓰고, `SyncStatus`(local/pending/synced/failed)·`deviceVendors`·서버 확정 `isFlagged`/`flagReason`/`awardedXp`를 포함한다. 시간은 `elapsedSeconds`/`movingSeconds` 두 종류.
+> - `UserProfile`이 아니라 **`AppUser`**(테이블 `profiles`) — `username`/`displayName`/`heightCm`/`weightKg`/`birthDate`/`gender`/`preferredUnit` + 통계 캐시(`totalDistanceMeters`/`totalMovingSeconds`/`totalRunCount`/`totalXp`/`level`) + 티어(`currentTier`/`seasonDistanceMeters`/`tierSeasonId`) + 주간 스트릭.
+> - `Season`은 클래스가 아니라 **경계 계산 유틸**(`Season.idAt`/`startOf`/`endOf`). `UserSeasonTier` 모델은 없다(→ `AppUser`/`profiles` 컬럼).
+> - `RankingEntry`는 `period`(daily/weekly/monthly/all_time) × `metric`(distance/duration/run_count) × `scope`(global/crew/friends) × `tier` 4축 + `ownerTier`·`rankDelta`·표시 스냅샷(`username`/`avatarUrl`).
+> - `SeasonHistory`(테이블 `season_histories`), `ChallengeParticipation`이 추가로 존재.
 
 ### 3.1 `RunSample` — 단일 GPS/센서 포인트
 
@@ -388,7 +404,7 @@ class UserBadge with _$UserBadge {
 ### 3.7 판정 로직 — 순수 함수 시그니처 (클라이언트/서버 공유 규칙)
 
 ```dart
-/// 클라이언트에서 잠정 판정, 서버(Edge Function/SQL)가 동일 규칙으로 재검증.
+/// 클라이언트에서 잠정 판정, 서버(Postgres 함수/트리거)가 동일 규칙으로 재검증.
 bool isTierPromotion({
   required Tier currentTier,
   required double cumulativeDistanceMeters,
@@ -402,7 +418,7 @@ bool isTierPromotion({
 bool evaluateBadgeCondition(Badge badge, Map<String, num> context);
 ```
 
-Edge Function은 Deno/TypeScript로 작성되므로 위 로직은 **동일한 임계값 상수**(`tierThresholdsMeters` 등)를 양쪽에 중복 정의하되, TRD가 단일 진실 원천 역할을 하도록 값 변경 시 이 문서를 함께 갱신한다.
+서버 판정은 Postgres 함수(`evaluate_badge_condition` 디스패치, `compute_level`, `recompute_season_tier` 등)이므로 위 로직은 **동일한 임계값 상수**(`TierX.thresholdMeters`, `xp_level_thresholds()` 등)를 클라이언트 Dart와 서버 SQL 양쪽에 정수 배열/상수로 중복 정의한다. 값 변경 시 세 곳(Dart · SQL · 이 문서)을 함께 갱신한다.
 
 ### 3.8 XP / 레벨 사양 (PRD GM-04) — 2026-08-26 확정
 
@@ -636,6 +652,22 @@ ARCHITECTURE §7.4.1의 "두 소비 지점" 구조는 폐기됐다 — `summary_
 ---
 
 ## 4. Supabase 스키마 사양 (DDL)
+
+> 🛑 **아래 초안 DDL은 실제로 생성되지 않았다.** 라이브 스키마는 `supabase/migrations/00~42`이며, 주요 차이:
+>
+> | 초안 DDL | 라이브 스키마 |
+> |---|---|
+> | `run_records` + 별도 `run_samples` 테이블 | 단일 **`runs`** 테이블, 샘플은 `runs.samples jsonb`. 서버 전용 `is_flagged`/`flag_reason`/`awarded_points`(구 이름 유지), `route_polyline`, `sources`(`run_sample_source[]`), `device_vendors`(`device_vendor[]`) |
+> | `seasons` 테이블 | **없음.** `season_id_at(ts)` / `season_start(id)` / `season_end(id)` 계산 함수 (마이그레이션 20) |
+> | `user_season_tier` 테이블 | **없음.** `profiles.current_tier` / `season_distance_meters` / `tier_season_id` 컬럼 (마이그레이션 19, 22) + 마감 스냅샷은 `season_histories` (21) |
+> | `weekly_ranking_cache` 테이블 | **없음.** `leaderboard_entries` 재사용 (마이그레이션 03, `period='weekly'`). §4.3 참조 |
+> | `badges.season_id` FK → `seasons` | `seasons` 테이블이 없으므로 정규식 검증 text 컬럼. seasonal 인스턴스 id = `{templateId}@{seasonId}` (마이그레이션 25, 31) |
+> | `user_badges` PK `(user_id, badge_id)` | `id uuid` PK 추가 + `revoked`·`is_seen`·`source_run_id` (마이그레이션 27 이후) |
+>
+> 실제 테이블 목록: `profiles` · `runs` · `badges` · `user_badges` · `leaderboard_entries` · `season_histories` · `tier_change_history` · `lunar_holidays` · `challenges` · `challenge_participations` (+ 뷰 `run_summaries`).
+> XP/레벨·주간 스트릭·기기 벤더·음력 명절 등 확장은 §3.8 / §4.0 / §4.2 / §10.2 및 마이그레이션 36~42가 정본.
+>
+> 아래 블록은 Phase 0 설계 의도를 남겨두기 위해 보존한다 — 컬럼 이름·타입의 **개념**은 대체로 유효하나 테이블 이름과 배치는 위 표를 따른다.
 
 ```sql
 -- ─────────────────────────────────────────────
@@ -901,19 +933,32 @@ create table public.lunar_holidays (
 
 ## 5. RLS 정책 사양
 
+> 정본은 `07_rls.sql` + 이후 각 기능 마이그레이션. 아래는 현재 원칙 요약 (Edge Function이 아니라 **SECURITY DEFINER 트리거·함수**가 서버 쓰기 주체다).
+
 | 테이블 | select | insert/update | 근거 |
 |---|---|---|---|
-| `profiles` | 본인 전체, 타인은 `visibility='public'` 필드만 (AC-03/AC-05) | 본인만 (`id = auth.uid()`) | |
-| `run_records` / `run_samples` | 본인 것만 | 본인만, `user_id = auth.uid()` | 랭킹 공개는 캐시 테이블 경유 |
-| `seasons` | 전체 공개 | service role만 | 시즌 정의는 공용 참조 데이터 |
-| `user_season_tier` | 전체 공개(랭킹/프로필 노출용) | service role만 (Edge Function) | 클라이언트가 직접 갱신 불가 — 절대평가 신뢰성 |
-| `weekly_ranking_cache` | 전체 공개 | service role만 | |
-| `badges` | 전체 공개 | service role만(운영 도구) | 카탈로그는 정적 |
-| `user_badges` | 본인 전체, 타인은 `revoked=false and verified=true`만 | insert는 service role만 | 클라이언트가 직접 뱃지를 확정할 수 없음(PRD §8.4 원칙) |
+| `profiles` | 본인 전체, 타인은 공개 필드만 (AC-03/AC-05) | 본인만 (`id = auth.uid()`), 서버 관리 컬럼은 `profiles_guard`가 되돌림 | |
+| `runs` | 본인 것만 | 본인만, `user_id = auth.uid()`. `is_flagged`/`awarded_points` 등은 `runs_guard`가 확정 | 랭킹 공개는 `leaderboard_entries` 경유 |
+| `leaderboard_entries` | 전체 공개 | `refresh_all_leaderboards()`(SECURITY DEFINER)만 | 절대/상대평가 신뢰성 |
+| `season_histories` / `tier_change_history` | 본인 행만 | 서버 함수만 | |
+| `badges` / `lunar_holidays` | 전체 공개 | 시드/운영만 (write 권한 revoke) | 카탈로그·상수는 정적 |
+| `user_badges` | 본인 전체, 타인은 `revoked=false and verified=true`만 | insert는 트리거(`evaluate_badges`)만, 클라이언트는 `is_seen`만 update | 클라이언트가 직접 뱃지를 확정할 수 없음(PRD §8.4) |
+| `challenges` / `challenge_participations` | 공개/본인 | 참가는 본인, 진척은 트리거 | |
 
 ---
 
 ## 6. API / Edge Function 사양
+
+> 🛑 **이 절 전체는 폐기됐다 (구현되지 않음).** Deno Edge Function은 하나도 만들지 않았다(`supabase/functions/` 없음). 실제 동작:
+>
+> | 초안 (§6.1~6.4) | 실제 구현 |
+> |---|---|
+> | `POST /functions/v1/upload-run-record` | 클라이언트가 `supabase_flutter`로 **`runs` 테이블에 직접 upsert**(id = 클라이언트 UUID, 멱등). `runs_guard` BEFORE 트리거가 원시 `samples`로 거리/페이스 재계산·플래그·`awarded_points` 확정, AFTER 트리거(`runs_01_recompute_stats`/`_02_challenge_progress`/`_03_evaluate_badges`)가 통계·XP·티어·뱃지 갱신. 서버 확정값은 upsert 응답(`.select(...).single()`)으로 동기 반환 |
+> | `GET /functions/v1/weekly-ranking` | PostgREST 자동 API로 `leaderboard_entries` 직접 select (`ranking/data/supabase_ranking_repository.dart`) |
+> | 배치 함수 (`pg_cron`) | `refresh_all_leaderboards()` — 5분 주기(마이그레이션 15/16). `transition_challenge_statuses()` — 10분 주기 |
+> | `season-rollover` 배치 | 시즌은 계산 함수라 롤오버 배치 불필요. 마감 스냅샷은 `sync_my_season`/`reset_stale_seasons` + `season_histories`. **D-14/D-3 알림(NT-03)은 아직 없음 — Phase 2** |
+>
+> 아래 원문은 초기 요청/응답 shape 설계로만 보존한다.
 
 ### 6.1 `POST /functions/v1/upload-run-record`
 
@@ -974,9 +1019,10 @@ create table public.lunar_holidays (
 | 경로 비현실성 | 연속 3개 이상 샘플이 완전 직선 + 등간격(순간이동 패턴) | 플래그, 수동 검토 큐(운영 콘솔, Phase 1 이후) |
 | 다계정 의심 | 동일 기기 식별자로 다수 계정의 유사 경로 반복 | Phase 4 대상 — 현재는 로깅만, 포인트 없음 |
 
-**동점 처리 정렬 규칙 (PRD §8.2, `weekly_ranking_cache` 계산 쿼리에 반영)**
+**동점 처리 정렬 규칙 (PRD §8.2)** — 실제 구현은 §4.3 (마이그레이션 40, `refresh_all_leaderboards`):
 ```sql
-order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_duration_s asc
+-- leaderboard_entries, metric='distance'
+order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, user_id asc
 ```
 
 ---
@@ -1044,17 +1090,19 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 
 ## 9. 티어·랭킹 집계 기술 사양
 
-- **티어 판정**: `upload-run-record` Edge Function 트랜잭션 내에서 동기 처리. 배치 지연 없음(PRD TI-03).
-- **주간 랭킹 집계**: 초기 구현은 `pg_cron` 5분 주기 배치(§6.3). 조회는 Supabase 자동 생성 REST(PostgREST) 또는 별도 Edge Function.
-- **시즌/주간 경계**: `seasons.starts_at/ends_at`는 역년 분기 KST 기준. `week_id` 산출은 KST 월요일 00:00 ~ 일요일 23:59 기준 ISO 주차 문자열(`YYYY-'W'WW`). 러닝 **시작 시각** 기준으로 시즌/주간에 귀속(PRD §8.5).
-- **주중 승급 시 랭킹 이관**: `weekly_ranking_cache`의 `tier` 컬럼만 갱신하고 `weekly_distance_m`은 유지 — **row를 재생성하지 않는다**(PRD §8.6).
-- **기록 삭제 시 재계산**: `run_records` soft delete(또는 hard delete) 시 트리거로 `user_season_tier.cumulative_distance_m` 재계산 → 기준선 미달 시 `current_tier` 하향. 이때 이미 지급된 뱃지는 **회수하지 않음**(자발적 삭제, PRD §8.1). 부정 기록 무효화로 인한 삭제는 별도 플래그로 구분해 뱃지 `revoked=true` 처리.
+- **티어 판정**: `runs` upsert의 트리거 트랜잭션 내에서 동기 처리(`recompute_season_tier` 등). 배치 지연 없음(PRD TI-03).
+- **주간 랭킹 집계**: `pg_cron` 5분 주기 배치(`refresh_all_leaderboards`). 조회는 PostgREST 직접 select.
+- **시즌/주간 경계**: 시즌은 `season_id_at()`/`season_start()`/`season_end()` 계산 함수(역년 분기 KST). 주 경계는 KST 월요일 00:00 ~ 일요일 23:59, `leaderboard_entries.period_start`. 러닝 **시작 시각** 기준으로 귀속(PRD §8.5).
+- **주중 승급 시 랭킹 이관**: `leaderboard_entries`의 `tier` 파티션만 갱신, 주간 거리는 `runs` 재집계로 자연 유지 — row 재생성 안 함(PRD §8.6).
+- **기록 삭제 시 재계산**: `runs` DELETE/UPDATE 트리거로 `profiles.season_distance_meters` 재계산 → 기준선 미달 시 `current_tier` 하향. 자발적 삭제 시 이미 지급된 뱃지는 **회수 안 함**(PRD §8.1). 부정 기록 무효화는 `is_flagged` + 뱃지 `revoked=true`로 구분.
 
 ---
 
 ## 10. 뱃지 판정 기술 사양
 
-- 트리거: (1) 세션 종료 이벤트 → 세션형 뱃지 판정, (2) `profiles.total_distance_m`/`user_season_tier` 갱신 이벤트 → 누적형 뱃지 판정. 두 트리거를 **모두** Edge Function에서 재실행한다.
+> 구현 정본은 §10.1 / §10.2 및 마이그레이션 13·27·31~42. 아래 첫 3개 불릿은 초기 서술이며 §10.1이 실제 구현으로 대체한다.
+
+- ~~트리거: 세션형/누적형을 Edge Function에서 재실행~~ → 실제: `runs` AFTER 트리거 `runs_03_evaluate_badges` → `evaluate_badges(user_id, run_id)`가 매 INSERT/UPDATE/DELETE마다 미획득 뱃지 전체를 재평가(§10.1).
 - 판정 함수는 `condition jsonb`를 입력으로 받는 범용 평가기로 구현(예: `{"type": "cumulative_distance_gte", "value": 100000}`) — 뱃지 추가 시 코드 배포 없이 데이터로 확장 가능하게 한다.
 - 클라이언트 잠정 판정 → 서버 확정 결과 Realtime 반영까지의 사이, UI는 "확인 중" 상태를 명시(연출 자체는 잠정치로 먼저 보여주되 최종 확정 실패 시 취소 애니메이션 없이 조용히 `verified=false`로 유지 — 게이미피케이션 원칙: 설명 없이 박탈하지 않음).
 - **카탈로그 시딩**: [`docs/badge-catalog.csv`](./badge-catalog.csv)의 146개 행을 `badges` 시드 데이터로 적재한다. `scope='permanent'`(115개)는 그대로 1행 = 1뱃지. `scope='seasonal'`(31개 템플릿)은 시즌 시작 배치 작업이 시즌마다 `id`에 `season_id`를 붙여 실제 인스턴스로 복제 발급한다(예: 템플릿 `stier_platinum` → 인스턴스 `stier_platinum_2026q3`). 템플릿 자체는 `badges`에 유저에게 노출되지 않는 참조용 행으로 유지하거나, 시즌 인스턴스 생성 로직의 입력 메타데이터로만 별도 관리한다 — 어느 쪽으로 할지는 `backend-engineer`가 시딩 스크립트 작성 시 확정.
@@ -1137,34 +1185,36 @@ order by weekly_distance_m desc, run_count asc, first_reached_at asc, total_dura
 | GPS 거리 오차 | ±3% 이내 | 실측 1km 코스 반복 측정 | `tracking` 모듈(§8.3) |
 | 배터리 소모 | 1시간 10% 이하 | 실기기 배터리 로그 측정(표준 모드) | `tracking` 모듈(§8.5) |
 | 콜드 스타트 | 3초 이내 | 프로파일링(cold start trace) | `core/router` 초기 의존성 최소화 |
-| 랭킹 조회 | 1초 이내 | API 응답 시간 측정(p95) | `weekly_ranking_cache` 배치(§9) |
+| 랭킹 조회 | 1초 이내 | API 응답 시간 측정(p95) | `leaderboard_entries` 배치(§9) |
 | 기록 손실 | 0건 | 강제 종료/크래시 재현 테스트 | 로컬 영속 저장(ARCHITECTURE §9) |
 | 오프라인 동기화 | 100% 업로드 | 비행기 모드 테스트 | 업로드 큐(ARCHITECTURE §9) |
-| 티어·랭킹 정합성 | 서버 단일 진실 원천 | 클라이언트 잠정치 vs 서버 확정치 비교 로그 | Edge Function(§6, §7) |
+| 티어·랭킹 정합성 | 서버 단일 진실 원천 | 클라이언트 잠정치 vs 서버 확정치 비교 로그 | `runs` 트리거·함수(§6.0, §7) |
 | 접근성(러닝 중 화면) | 최소 24sp, 명암비 4.5:1 | 디자인 QA | `presentation/` (flutter-ui-designer 영역) |
 
 ---
 
 ## 12. 보안 요구사항
 
-- **인증**: Supabase Auth, Apple/Google/Kakao 소셜 로그인. iOS는 Apple 로그인 필수 제공(App Store 심사 요건).
-- **RLS**: §5 전 테이블 적용. service role 키는 Edge Function 환경변수로만 보관, 클라이언트 번들에 절대 포함하지 않는다.
-- **데이터 삭제(AC-04)**: 계정 삭제 시 `profiles` cascade로 `run_records`/`run_samples`/`user_badges`/`user_season_tier` 전량 삭제. 삭제 후 `weekly_ranking_cache`/집계 캐시는 다음 배치 사이클에 자동 반영(즉시 반영 필요 시 삭제 트랜잭션에서 직접 갱신).
-- **GPX 내보내기(HI-09, P1)**: `run_samples`를 GPX XML로 직렬화하는 Edge Function 또는 클라이언트 로컬 변환 — 서버 부하가 크지 않으므로 클라이언트 변환을 우선 검토.
+- **인증**: Supabase Auth. **현재 카카오 OAuth 웹 플로우만 구현**(`core/auth/`). Apple/Google 로그인은 Phase 2(AC-01) — iOS는 Apple 로그인 필수 제공(App Store 심사 요건).
+- **RLS**: §5 전 테이블 적용. 서버 쓰기는 SECURITY DEFINER 트리거·함수. service role 키는 클라이언트 번들에 절대 포함하지 않는다(현재 클라이언트는 anon 키만 사용, `AppConfig` — `--dart-define`).
+- **데이터 삭제(AC-04)**: *(미구현 — Phase 2)*. 설계상 계정 삭제 시 `profiles` cascade로 `runs`/`user_badges`/`season_histories`/`tier_change_history` 전량 삭제. 삭제 후 `leaderboard_entries`는 다음 배치 사이클에 자동 반영.
+- **GPX 내보내기(HI-09, P1)**: *(미구현)*. `runs.samples`(jsonb)를 클라이언트에서 GPX XML로 직렬화 — 서버 렌더링 불필요.
 - **부정 기록 데이터 보존**: `flagged=true` 기록은 삭제하지 않고 보존(§7 원칙) — 이의 제기 대응 근거.
 
 ---
 
-## 13. Phase 0 완료 기준 (Definition of Done)
+## 13. Phase 0 완료 기준 (Definition of Done) — ✅ 완료
 
 PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"의 완료 조건:
 
-- [ ] `docs/ARCHITECTURE.md`, `docs/TRD.md` 사용자 검토·승인
-- [ ] `lib/models/*.dart` — 본 문서 §3 모델을 freezed 클래스로 실제 생성 (`mobile-architect`)
-- [ ] Supabase 프로젝트에 §4 DDL 마이그레이션 적용 + `get_advisors` 보안/성능 권고 확인 (`backend-engineer`)
-- [ ] §5 RLS 정책 적용 및 최소 1개 계정으로 본인/타인 접근 범위 수동 검증
-- [ ] §4.1 camelCase↔snake_case 매핑표가 실제 스키마와 100% 일치
-- [ ] `upload-run-record` Edge Function 스켈레톤(§6.1) 배포 — 로직은 Phase 2에서 완성해도 되나, 요청/응답 shape는 Phase 1의 클라이언트 업로드 코드가 이를 기준으로 작성될 수 있어야 함
+- [x] `docs/ARCHITECTURE.md`, `docs/TRD.md` — 작성 완료, 구현 반영본으로 유지 중
+- [x] `lib/models/*.dart` — freezed 클래스로 생성 완료(설계와 일부 진화, §3 상단 노트)
+- [x] Supabase 스키마 마이그레이션 00~42 적용 (`backend-engineer`)
+- [x] RLS 정책 적용 (`07_rls.sql` + 이후 마이그레이션)
+- [x] §4.1 camelCase↔snake_case 매핑표 유지 (`wire_enums.dart` 대조)
+- [~] ~~`upload-run-record` Edge Function 스켈레톤~~ — **폐기.** PostgREST upsert + `runs` 트리거 체인으로 대체(§6.0). Phase 1 클라이언트 업로드 코드는 이 방식으로 작성됨
+
+**현재 위치: Phase 1~2 진행 중.** 남은 P0 항목은 ARCHITECTURE §13 참조.
 
 ---
 
@@ -1175,7 +1225,7 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | ~~1~~ | ~~로컬 영속 저장소 패키지(Hive/Drift/Isar)~~ → **해소. drift로 확정·구현 완료**(`lib/features/tracking/data/local_run_database.dart`) | — |
 | 2 | `run_samples` jsonb → 별도 테이블 전환 임계 규모 | Phase 1 실측 후 |
 | ~~3~~ | ~~공유 카드(HI-08) 이미지 렌더링 방식(클라이언트 위젯 캡처 vs 서버 렌더링)~~ → **해소(2026-08-26). 클라이언트 위젯 캡처 확정** — `RenderRepaintBoundary.toImage()`로 1080×1920 투명 PNG(규격 히스토리는 §3.9.2). 서버 렌더링을 버린 이유: (a) 디자인 시스템(`AppTokens`·Pretendard 가변 폰트·뱃지 SVG 146종)이 전부 Flutter 자산이라 서버에 **두 번째 구현**이 필요하고 어긋나면 앱에서 본 카드와 올라간 카드가 달라진다, (b) 마케팅 예산 0원(BRD)인데 유일한 성장 레버에 서버 비용·왕복을 얹을 이유가 없다, (c) HI-10은 러닝 종료 직후에 동작해야 하는데 그 지점은 신호가 나쁠 수 있다(오프라인 우선 §9의 연장), (d) 경로 좌표가 이미지 한 장 만들자고 기기 밖으로 나가지 않는다. 서버 렌더링은 **링크 공유의 OG 이미지**가 필요해질 때 이 경로를 대체하는 게 아니라 추가된다 — PRD가 요구하는 건 스토리에 올릴 이미지 파일이다. 스펙은 §3.9.2 | — |
-| 4 | 시즌 롤오버 시 `user_season_tier` 신규 row를 lazy insert할지 전원 일괄 생성할지 | Phase 2, 실제 사용자 수 확인 후 |
+| ~~4~~ | ~~시즌 롤오버 시 `user_season_tier` 신규 row를 lazy insert할지~~ → **무효.** `user_season_tier` 테이블 자체가 없다. 티어는 `profiles` 컬럼이고 `sync_my_season`/`reset_stale_seasons`가 조회 시점에 시즌 리셋을 지연 처리한다 | — |
 | 5 | 이상치 판정 임계값(가속도, accuracy 등)의 실측 튜닝 | Phase 1 실기기 테스트 후 |
 | 6 | GPX 내보내기 클라이언트 vs 서버 처리 | Phase 1 이후(P1) |
 | 7 | 포인트 이코노미(Phase 4) 테이블 설계 | Phase 4 착수 전 — PRD §10.2 |
