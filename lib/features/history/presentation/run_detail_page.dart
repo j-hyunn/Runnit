@@ -48,7 +48,8 @@ class RunDetailPage extends ConsumerWidget {
           children: [
             const HistoryHeader(title: '러닝 상세'),
             Expanded(
-              child: Center(
+              child: Align(
+                alignment: Alignment.topCenter,
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(
                     maxWidth: AppTokens.contentMaxWidth,
@@ -58,8 +59,7 @@ class RunDetailPage extends ConsumerWidget {
                         const Center(child: CircularProgressIndicator()),
                     error: (_, __) => _Message(
                       text: '기록을 불러오지 못했어요',
-                      onRetry: () =>
-                          ref.invalidate(runDetailProvider(runId)),
+                      onRetry: () => ref.invalidate(runDetailProvider(runId)),
                     ),
                     data: (record) => record == null
                         // 삭제된 기록의 알림/딥링크로 들어오면 여기에 닿는다.
