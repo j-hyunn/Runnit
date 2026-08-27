@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/sharing/presentation/widgets/achievement_celebration.dart';
 import '../auth/auth_providers.dart';
 
 /// 바텀 네비게이션 셸 — **2026-08-21 4탭 개편**(Figma 프레임 `48:872` 반영),
@@ -81,50 +82,56 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
 
-    return Scaffold(
-      body: widget.shell,
-      extendBody: true,
-      bottomNavigationBar: DecoratedBox(
-        key: _barKey,
-        // Figma "Nav bar": 콘텐츠가 스크롤되며 바 뒤로 지나갈 때 경계가
-        // 갑자기 잘리지 않도록 아래(불투명)→위(투명)로 옅어지는 스크림.
-        // 2026-08-24: 스크림 색을 순백에서 #F8F8F8로 바꿨다 — 화면 배경
-        // 자체가 순백이 아니라 #F8F8F8(Home `55:1118`/활동 `82:722` 둘 다
-        // 확인됨)이라, 순백 스크림을 쓰면 바 주변에 옅은 흰 테두리처럼
-        // 배경과 어긋나 보였다.
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Color(0xFFF8F8F8), Color(0x00F8F8F8)],
-          ),
-        ),
-        child: SafeArea(
-          top: false,
-          minimum: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: const Color(0xFFEEEEEE)),
-              borderRadius: BorderRadius.circular(1000),
+    // 성취 축하 연출(HI-10)을 셸 수준에 매단다 — 서버 판정은 업로드 후
+    // 비동기라 사용자가 이미 다른 탭으로 옮긴 뒤에 뱃지가 도착할 수 있고,
+    // 오프라인 러닝은 며칠 뒤 동기화 시점에 도착한다. 요약 화면 하나에만
+    // 연출을 달면 그 경우들이 조용히 사라진다.
+    return AchievementCelebrationHost(
+      child: Scaffold(
+        body: widget.shell,
+        extendBody: true,
+        bottomNavigationBar: DecoratedBox(
+          key: _barKey,
+          // Figma "Nav bar": 콘텐츠가 스크롤되며 바 뒤로 지나갈 때 경계가
+          // 갑자기 잘리지 않도록 아래(불투명)→위(투명)로 옅어지는 스크림.
+          // 2026-08-24: 스크림 색을 순백에서 #F8F8F8로 바꿨다 — 화면 배경
+          // 자체가 순백이 아니라 #F8F8F8(Home `55:1118`/활동 `82:722` 둘 다
+          // 확인됨)이라, 순백 스크림을 쓰면 바 주변에 옅은 흰 테두리처럼
+          // 배경과 어긋나 보였다.
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Color(0xFFF8F8F8), Color(0x00F8F8F8)],
             ),
-            padding: const EdgeInsets.all(4),
-            child: Row(
-              children: [
-                for (var i = 0; i < AppShell._destinations.length; i++)
-                  Expanded(
-                    child: _NavItem(
-                      destination: AppShell._destinations[i],
-                      // 마이 탭에만 게스트 배지 — 유일한 개인 정보 전용 탭.
-                      showGuestBadge: i == 3 && !signedIn,
-                      selected: widget.shell.currentIndex == i,
-                      onTap: () => widget.shell.goBranch(
-                        i,
-                        initialLocation: i == widget.shell.currentIndex,
+          ),
+          child: SafeArea(
+            top: false,
+            minimum: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: const Color(0xFFEEEEEE)),
+                borderRadius: BorderRadius.circular(1000),
+              ),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  for (var i = 0; i < AppShell._destinations.length; i++)
+                    Expanded(
+                      child: _NavItem(
+                        destination: AppShell._destinations[i],
+                        // 마이 탭에만 게스트 배지 — 유일한 개인 정보 전용 탭.
+                        showGuestBadge: i == 3 && !signedIn,
+                        selected: widget.shell.currentIndex == i,
+                        onTap: () => widget.shell.goBranch(
+                          i,
+                          initialLocation: i == widget.shell.currentIndex,
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

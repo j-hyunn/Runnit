@@ -6,74 +6,229 @@ import 'package:runnit/features/gamification/domain/level_curve.dart';
 import 'package:runnit/models/models.dart';
 
 /// 이 테스트는 **확정 규칙서와 클라이언트 구현이 갈라지지 않았음**을 잠근다.
-/// 규칙서: `_workspace/20260819_210450_badge_rules.md` §1.1 / §4
+/// 규칙서: `_workspace/20260826_000340_gamification_badge-backlog-decisions.md` §1 / §3,
+/// `docs/TRD.md` §3.8 / §10.2
 ///
-/// 여기 있는 기대값은 서버 SQL(`compute_level`)의 기대값과 동일해야 한다.
+/// 여기 있는 기대값은 서버 SQL(`xp_level_thresholds` / `compute_level` /
+/// `_weekly_streak_state`)의 기대값과 동일해야 한다.
 /// 서버 산식을 바꾸면 이 테스트가 먼저 깨져야 정상이다.
 void main() {
-  group('LevelCurve — 규칙서 §4 곡선표', () {
-    // 규칙서 §4.2 표와 동일한 값.
+  group('LevelCurve — TRD §3.8.3 XP 임계값 배열', () {
+    // 정본: _workspace/20260826_000340_gamification_badge-backlog-decisions.md §1.2
+    // 서버 public.xp_level_thresholds() 와 **글자 그대로 같은 60개 정수**여야 한다.
+    // 유도식 ceil(50 × (L−1)^2.2) 는 근거일 뿐, 계약은 이 배열이다.
     const expected = <int, int>{
-      2: 500,
-      3: 1516,
-      4: 2900,
-      5: 4595,
-      10: 16818,
-      20: 55588,
-      30: 109347,
-      50: 253096,
-      100: 779806,
+      1: 0,
+      2: 50,
+      3: 230,
+      4: 561,
+      5: 1056,
+      10: 6285,
+      15: 16614,
+      20: 32526,
+      25: 54380,
+      30: 82461,
+      40: 158239,
+      50: 261458,
+      60: 393410,
     };
 
-    test('pointsRequiredFor가 문서 표와 일치한다', () {
-      expected.forEach((level, points) {
-        expect(LevelCurve.pointsRequiredFor(level), points,
-            reason: '레벨 $level 임계값');
+    test('xpRequiredFor가 확정 배열과 일치한다', () {
+      expected.forEach((level, xp) {
+        expect(LevelCurve.xpRequiredFor(level), xp, reason: '레벨 $level 임계값');
       });
     });
 
-    test('levelForPoints와 pointsRequiredFor가 정확히 맞물린다', () {
-      // 임계값에서 정확히 레벨업하고, 1pt 모자라면 이전 레벨에 머물러야 한다.
-      // 이 경계가 어긋나면 사용자가 "500점인데 왜 레벨 2가 아니냐"를 겪는다.
-      for (var level = 2; level <= LevelCurve.maxLevel; level++) {
-        final threshold = LevelCurve.pointsRequiredFor(level);
-        expect(LevelCurve.levelForPoints(threshold), level,
-            reason: '레벨 $level 임계값 도달');
-        expect(LevelCurve.levelForPoints(threshold - 1), level - 1,
-            reason: '레벨 $level 임계값 1pt 미달');
+    test('만렙은 60이고 배열 길이와 같다', () {
+      expect(LevelCurve.maxLevel, 60);
+      expect(LevelCurve.thresholds, hasLength(60));
+    });
+
+    test('임계값이 순증가한다', () {
+      for (var i = 1; i < LevelCurve.thresholds.length; i++) {
+        expect(LevelCurve.thresholds[i],
+            greaterThan(LevelCurve.thresholds[i - 1]),
+            reason: '레벨 ${i + 1} 임계값');
       }
     });
 
-    test('레벨 1과 음수/0 포인트를 안전하게 처리한다', () {
-      expect(LevelCurve.pointsRequiredFor(1), 0);
-      expect(LevelCurve.levelForPoints(0), 1);
-      expect(LevelCurve.levelForPoints(-100), 1);
+    // ⚠️ 이 테스트를 지우지 말 것. 구 곡선에서 지수 역함수의 부동소수 오차가
+    // "레벨업까지 1pt 남음"을 고착시키는 버그를 실제로 일으켰다
+    // (_workspace/20260819_210450_badge_rules.md §4.3). 배열 조회로 바꾼
+    // 이유가 바로 이것이고, L=2..60 전수 경계 검증이 그 재발을 막는 잠금장치다.
+    test('levelForXp와 xpRequiredFor가 L=2..60 전수에서 정확히 맞물린다', () {
+      for (var level = 2; level <= LevelCurve.maxLevel; level++) {
+        final threshold = LevelCurve.xpRequiredFor(level);
+        expect(LevelCurve.levelForXp(threshold), level,
+            reason: '레벨 $level 임계값 도달');
+        expect(LevelCurve.levelForXp(threshold - 1), level - 1,
+            reason: '레벨 $level 임계값 1XP 미달');
+      }
+    });
+
+    test('레벨 1과 음수/0 XP를 안전하게 처리한다', () {
+      expect(LevelCurve.xpRequiredFor(1), 0);
+      expect(LevelCurve.levelForXp(0), 1);
+      expect(LevelCurve.levelForXp(-100), 1);
       expect(LevelCurve.levelProgress(0, level: 1), 0.0);
     });
 
     test('만렙에서 상한이 걸리고 다음 레벨이 없다', () {
-      expect(LevelCurve.levelForPoints(99999999), LevelCurve.maxLevel);
+      expect(LevelCurve.levelForXp(99999999), LevelCurve.maxLevel);
       expect(LevelCurve.nextLevelThreshold(LevelCurve.maxLevel), isNull);
-      expect(LevelCurve.pointsToNextLevel(99999999, level: 100), isNull);
-      expect(LevelCurve.levelProgress(99999999, level: 100), 1.0);
+      expect(LevelCurve.xpToNextLevel(99999999, level: 60), isNull);
+      expect(LevelCurve.levelProgress(99999999, level: 60), 1.0);
+      expect(LevelCurve.isMaxLevel(60), isTrue);
+      expect(LevelCurve.isMaxLevel(59), isFalse);
     });
 
     test('구간 진행률이 0~1 사이에서 단조 증가한다', () {
-      // 레벨 3 구간: 1516 ~ 2900
-      expect(LevelCurve.levelProgress(1516, level: 3), 0.0);
-      expect(LevelCurve.levelProgress(2900, level: 3), 1.0);
-      final mid = LevelCurve.levelProgress(2208, level: 3);
+      // 레벨 3 구간: 230 ~ 561
+      expect(LevelCurve.levelProgress(230, level: 3), 0.0);
+      expect(LevelCurve.levelProgress(561, level: 3), 1.0);
+      final mid = LevelCurve.levelProgress(395, level: 3);
       expect(mid, greaterThan(0.4));
       expect(mid, lessThan(0.6));
     });
 
-    test('다음 레벨까지 남은 포인트', () {
-      expect(LevelCurve.pointsToNextLevel(0, level: 1), 500);
-      expect(LevelCurve.pointsToNextLevel(1516, level: 3), 2900 - 1516);
+    test('다음 레벨까지 남은 XP', () {
+      expect(LevelCurve.xpToNextLevel(0, level: 1), 50);
+      expect(LevelCurve.xpToNextLevel(230, level: 3), 561 - 230);
+      // 이미 넘겼으면 음수가 아니라 0.
+      expect(LevelCurve.xpToNextLevel(999, level: 3), 0);
+    });
+
+    test('첫 러닝 1건(약 95 XP)으로 즉시 레벨 2가 된다 — 온보딩 첫 보상', () {
+      expect(LevelCurve.levelForXp(95), 2);
     });
   });
 
-  group('BadgeConditionType — 40종 카탈로그 비교 방향', () {
+  group('GamificationStats.computeWeeklyStreak — GM-05 주 단위 + 1회 유예', () {
+    // 서버 public._weekly_streak_state(uuid) 의 리플레이와 **글자 그대로 같은 규칙**이어야
+    // 한다. 정본: badge-backlog-decisions §3.3 / TRD §10.2.
+    // 아래 기대값은 실제 Supabase 검증에서 나온 값과 동일하다(보고서 검증 §D).
+
+    // 2026-05-04(월) 00:00 KST = 2026-05-03T15:00Z
+    final baseMonday = DateTime.utc(2026, 5, 3, 15);
+
+    RunRecord weekRun(int weekOffset, {double distanceMeters = 3000}) => RunRecord(
+          id: 'r$weekOffset-\${distanceMeters.toInt()}',
+          userId: 'u1',
+          startedAt: baseMonday.add(Duration(days: weekOffset * 7, hours: 9)),
+          endedAt: baseMonday
+              .add(Duration(days: weekOffset * 7, hours: 9, minutes: 18)),
+          activityType: ActivityType.outdoorRun,
+          status: RunStatus.completed,
+          distanceMeters: distanceMeters,
+          elapsedSeconds: 1080,
+          movingSeconds: 1080,
+        );
+
+    // 평가 시점: 활동 주 마지막(offset 7)로부터 한참 뒤 = offset 16 주의 수요일.
+    final now = baseMonday.add(const Duration(days: 16 * 7 + 2));
+
+    test('유예 1회가 결석 주를 메워 스트릭을 잇는다', () {
+      // 활동 주 0, 2,3,4,5, 7 (1과 6 결석).
+      // 0=1 / 1 유예 / 2=2 3=3 4=4 5=5(4주 연속 → 크레딧 회복) / 6 유예 / 7=6
+      final runs = [0, 2, 3, 4, 5, 7].map(weekRun).toList();
+      final state = GamificationStats.computeWeeklyStreak(runs, now: now);
+      expect(state.longest, 6);
+      // 유예 없이 세면 연속 최대 구간은 2~5의 4주뿐이다.
+      expect(state.longest, greaterThan(4));
+    });
+
+    test('연속 2주 결석은 크레딧 1개로 메울 수 없어 스트릭이 끊긴다', () {
+      // 활동 주 0, 3, 4 → 1·2 연속 결석에서 크레딧 소진 후 리셋.
+      final runs = [0, 3, 4].map(weekRun).toList();
+      final state = GamificationStats.computeWeeklyStreak(runs, now: now);
+      expect(state.longest, 2); // 3,4 두 주가 최장
+    });
+
+    test('주 합산 1.0km 미만인 주는 활동 주가 아니다', () {
+      // 0,2,3,4,5,7 은 3km. 결석 주 1에 800m 만 추가해도 활동 주가 되면 안 된다
+      // (되면 0~5가 이어져 longest 가 8이 된다).
+      final runs = [
+        ...[0, 2, 3, 4, 5, 7].map(weekRun),
+        weekRun(1, distanceMeters: 800),
+      ];
+      final state = GamificationStats.computeWeeklyStreak(runs, now: now);
+      expect(state.longest, 6);
+    });
+
+    test('400m x 3회처럼 주 합산으로 1.0km를 넘기면 활동 주가 된다', () {
+      final runs = [
+        weekRun(0),
+        RunRecord(
+          id: 'a',
+          userId: 'u1',
+          startedAt: baseMonday.add(const Duration(days: 7, hours: 9)),
+          activityType: ActivityType.outdoorRun,
+          status: RunStatus.completed,
+          distanceMeters: 400,
+          elapsedSeconds: 200,
+          movingSeconds: 200,
+        ),
+        RunRecord(
+          id: 'b',
+          userId: 'u1',
+          startedAt: baseMonday.add(const Duration(days: 8, hours: 9)),
+          activityType: ActivityType.outdoorRun,
+          status: RunStatus.completed,
+          distanceMeters: 400,
+          elapsedSeconds: 200,
+          movingSeconds: 200,
+        ),
+        RunRecord(
+          id: 'c',
+          userId: 'u1',
+          startedAt: baseMonday.add(const Duration(days: 9, hours: 9)),
+          activityType: ActivityType.outdoorRun,
+          status: RunStatus.completed,
+          distanceMeters: 400,
+          elapsedSeconds: 200,
+          movingSeconds: 200,
+        ),
+      ];
+      final state = GamificationStats.computeWeeklyStreak(runs, now: now);
+      expect(state.longest, 2);
+    });
+
+    test('진행 중인 주는 비활동으로 판정하지 않는다 — 스트릭을 끊지 않는다', () {
+      // 활동 주 0,1 이고 지금은 offset 2 주의 목요일(아직 안 뛴 상태).
+      final runs = [0, 1].map(weekRun).toList();
+      final nowInWeek2 = baseMonday.add(const Duration(days: 2 * 7 + 3));
+      final state = GamificationStats.computeWeeklyStreak(runs, now: nowInWeek2);
+      expect(state.current, 2);
+      expect(state.longest, 2);
+      expect(state.freezeCredits, 1); // 유예를 소모하지 않았다
+    });
+
+    test('러닝이 없으면 0주 / 크레딧 1', () {
+      final state = GamificationStats.computeWeeklyStreak(const [], now: now);
+      expect(state.longest, 0);
+      expect(state.current, 0);
+      expect(state.freezeCredits, 1);
+    });
+
+    test('가입이 첫 러닝보다 늦어도 러닝을 잃지 않는다 (서버 least() 가드와 동일)', () {
+      final runs = [0, 1, 2].map(weekRun).toList();
+      final state = GamificationStats.computeWeeklyStreak(
+        runs,
+        signupAt: baseMonday.add(const Duration(days: 30)),
+        now: now,
+      );
+      expect(state.longest, 3);
+    });
+
+    test('일 단위 스트릭과 섞이지 않는다', () {
+      // 매주 1회씩 6주 → 주 단위 6, 일 단위는 1.
+      final runs = [0, 1, 2, 3, 4, 5].map(weekRun).toList();
+      expect(GamificationStats.computeLongestStreakWeeks(runs, now: now), 6);
+      expect(GamificationStats.computeLongestStreakDays(runs), 1);
+    });
+  });
+
+  group('BadgeConditionType — 39종 카탈로그 비교 방향', () {
     test('atMost 4종(pb_time_lte/pace_avg_lte/pace_variance_lte/season_weekly_rank_lte)만 뒤집힌다', () {
       const atMost = {
         BadgeConditionType.pbTimeLte,
@@ -96,8 +251,9 @@ void main() {
       expect(BadgeConditionType.isKnown('brand_new_condition_v3'), isFalse);
     });
 
-    test('확정 집합은 40종이다', () {
-      expect(BadgeConditionType.all.length, 40);
+    test('확정 집합은 39종이다 (district_diversity_gte 삭제 후)', () {
+      expect(BadgeConditionType.all.length, 39);
+      expect(BadgeConditionType.all, isNot(contains('district_diversity_gte')));
     });
   });
 

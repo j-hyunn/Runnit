@@ -85,6 +85,21 @@ abstract class UserBadge with _$UserBadge {
     /// 획득 시각(UTC). 서버가 확정한다(클라이언트 시각은 신뢰 불가).
     required DateTime earnedAt,
 
+    /// 이 뱃지를 촉발한 러닝 id. DB 컬럼 `user_badges.source_run_id`
+    /// (`references runs(id) on delete set null`, 마이그레이션 02)는 처음부터
+    /// 있었지만 Dart 모델에는 빠져 있었다 — 2026-08-26 공유 카드(HI-08) 설계에서
+    /// 추가했다.
+    ///
+    /// **공유 카드가 이 값을 쓴다.** 뱃지·PB 카드에 그 러닝의 경로(§HI-08 "경로
+    /// 포함")와 거리·시간을 얹으려면 "어느 러닝이 이 뱃지를 만들었는지"를 알아야
+    /// 하고, 그 답을 서버는 이미 갖고 있다. 없으면 클라이언트가 `earnedAt` 근처
+    /// 러닝을 시간으로 추측하게 되는데, 같은 날 두 번 뛴 사용자에게서 조용히
+    /// 틀린다.
+    ///
+    /// null인 경우: 누적/랭킹처럼 특정 세션에서 나오지 않은 뱃지
+    /// ([Badge.triggerType]이 `cumulative`), 또는 원본 러닝이 삭제된 경우.
+    String? sourceRunId,
+
     /// 서버 재검증 통과 여부. 기본값 false — 미검증 뱃지를 낙관적으로
     /// "확정 획득"으로 표시하지 않기 위해서다.
     @Default(false) bool verified,

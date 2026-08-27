@@ -47,10 +47,14 @@ class SupabaseGamificationRepository implements GamificationRepository {
     return guardSupabase(() async {
       // 임베드 별칭 `badge:`는 허용된다 — 금지된 것은 *컬럼* 별칭이다(§2.5).
       // `badge`는 UserBadge.badge 필드명과 정확히 일치한다.
+      // revoked=true 는 `watchUnseenBadges`와 같은 이유로 제외한다 — 운영자가 수동
+      // 회수한 뱃지를 갤러리 상세의 공유 버튼(§HI-08)이 다시 "확정 성취"로
+      // 내보내면 안 된다(QA F-1, 2026-08-26).
       final rows = await _client
           .from(_userBadges)
           .select('*, badge:badges(*)')
           .eq('user_id', userId)
+          .eq('revoked', false)
           .order('earned_at', ascending: false);
       return rows.map(UserBadge.fromJson).toList(growable: false);
     });
@@ -75,6 +79,14 @@ class SupabaseGamificationRepository implements GamificationRepository {
             .select('*, badge:badges(*)')
             .eq('user_id', userId)
             .eq('is_seen', false)
+            // 이 큐는 축하 연출 + **공유 카드**의 입력이다(HI-10). 지금은 서버가
+            // 항상 verified=true / revoked=false로만 넣어서 결과가 같지만,
+            // 운영자가 수동 회수한 뱃지가 아직 is_seen=false로 남아 있으면
+            // 그 뱃지를 축하하고 인스타에 올리게 된다 — 앱 밖으로 나간 카드는
+            // 회수할 수 없으므로 두 줄로 그 경우를 큐에서 빼 둔다.
+            // (gamification 문서 20260826_105607 §1)
+            .eq('verified', true)
+            .eq('revoked', false)
             .order('earned_at', ascending: true);
         return rows.map(UserBadge.fromJson).toList(growable: false);
       }),

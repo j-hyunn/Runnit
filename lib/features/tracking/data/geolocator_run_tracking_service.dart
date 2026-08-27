@@ -232,6 +232,7 @@ class GeolocatorRunTrackingService implements RunTrackingService {
         aggregator.offerWearableMetrics(
           heartRateBpm: metric.heartRateBpm,
           source: metric.source,
+          vendor: metric.vendor,
         );
       },
       onError: (Object _) {

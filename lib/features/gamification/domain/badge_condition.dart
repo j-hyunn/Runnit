@@ -54,7 +54,6 @@ class BadgeConditionType {
   static const String dayOfWeekDiversityGte = 'day_of_week_diversity_gte';
   static const String routeDiversityCountGte = 'route_diversity_count_gte';
   static const String elevationGainCumulativeGte = 'elevation_gain_cumulative_gte';
-  static const String districtDiversityGte = 'district_diversity_gte';
   static const String loopCourseCountGte = 'loop_course_count_gte';
   static const String calendarDateMatch = 'calendar_date_match';
   static const String membershipAnniversaryRun = 'membership_anniversary_run';
@@ -96,7 +95,6 @@ class BadgeConditionType {
     dayOfWeekDiversityGte,
     routeDiversityCountGte,
     elevationGainCumulativeGte,
-    districtDiversityGte,
     loopCourseCountGte,
     calendarDateMatch,
     membershipAnniversaryRun,
@@ -164,8 +162,9 @@ class BadgeConditionType {
       case seasonFirstLongDistance:
         return BadgeEvaluability.clientPartial;
       default:
-        // districtDiversityGte, levelGte, season_* 집계류(랭킹/티어/주차 전역) 등 —
-        // 서버 전용.
+        // levelGte(서버 XP 4원천), season_* 집계류(랭킹/티어/주차 전역) 등 — 서버 전용.
+        // streakWeeksGte/deviceSource*는 클라이언트에서도 리플레이·배열 겹침으로 추정 가능해
+        // 위 clientEstimable 분기에 이미 있다. districtDiversityGte는 2026-08-26 카탈로그에서 삭제됐다.
         return BadgeEvaluability.serverOnly;
     }
   }

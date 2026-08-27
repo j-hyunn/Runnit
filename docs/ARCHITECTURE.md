@@ -2,17 +2,18 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.1 (초안) |
-| 작성일 | 2026-08-25 |
+| 문서 버전 | v0.2 (초안) |
+| 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | Phase 0 초안 — 실제 구현 착수 전 검토 필요 |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.3 (확정), `.claude/agents/*`, `.claude/skills/*` (하네스 기술 컨벤션) |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), `.claude/agents/*`, `.claude/skills/*` (하네스 기술 컨벤션) |
 | 하위 문서 | [`docs/TRD.md`](./TRD.md) — 이 문서의 결정을 구현 가능한 스펙으로 세분화 |
 
 **변경 이력**
 | 버전 | 변경 내용 |
 |------|----------|
 | v0.1 | 최초 작성. `claude/phase-0-start` 브랜치에서 구성된 하네스(에이전트 6개·스킬 7개)에 이미 반영되어 있던 아키텍처 결정을 PRD v1.3 기준으로 정리·문서화. PRD §11의 Phase 0 산출물(아키텍처·데이터 모델·Supabase 스키마 확정)에 해당 |
+| v0.2 | **성취 축하 구조를 "두 소비 지점 + 억제 카운터"에서 "전역 풀페이지 단일 지점"으로 갱신**(§7.4.1, PRD v1.4·TRD §3.9.3). 요약 화면 인라인 축하와 `achievementCelebrationSuppressors`를 제거하고 `AchievementCelebrationHost` 하나가 항상 풀페이지(`rootNavigator` + `fullscreenDialog`)로 축하한다. 공유 카드(§3.1 파일 트리)도 같은 날 9:16 투명 오버레이로 최종 확정된 상태를 반영 |
 
 > 📌 **원천 우선순위**: 이 문서와 `docs/PRD.md`가 충돌하면 **PRD가 우선**한다. 이 문서는 PRD의 제품 사양을 구현 구조로 번역한 것이며, 사양 자체를 새로 정의하지 않는다.
 
@@ -116,8 +117,20 @@ lib/
       data/  domain/  presentation/
     profile/                 # 계정/프로필(AC-01~06)
       data/  domain/  presentation/
-    sharing/                  # 공유 카드 생성(HI-08, HI-10) — P0
-      data/  domain/  presentation/
+    sharing/                  # 공유 카드 생성(HI-08, HI-10) — P0 · 2026-08-26 구현 완료
+      domain/
+        share_card_data.dart      # 카드 4종 sealed 유니온 (TRD §3.9)
+        share_card_builder.dart   # 기존 모델 → 카드 조합(순수 함수, I/O 없음)
+        achievement_backlog.dart  # 밀린 성취를 한 장으로 접을지 판정(TRD §14 #19)
+      data/
+        share_card_renderer.dart  # RepaintBoundary → 1080×1920 투명 PNG(9:16 오버레이)
+        share_service.dart        # 임시 PNG 기록 + OS 공유 시트(share_plus)
+        share_providers.dart      # 성취 큐 · 카드 조립 Provider
+      presentation/
+        share_card_sheet.dart     # 미리보기 + 공유(캡처 전 SVG 프리캐시, 캡처 중 버튼 잠금)
+        widgets/share_card_surface.dart      # 9:16 투명 프레임 + 캡처 계약(배경 금지)
+        widgets/share_card_body.dart         # 카드 4종의 실제 그림 + 경로 페인터
+        widgets/achievement_celebration.dart # 축하 연출(풀페이지+애니메이션) + 전역 큐 호스트, 성취 축하의 유일한 소비 지점(§7.4.1)
     notifications/            # 알림 설정/수신(NT-01~08)
 ```
 
@@ -295,6 +308,8 @@ flowchart TB
 
 **핵심 설계 판단**: Garmin은 별도 SDK 통합이 아니라 **HealthKit/Health Connect 연동의 부산물**로 지원된다. iOS의 HealthKit, Android의 Health Connect 연동을 한 번 구현하면 Apple Watch·Garmin·기타 Wear OS 세 갈래를 하나의 코드 경로로 커버한다. Garmin 전용 실시간 연동(Garmin Health API, 개발자 승인 필요)은 MVP에서 다루지 않고 후속 검토로 남긴다.
 
+**그 대가**: 연동 표면이 하나로 수렴한 만큼, **"어느 기기가 만든 데이터인가"는 경로만으로 알 수 없다.** Apple Watch도 Garmin도 똑같이 HealthKit을 거쳐 들어온다. 기기별 뱃지(`device_source_count_gte` — 애플워치런/가민런 등 4종)를 판정하려면 벤더를 별도로 식별해 기록해야 하며, 그 유일한 단서가 HealthKit `sourceRevision.source.bundleIdentifier` / Health Connect `dataOrigin.packageName`이다. 이를 러닝 단위 `runs.device_vendors` 배열로 남긴다 — 축 분리 근거·값 목록·판별 한계는 **TRD §3.1.1 / §8.4.1**.
+
 ### 6.3 티어·랭킹 반영 판정 — 기기가 아니라 경로 데이터 유무 (PRD §5.7 확정)
 
 ```mermaid
@@ -349,6 +364,52 @@ PRD §6 "1시간 러닝 시 배터리 소모 10% 이하" 요구는 **표준 모�
 
 ⚠️ 이 표를 벗어나 두 개념을 하나의 서비스/테이블로 합치는 구현은 **아키텍처 원칙 위반**으로 간주한다.
 
+### 7.4 성취 알림·공유의 단일 큐 (HI-10) — 2026-08-26
+
+HI-10은 트리거 3개(티어 승급 / 뱃지 획득 / PB 갱신)를 요구하지만, **서버는 셋 다
+`user_badges` INSERT 하나로 끝낸다**. 따라서 클라이언트도 감지 경로를 세 벌 만들지 않는다.
+
+| HI-10 트리거 | 서버가 만드는 행 | 클라이언트 판별 |
+|---|---|---|
+| 티어 승급 | `stier_{tier}@{seasonId}` 인스턴스 (마이그레이션 31/32, `season_tier_reached`) | `Badge.category == seasonTier` |
+| PB 갱신 | `pb_first_achieved` / `pb_time_lte` 뱃지 | `Badge.category == personalBest` |
+| 그 외 뱃지 | 해당 뱃지 | 나머지 12개 카테고리 |
+
+`user_badges`는 realtime publication에 있고(07_rls.sql), `watchUnseenBadges(userId)`가
+`is_seen = false` 행을 밀어 준다. 승급 감지를 위해 `profiles.current_tier`를 폴링하거나
+before/after를 비교할 필요가 없다 — 그 방식은 시즌 롤오버 리셋을 "강등"으로 오인한다.
+
+**판정은 전부 서버이고 큐에 뜬 시점에 이미 `verified = true`다.** 클라이언트가 가채점한
+성취를 축하했다가 나중에 뒤집히는 상황은 구조적으로 존재하지 않는다 — 공유 카드가 서버 값만
+그리는 근거이기도 하다.
+
+⚠️ `tier_change_history`(마이그레이션 33/34)는 XP-4 적립용 상승 이벤트 로그이며 realtime
+publication에 **없다**. 승급 시각을 정확히 알아야 할 때만 조회한다(RLS: 본인 행만 select).
+
+#### 7.4.1 큐를 소비하는 단일 지점 (2026-08-27 갱신)
+
+성취(뱃지·티어 승급·PB) 축하는 **`sharing/presentation/widgets/achievement_celebration.dart`의
+`AchievementCelebrationHost`(`AppShell`에 부착) 하나가 유일한 소비 지점**이다. 러닝 요약
+화면이 떠 있든, 사용자가 이미 홈으로 이동했든, 오프라인 러닝이 며칠 뒤 동기화됐든 항상 같은
+경로로 축하한다 — `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute
+(fullscreenDialog: true)`로 진짜 풀페이지를 띄우고(하단 네비바까지 가림, §3.9.2 공유 카드
+페이지와 동일 패턴), 글로우 링·컨페티·엘라스틱 팝인 애니메이션(`_AchievementBurst`)을 붙인다.
+
+`tracking/presentation/widgets/summary_achievements.dart`(러닝 요약 화면)는 더 이상 성취를
+축하하지 않는다 — `AchievementGate`(confirmed/pending/flagged)만 계산해 상태 문구를 그리고,
+실제 축하 UI는 전역 호스트가 그 위에 덮어씌운다.
+
+⚠️ **이전 설계였던 "두 소비 지점 + `achievementCelebrationSuppressors` 억제 카운터"는
+폐기됐다**(사용자 요청, 2026-08-27) — 요약 화면 인라인 축하가 없어지면서 억제할 대상 자체가
+사라졌다. 예전에 이 카운터가 막던 "인라인 축하와 전역 다이얼로그가 동시에 뜨는" 프레임 경합
+버그(TRD §14 #20)도 원인이 없어져 함께 해소됐다. 공유 버튼은 `PersonalBestCardData`에만
+붙는다 — 일반 뱃지·티어 승급은 이 풀페이지로 축하는 받지만 공유는 하지 않는다(PRD v1.4·HI-10,
+TRD §3.9.3).
+
+호스트는 **이번 실행에서 이미 보여준 성취 id를 로컬에 기억한다.** `markBadgesSeen`은 네트워크
+실패 시 조용히 넘어가는데(축하 화면이 오류로 안 닫히는 쪽이 더 나쁘다), 그 기억이 없으면 스트림이
+같은 행을 다시 밀어 **풀페이지가 무한 반복**되거나 "확인"이 먹히지 않는 것처럼 보인다.
+
 ---
 
 ## 8. 부정행위 방지 파이프라인 (Anti-cheat)
@@ -377,14 +438,16 @@ PRD TR-08("오프라인 기록 → 복귀 시 자동 동기화", 100% 업로드)
 flowchart LR
     GPS["GPS 스트림"] --> Local["로컬 저장소\n(세션 진행 중 매 샘플 즉시 기록)"]
     Local --> Queue["업로드 대기 큐"]
-    Queue -->|"네트워크 있음"| Upload["Edge Function 업로드"]
+    Queue -->|"네트워크 있음"| Upload["PostgREST 직접 upsert"]
     Queue -->|"네트워크 없음"| Retry["재시도 대기\n(지수 백오프)"]
     Upload -->|"성공"| Clear["로컬 큐에서 제거"]
     Upload -->|"실패"| Retry
 ```
 
-- 트래킹 중에는 인메모리가 아니라 **로컬 영속 저장소에 매 샘플을 즉시 기록**한다 — 앱 크래시 시에도 세션 복구가 가능해야 하기 때문이다. 저장소 선택(Hive/Drift/Isar 등)은 TRD §14 미확정 항목.
+- 트래킹 중에는 인메모리가 아니라 **로컬 영속 저장소에 매 샘플을 즉시 기록**한다 — 앱 크래시 시에도 세션 복구가 가능해야 하기 때문이다. 저장소는 **drift로 확정·구현 완료**(`local_run_database.dart`, 2026-08-26) — TRD §14 #1 해소.
+- 업로드는 별도 Edge Function이 아니라 **`supabase_flutter`를 통한 PostgREST 직접 upsert**다. 서버 확정(`is_flagged` 등)은 트리거가 같은 요청의 `.select()` 응답으로 내려준다.
 - 업로드 큐는 세션 단위(`RunRecord` 전체)로 관리하며, 부분 업로드로 인한 정합성 문제를 피하기 위해 하나의 트랜잭션으로 전송한다.
+- **업로드는 단방향이 아니다.** 서버 가드 트리거가 확정하는 값(`is_flagged`/`flag_reason`/`awarded_xp`/`avg_pace_sec_per_km`)은 upsert 응답(`.select(...).single()`)으로 되받아 로컬 행에 반영한다. 이것이 없으면 `RunRecord.isFlagged`가 영원히 `null`이라 공유 카드 게이트(§7.4)가 `pending`에서 멈춘다. 응답 채택 실패는 로컬을 `failed`로 남겨 `syncPending()`이 재시도하며, 업로드가 멱등(`id`=클라이언트 UUID)이라 중복 행이 생기지 않는다.
 
 ---
 
@@ -411,7 +474,8 @@ flowchart LR
 | `tracking/` | `gps-tracking-engineer` | `lib/features/tracking/` |
 | `gamification/`, `ranking/` 도메인 로직 | `gamification-designer` | `lib/features/gamification/` |
 | Supabase 스키마/RLS/API | `backend-engineer` | Supabase 마이그레이션, `lib/core/api/` |
-| `presentation/` 전반(UI) | `flutter-ui-designer` | 각 feature의 `presentation/` |
+| `sharing/` 카드 데이터·캡처·공유 파이프라인 | `mobile-architect` | `lib/features/sharing/domain/`, `.../data/` |
+| `presentation/` 전반(UI) — 공유 카드 아트·축하 연출 포함 | `flutter-ui-designer` | 각 feature의 `presentation/` |
 | 경계면 정합성 검증 | `qa-integration-tester` | 각 모듈 완성 직후 |
 
 ---
@@ -422,7 +486,7 @@ flowchart LR
 |---|---|---|---|
 | 1 | 로컬 영속 저장소 (Hive / Drift / Isar / sqflite) | 미정 — §9 오프라인 큐 구현 시 결정 | Phase 1 착수 시 |
 | 2 | 지도 SDK 클라이언트 패키지 | PRD상 Naver Map 확정(`flutter_naver_map`), 실제 API 키/쿼터 검증 필요 | Phase 1 |
-| 3 | 공유 카드(HI-08) 이미지 생성 방식 (클라이언트 렌더링 vs 서버 렌더링) | 클라이언트 렌더링(위젯 캡처) 우선 검토 — 서버 비용·지연 없음 | Phase 2 |
+| ~~3~~ | ~~공유 카드(HI-08) 이미지 생성 방식 (클라이언트 렌더링 vs 서버 렌더링)~~ | **해소(2026-08-26) — 클라이언트 위젯 캡처 확정.** 잠정 권고를 뒤집을 이유가 없었고, 오히려 근거가 더 강해졌다: 디자인 시스템(뱃지 SVG 146종·Pretendard 가변 폰트·티어 색 토큰)이 전부 Flutter 자산이라 서버 렌더링은 **두 번째 구현**을 요구한다. 상세 근거·스펙은 TRD §3.9.2 / §14 #3 | — |
 | 4 | `run_samples` 저장 방식 (jsonb 컬럼 vs 별도 테이블) | 초기엔 `run_records.samples jsonb`, 샘플 수 많아지면 별도 테이블 분리 검토 | Phase 1, 실측 후 |
 | 5 | P2(크루)·Phase 4(포인트) 스키마 확장 여지 | 지금 테이블을 만들지 않되, `RunRecord.userId` 등 기존 FK 구조가 그룹 스코프 추가를 막지 않는지만 확인 | 해당 Phase 착수 시 |
 

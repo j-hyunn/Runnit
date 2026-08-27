@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../models/models.dart';
+import '../../history/data/history_providers.dart';
 import '../data/geolocator_run_tracking_service.dart';
 import '../data/tracking_providers.dart';
 
@@ -11,6 +12,32 @@ import '../data/tracking_providers.dart';
 /// 화면이 필요로 하는 파생 상태만 여기에 둔다.
 /// - [liveRouteProvider]           : 지도 폴리라인의 증분 누적
 /// - [wearableNoticeReaderProvider] : 워치 배너 판단(테스트에서 override 가능)
+/// - [storedRunProvider]            : 저장된 러닝의 최신 서버 확정 상태
+
+/// 로컬 DB에 저장된 그 러닝의 **최신 상태**.
+///
+/// ## 왜 `stop()`의 반환값을 그대로 쓰면 안 되는가
+/// `TrackingController.stop()`이 돌려주는 [RunRecord]는 **업로드 이전 스냅샷**이다
+/// (`save()`가 `Future<void>`라 서버 확정본을 돌려줄 자리가 없다). 요약 화면이
+/// 그 값으로 성취 게이트를 판정하면 `syncStatus`는 영원히 `local`, `isFlagged`는
+/// 영원히 `null`이라 **온라인에서도 `pending`에 머문다** — 축하도 공유 버튼도
+/// 뜨지 않는다.
+///
+/// `myRunsProvider`는 drift `watch()` 기반이라 업로드가 끝나 `summaryJson`이
+/// 갱신되면 자동으로 재발행된다. 그래서 새 조회를 짜지 않고 이미 있는 그
+/// 스트림에서 해당 id만 골라낸다.
+///
+/// ⚠️ 목록 스트림이라 `samples`가 비어 있다 — **경로가 필요한 곳에서는 쓰지 말 것**
+/// (공유 카드의 경로는 손에 쥔 원본 레코드에서 뽑는다). 여기서 읽는 값은
+/// `syncStatus` / `isFlagged` / `flagReason`뿐이다.
+final storedRunProvider = Provider.family<RunRecord?, String>((ref, runId) {
+  final runs = ref.watch(myRunsProvider).valueOrNull;
+  if (runs == null) return null;
+  for (final run in runs) {
+    if (run.id == runId) return run;
+  }
+  return null;
+});
 
 /// 지도에 그릴 경로. [liveRunSampleProvider]가 주는 샘플을 **하나씩 덧붙인다**.
 ///

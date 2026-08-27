@@ -8,7 +8,11 @@ import '../../../core/theme/app_tokens.dart';
 import '../../../core/widgets/app_shell.dart';
 import '../../../models/models.dart';
 import '../../auth/presentation/widgets/guest_login_prompt.dart';
+import '../../sharing/data/share_providers.dart';
+import '../../sharing/domain/share_card_data.dart';
+import '../../sharing/presentation/share_card_sheet.dart';
 import '../data/gamification_providers.dart';
+import '../domain/badge_assets.dart';
 import '../domain/badge_progress.dart';
 
 /// 뱃지 갤러리 **본문** — 게스트도 볼 수 있지만 개인화 레이어는 비공개다.
@@ -226,7 +230,7 @@ class _GalleryBody extends ConsumerWidget {
                     title: '내 획득 여부는 로그인 후 확인',
                     message: '로그인하면 이 뱃지를 얻었는지, 얼마나 남았는지 볼 수 있어요.',
                   )
-                else if (_isEarnedForDisplay(progress, signedIn))
+                else if (_isEarnedForDisplay(progress, signedIn)) ...[
                   Row(
                     children: [
                       Icon(Icons.check_circle, size: 18, color: scheme.primary),
@@ -238,7 +242,11 @@ class _GalleryBody extends ConsumerWidget {
                         style: const TextStyle(fontSize: 14, color: Colors.black),
                       ),
                     ],
-                  )
+                  ),
+                  const SizedBox(height: AppTokens.s16),
+                  // HI-08: 성취 직후를 놓쳤어도 나중에 자랑할 수 있어야 한다.
+                  _BadgeShareButton(badgeId: badge.id),
+                ]
                 else ...[
                   Text(
                     progress.meetsThresholdLocally
@@ -263,6 +271,54 @@ class _GalleryBody extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// 획득한 뱃지의 공유 버튼(HI-08, 트리거 지점 #3).
+///
+/// 카드를 만들려면 카탈로그 정의가 아니라 **획득 행**([UserBadge])이 필요하다 —
+/// 획득 시각·원본 러닝(경로)이 거기 있다. [BadgeProgress]는 카탈로그 + 진행률
+/// 뷰모델이라 그 정보를 갖고 있지 않아서 여기서 한 번 찾는다.
+///
+/// 카드를 만들 수 없으면(획득 행 미로딩, 카탈로그 조인 누락) 버튼을 그리지
+/// 않는다 — 눌러도 아무 일이 없는 버튼보다 없는 편이 낫다.
+///
+/// **일반 뱃지([BadgeEarnedCardData])·티어 승급([TierPromotionCardData])은
+/// 공유하지 않는다**(2026-08-27, 사용자 요청) — 둘 다 풀페이지 축하
+/// 애니메이션으로 끝나고 별도 공유 카드로 이어지지 않는다. PB만 남긴다.
+class _BadgeShareButton extends ConsumerWidget {
+  const _BadgeShareButton({required this.badgeId});
+
+  final String badgeId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final earned = ref.watch(userBadgesProvider).valueOrNull;
+    if (earned == null) return const SizedBox.shrink();
+
+    UserBadge? mine;
+    for (final userBadge in earned) {
+      if (userBadge.badgeId == badgeId) {
+        mine = userBadge;
+        break;
+      }
+    }
+    if (mine == null) return const SizedBox.shrink();
+
+    final card = ref.watch(shareCardForAchievementProvider(mine)).valueOrNull;
+    if (card == null) return const SizedBox.shrink();
+    if (card is BadgeEarnedCardData || card is TierPromotionCardData) {
+      return const SizedBox.shrink();
+    }
+
+    return FilledButton.tonalIcon(
+      onPressed: () => showShareCardSheet(context, card),
+      icon: const Icon(Icons.ios_share),
+      label: const Text('공유하기'),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size.fromHeight(AppTokens.minTapTarget),
+      ),
     );
   }
 }
@@ -474,7 +530,6 @@ class _BadgeMedal extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final active = _isEarnedForDisplay(progress, showEarnedState);
     final dimmed = !active && !forceFullColor;
-    final assetFolder = _categoryAssetFolder(badge.category);
 
     // 미획득 상태는 흑백이 아니라 **투명도만** 낮춘다 — 등급 색이 회색으로
     // 뭉개지지 않고 옅게라도 보여야 갤러리에서 등급을 가늠할 수 있다.
@@ -483,7 +538,11 @@ class _BadgeMedal extends StatelessWidget {
       height: size,
       child: Center(
         child: _BadgeArtwork(
-          assetPath: 'assets/badges/$assetFolder/${_gradeAssetName(badge.badgeGrade)}.svg',
+          // 경로 규칙 정본은 `domain/badge_assets.dart` — 공유 카드와 공유한다.
+          assetPath: badgeAssetPath(
+            category: badge.category,
+            badgeGrade: badge.badgeGrade,
+          ),
           // 원본 뷰박스가 40×44(세로로 긴 방패) — 폭을 size에 맞추고 비율은 그대로 둔다.
           width: size,
           dimmed: dimmed,
@@ -541,33 +600,11 @@ class _BadgeArtwork extends StatelessWidget {
   }
 }
 
-/// `BadgeCategory` → `assets/badges/` 하위 폴더명. 2026-08-26 기준 남은 14종
-/// 전부(permanent 11 + 시즌 3) 아트가 있다.
-String _categoryAssetFolder(BadgeCategory category) => switch (category) {
-      BadgeCategory.cumulativeDistance => 'distance',
-      BadgeCategory.cumulativeCount => 'count',
-      BadgeCategory.longestStreak => 'strict',
-      BadgeCategory.personalBest => 'PB',
-      BadgeCategory.singleSessionDistance => 'session',
-      BadgeCategory.timeOfDayWeekday => 'date',
-      BadgeCategory.routeExploration => 'route',
-      BadgeCategory.specialDay => 'special',
-      BadgeCategory.paceSpeed => 'speed',
-      BadgeCategory.deviceIntegration => 'wearable',
-      BadgeCategory.level => 'level',
-      BadgeCategory.seasonTier => 'tier',
-      BadgeCategory.seasonWeeklyRank => 'ranking',
-      BadgeCategory.seasonEvent => 'event',
-    };
-
-/// 파일명은 `Badge.badgeGrade`와 동일한 6종(bronze/silver/gold/platinum/
-/// diamond/special)이라 그대로 쓴다. 모르는 값이 오면 bronze로 폴백해
-/// 존재하지 않는 파일을 참조하지 않게 한다.
-String _gradeAssetName(String badgeGrade) => const {
-      'bronze', 'silver', 'gold', 'platinum', 'diamond', 'special',
-    }.contains(badgeGrade)
-        ? badgeGrade
-        : 'bronze';
+// 아트 경로 규칙(`_categoryAssetFolder` / `_gradeAssetName`)은 2026-08-26
+// `../domain/badge_assets.dart`로 옮겼다. 공유 카드(HI-08)가 **같은 메달**을
+// 그려야 하는 두 번째 소비자가 되면서, 규칙이 두 벌 있으면 갤러리에서 본 메달과
+// 인스타에 올라간 메달이 갈라질 수 있게 됐기 때문이다. 이 파일은 그 함수를
+// 그대로 호출한다.
 
 /// 획득 체크 배지 색상. 사용자 요청으로 platinum↔diamond만 서로 맞바꿔
 /// 쓴다(2026-08-25) — 나머지 등급은 [_gradeColor]와 동일.

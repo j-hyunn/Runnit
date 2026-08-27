@@ -94,9 +94,57 @@ abstract class RunRecord with _$RunRecord {
     /// 이 세션에 기여한 소스들. 폰+워치 동시 기록 시 둘 다 포함.
     @Default(<RunSampleSource>[]) List<RunSampleSource> sources,
 
-    /// 서버가 부여한 게이미피케이션 포인트. 클라이언트 계산값은 신뢰하지 않는다
-    /// (서버 재검증 후 확정 — gamification-designer/backend-engineer 합의사항).
-    int? awardedPoints,
+    /// 이 세션에 기여한 **기기 벤더** 목록. [sources]와 직교하는 축이다
+    /// (`enums.dart`의 [DeviceVendor] 주석 참조 — "언제/어떻게" vs "어느 기기").
+    ///
+    /// | 상황 | 값 |
+    /// |---|---|
+    /// | 폰 단독 러닝 (P0 기본) | `[phone]` |
+    /// | 폰 GPS + Apple Watch 심박 | `[phone, watchApple]` |
+    /// | 워치 워크아웃 통째 임포트 (P1, WR-01~03) | `[watchApple]` / `[watchGarmin]` |
+    /// | 수동 입력·기기 정보 없음 | `[]` — 빈 배열은 `[phone]`과 **다른 뜻**이다 |
+    ///
+    /// ## 왜 스칼라가 아니라 배열인가
+    /// 한 세션에 폰(좌표)과 워치(심박)가 **동시에** 기여하는 것이 P1의 기본
+    /// 경로다. 스칼라 `deviceVendor` 하나로는 그 세션을 폰 기록이라 부를지
+    /// 워치 기록이라 부를지 손실 없이 표현할 수 없다.
+    ///
+    /// ## 뱃지 판정에서의 사용 (device_source_count_gte / _diversity_gte)
+    /// - "애플워치로 누적 50회": `deviceVendors`가 `watchApple`을 **포함**하는 러닝 수
+    /// - "올라운더"(device_both_used): `phone`을 포함한 러닝과 `watchApple`/`watchGarmin`을
+    ///   포함한 러닝이 각각 1건 이상. **같은 러닝이 둘 다 충족해도 인정된다** —
+    ///   매칭 규칙은 배열 겹침 하나뿐이고 "폰 단독"이라는 두 번째 시맨틱은 없다
+    ///   (TRD §3.1.2 / 2026-08-26 기기 벤더 중재)
+    ///
+    /// 값 문자열은 뱃지 카탈로그 토큰과 1:1로 같다 — 매핑 테이블이 없다.
+    @Default(<DeviceVendor>[]) List<DeviceVendor> deviceVendors,
+
+    /// 서버가 산정한 이 러닝의 XP. 클라이언트 계산값은 신뢰하지 않는다
+    /// (서버 재검증 후 확정 — `compute_run_xp()`). DB 컬럼은 `runs.awarded_xp`.
+    int? awardedXp,
+
+    /// 서버 재검증 이상치 플래그 (PRD §8.4). DB 컬럼 `runs.is_flagged`.
+    ///
+    /// **읽기 전용**이다 — `_serverOwnedKeys`가 업로드 payload에서 제거하고,
+    /// 서버 `trg_runs_guard`가 한 번 더 되돌린다.
+    ///
+    /// ## 왜 `@Default(false)`가 아니라 nullable인가
+    /// 세 가지 상태를 구분해야 하기 때문이다:
+    /// - `null` = **아직 모른다** (로컬 저장만 됐거나 서버 응답을 못 받음)
+    /// - `false` = 서버가 정상으로 확정
+    /// - `true` = 서버가 이상치로 플래그
+    ///
+    /// 기본값을 `false`로 두면 "아직 검증 전"이 "정상 확정"으로 둔갑해,
+    /// 나중에 플래그될 기록을 축하하고 공유까지 시켜 버린다. 공유 카드는 앱 밖으로
+    /// 나가면 회수할 수 없으므로(`gamification/domain/achievement_moment.dart`의
+    /// 게이트 판정), 이 구분이 곧 안전장치다.
+    ///
+    /// 2026-08-26 추가 — gamification-designer의 공유 트리거 타이밍 설계 요청.
+    bool? isFlagged,
+
+    /// 플래그 사유. DB 컬럼 `runs.flag_reason`. [isFlagged]와 같은 규칙으로
+    /// 서버 전용이다. 사용자에게 그대로 노출할 문구는 아니다(내부 코드에 가깝다).
+    String? flagReason,
 
     /// 레코드 생성/수정 시각(UTC). 서버가 채운다.
     DateTime? createdAt,

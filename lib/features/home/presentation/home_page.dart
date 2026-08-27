@@ -9,6 +9,8 @@ import '../../../models/models.dart';
 import '../../../core/widgets/app_shell.dart';
 import '../../auth/presentation/widgets/guest_login_prompt.dart';
 import '../../ranking/data/ranking_providers.dart';
+import '../../sharing/data/share_providers.dart';
+import '../../sharing/presentation/share_card_sheet.dart';
 import 'full_ranking_page.dart';
 import 'widgets/ranking_widgets.dart';
 
@@ -207,9 +209,23 @@ class _WeeklyTierCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '이번 시즌 기록',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Color(0xFF616161)),
+          const Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '이번 시즌 기록',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: Color(0xFF616161),
+                  ),
+                ),
+              ),
+              // HI-08의 상시 공유 경로 — 승급 순간을 놓쳤어도 "지금 내 티어"를
+              // 자랑할 수 있어야 한다. 카드는 `currentTierShareCardProvider`가
+              // 만든다(순위는 집계 전이면 자동으로 빠진다).
+              _TierShareButton(),
+            ],
           ),
           const SizedBox(height: AppTokens.s8),
           Row(
@@ -268,6 +284,30 @@ class _WeeklyTierCard extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 홈 티어 카드의 공유 버튼(HI-08, 트리거 지점 #4).
+///
+/// 카드 데이터가 아직 없으면(집계 대기·게스트) 아이콘 자리를 비워 둔다 —
+/// 눌러도 아무 일이 없는 버튼을 두면 사용자는 앱이 고장 났다고 읽는다.
+class _TierShareButton extends ConsumerWidget {
+  const _TierShareButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final card = ref.watch(currentTierShareCardProvider).valueOrNull;
+    if (card == null) return const SizedBox.shrink();
+
+    return IconButton(
+      onPressed: () => showShareCardSheet(context, card),
+      icon: const Icon(Icons.ios_share, size: 20),
+      color: const Color(0xFF616161),
+      tooltip: '내 티어 공유하기',
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      padding: EdgeInsets.zero,
     );
   }
 }

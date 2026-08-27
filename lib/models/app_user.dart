@@ -57,10 +57,14 @@ abstract class AppUser with _$AppUser {
     /// 누적 러닝 횟수.
     @Default(0) int totalRunCount,
 
-    /// 누적 게이미피케이션 포인트. 레벨 산출의 입력.
-    @Default(0) int totalPoints,
+    /// 누적 XP. 레벨 산출의 **유일한** 입력.
+    ///
+    /// ⚠️ PRD §5.6 Phase 4의 "포인트"(상품 교환 화폐, 거리 비연동 적립)와는
+    /// **다른 개념**이다. 2026-08-26 확정으로 이름을 분리했고 `totalPoints`는
+    /// Phase 4에 반납했다 — 여기에 되살리지 말 것. DB 컬럼은 `profiles.total_xp`.
+    @Default(0) int totalXp,
 
-    /// 현재 레벨. totalPoints에서 서버가 파생.
+    /// 현재 레벨(1~60). totalXp에서 서버가 파생.
     @Default(1) int level,
 
     /// 현재 연속 러닝 일수 / 역대 최장 연속 일수.

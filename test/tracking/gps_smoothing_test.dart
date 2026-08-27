@@ -317,4 +317,75 @@ void main() {
       expect(record.avgHeartRateBpm, 152);
     });
   });
+
+  // 뱃지 `device_source_count_gte`(애플워치런/가민런 등)와
+  // `device_source_diversity_gte`(올라운더)의 원천 데이터.
+  group('deviceVendors', () {
+    RunSessionAggregator makeAggregator() => RunSessionAggregator(
+          recordId: 'r-vendor',
+          userId: 'u1',
+          activityType: ActivityType.outdoorRun,
+          startedAt: base,
+        );
+
+    test('폰 단독 세션은 정확히 [phone]이다 — "폰 단독 기록" 판정의 근거', () {
+      final aggregator = makeAggregator();
+      aggregator.addFix(
+        GpsFix(
+          latitude: seoulLat,
+          longitude: seoulLon,
+          timestamp: base,
+          accuracyMeters: 5,
+        ),
+      );
+
+      final record =
+          aggregator.snapshot(now: base, status: RunStatus.recording);
+      expect(record.deviceVendors, <DeviceVendor>[DeviceVendor.phone]);
+    });
+
+    test('fix가 하나도 없어도 phone은 기여자다 (집계기는 폰 세션에서만 돈다)', () {
+      final record = makeAggregator()
+          .snapshot(now: base, status: RunStatus.recording);
+      expect(record.deviceVendors, <DeviceVendor>[DeviceVendor.phone]);
+    });
+
+    test('애플워치 심박이 붙으면 [phone, watchApple] — 하이브리드 세션', () {
+      final aggregator = makeAggregator();
+      aggregator.addFix(
+        GpsFix(
+          latitude: seoulLat,
+          longitude: seoulLon,
+          timestamp: base,
+          accuracyMeters: 5,
+        ),
+      );
+      aggregator.offerWearableMetrics(
+        heartRateBpm: 150,
+        vendor: DeviceVendor.watchApple,
+      );
+
+      final record =
+          aggregator.snapshot(now: base, status: RunStatus.recording);
+      // enum 선언 순서로 정렬돼 payload가 결정적이다.
+      expect(
+        record.deviceVendors,
+        <DeviceVendor>[DeviceVendor.phone, DeviceVendor.watchApple],
+      );
+    });
+
+    test('워치 지표 직후 GPS가 끊겨도 벤더는 남는다 (터널 회귀)', () {
+      final aggregator = makeAggregator();
+      // fix 없이 심박만 도착 → 이후 fix가 영영 안 와도 워치 기여가 유실되면 안 된다.
+      aggregator.offerWearableMetrics(
+        heartRateBpm: 148,
+        source: RunSampleSource.external,
+        vendor: DeviceVendor.watchGarmin,
+      );
+
+      final record =
+          aggregator.snapshot(now: base, status: RunStatus.recording);
+      expect(record.deviceVendors, contains(DeviceVendor.watchGarmin));
+    });
+  });
 }

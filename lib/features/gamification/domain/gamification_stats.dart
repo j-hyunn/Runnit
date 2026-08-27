@@ -185,4 +185,139 @@ class GamificationStats {
     }
     return longest;
   }
+
+  /// 역대 최장 **주간** 스트릭(1회 유예 포함). `streak_weeks_gte` 뱃지의 지표.
+  ///
+  /// ## 일 단위와 섞지 말 것
+  /// [computeLongestStreakDays]는 통계 표시 전용이다. GM-05가 스트릭을 **주 단위**로
+  /// 확정했으므로(러닝은 회복일이 필요하고 일 단위는 부상을 조장한다) 뱃지 판정은
+  /// 이 함수의 규칙만 따른다.
+  ///
+  /// ## 서버와 글자 그대로 같은 규칙
+  /// 서버 `public._weekly_streak_state(uuid)`의 리플레이와 1:1 대응한다
+  /// (정본: `_workspace/20260826_000340_gamification_badge-backlog-decisions.md` §3.3,
+  /// `docs/TRD.md` §10.2). 규칙이 갈라지면 사용자가 보는 스트릭과 실제 뱃지 지급이
+  /// 어긋나므로, 한쪽을 고치면 반드시 다른 쪽도 고친다.
+  ///
+  /// - 주 경계: KST 월요일 00:00 ~ 일요일 23:59, 러닝은 `startedAt` 기준 귀속
+  /// - 활동 주: 완주 러닝 1건 이상 **그리고** 그 주 합산 거리 ≥ 1.0km
+  ///   (실내·수동 **포함** — 스트릭은 이탈 방지 장치이지 경쟁 지표가 아니다)
+  /// - 유예: 크레딧 1개를 비활동 주에 **자동** 소모, 그 주는 스트릭 카운트에 넣지 않고
+  ///   연결만 유지. 유예 사용 후 연속 4주 활동하면 크레딧 회복, 스트릭이 끊기면 즉시 1로 리셋
+  /// - 진행 중인 주는 비활동으로 판정하지 않는다(유예도 소모하지 않는다)
+  ///
+  /// **크레딧은 저장 상태가 아니라 리플레이 파생값**이다 — 기록이 삭제돼도
+  /// 같은 입력이면 같은 답이 나온다.
+  ///
+  /// [signupAt]은 가입 시각(리플레이 시작점). 생략하거나 첫 활동 주보다 늦으면
+  /// 첫 활동 주부터 시작한다 — 서버 구현의 `least()` 가드와 동일하다.
+  /// [now]는 테스트용 주입점이며 기본값은 현재 시각이다.
+  static int computeLongestStreakWeeks(
+    Iterable<RunRecord> runs, {
+    DateTime? signupAt,
+    DateTime? now,
+  }) =>
+      computeWeeklyStreak(runs, signupAt: signupAt, now: now).longest;
+
+  /// [computeLongestStreakWeeks]의 전체 결과(현재/최장/크레딧). 프로필 표시용.
+  static WeeklyStreakState computeWeeklyStreak(
+    Iterable<RunRecord> runs, {
+    DateTime? signupAt,
+    DateTime? now,
+  }) {
+    // 활동 주 집계: KST 월요일의 일련번호(day index) → 그 주 합산 거리.
+    final weekDistance = <int, double>{};
+    for (final run in runs) {
+      if (run.status != RunStatus.completed) continue;
+      weekDistance.update(
+        _kstWeekIndex(run.startedAt),
+        (v) => v + run.distanceMeters,
+        ifAbsent: () => run.distanceMeters,
+      );
+    }
+    final activeWeeks = <int>{
+      for (final e in weekDistance.entries)
+        if (e.value >= 1000.0) e.key,
+    };
+    if (activeWeeks.isEmpty) {
+      return const WeeklyStreakState(current: 0, longest: 0, freezeCredits: 1);
+    }
+
+    final firstActive = activeWeeks.reduce((a, b) => a < b ? a : b);
+    final signupWeek =
+        signupAt == null ? firstActive : _kstWeekIndex(signupAt);
+    var week = signupWeek < firstActive ? signupWeek : firstActive;
+    final nowWeek = _kstWeekIndex(now ?? DateTime.now());
+
+    var credits = 1;
+    var usedFreeze = false;
+    var sinceFreeze = 0;
+    var current = 0;
+    var longest = 0;
+
+    while (week <= nowWeek) {
+      if (activeWeeks.contains(week)) {
+        current += 1;
+        if (current > longest) longest = current;
+        if (usedFreeze) {
+          sinceFreeze += 1;
+          if (sinceFreeze >= 4) {
+            credits = 1;
+            usedFreeze = false;
+            sinceFreeze = 0;
+          }
+        }
+      } else {
+        // 진행 중인 주는 끊지 않는다.
+        if (week == nowWeek) break;
+        if (credits >= 1) {
+          credits -= 1;
+          usedFreeze = true;
+          sinceFreeze = 0;
+        } else {
+          current = 0;
+          credits = 1;
+          usedFreeze = false;
+          sinceFreeze = 0;
+        }
+      }
+      week += 7;
+    }
+
+    return WeeklyStreakState(
+      current: current,
+      longest: longest,
+      freezeCredits: credits,
+    );
+  }
+
+  /// [instant]가 속한 KST 주의 **월요일** 일련번호(UTC 자정 기준 일수).
+  ///
+  /// 7의 배수로 정렬되지는 않지만 주 단위 전진(`+7`)과 집합 비교에는 충분하다 —
+  /// 같은 주의 모든 시각이 같은 값을 낸다는 성질만 있으면 된다.
+  static int _kstWeekIndex(DateTime instant) {
+    final kst = instant.toUtc().add(_kstOffset);
+    final day = DateTime.utc(kst.year, kst.month, kst.day);
+    final dayIndex = day.millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
+    // DateTime.weekday: 월=1 … 일=7.
+    return dayIndex - (kst.weekday - 1);
+  }
+}
+
+/// [GamificationStats.computeWeeklyStreak]의 결과.
+class WeeklyStreakState {
+  const WeeklyStreakState({
+    required this.current,
+    required this.longest,
+    required this.freezeCredits,
+  });
+
+  /// 현재 진행 중인 연속 활동 주 수. 유예로 메운 주는 포함하지 않는다.
+  final int current;
+
+  /// 역대 최장 연속 활동 주 수. **`streak_weeks_gte` 뱃지 판정 지표.**
+  final int longest;
+
+  /// 남은 유예 크레딧(0 또는 1).
+  final int freezeCredits;
 }

@@ -69,3 +69,21 @@ extension DistanceUnitWire on DistanceUnit {
         DistanceUnit.imperial => 'imperial',
       };
 }
+
+/// 기기 벤더(`public.device_vendor`). `runs.device_vendors` 배열 필터
+/// (`.contains('device_vendors', [vendor.wire])`)에 쓴다.
+///
+/// ⚠️ 이 문자열은 **네 곳**이 동일해야 한다 — 다른 enum보다 한 곳 더 많다:
+/// `lib/models/enums.dart`의 `@JsonValue`, Postgres `device_vendor` 라벨,
+/// 여기, 그리고 **뱃지 카탈로그의 조건 토큰**(`badge_catalog.condition_value`의
+/// `source`/`sources` 값, `docs/badge-catalog.csv`). 카탈로그까지 같은 문자열로
+/// 맞춘 것이 이 설계의 핵심이다 — 어긋나면 뱃지가 조용히 미지급된다.
+extension DeviceVendorWire on DeviceVendor {
+  String get wire => switch (this) {
+        DeviceVendor.phone => 'phone',
+        DeviceVendor.watchApple => 'watchApple',
+        DeviceVendor.watchGarmin => 'watchGarmin',
+        DeviceVendor.watchOther => 'watchOther',
+        DeviceVendor.unknown => 'unknown',
+      };
+}

@@ -2,6 +2,9 @@ import 'package:json_annotation/json_annotation.dart';
 
 /// 모든 enum의 JSON 표현은 snake_case 문자열이다.
 /// Supabase 측에서는 동일 이름의 Postgres enum 타입 또는 CHECK 제약 걸린 text로 매핑한다.
+///
+/// **예외 1건: [DeviceVendor]** — 값이 뱃지 카탈로그에 camelCase로 이미 시드돼
+/// 있어 camelCase를 그대로 쓴다. 사유는 해당 enum 주석 참조.
 
 /// RunSample이 어느 장치에서 왔는지. 폰/워치를 하나의 모델로 통합하고
 /// 이 필드로만 구분한다 (소스별 모델 분리 금지).
@@ -12,6 +15,59 @@ enum RunSampleSource {
   watch,
   @JsonValue('external')
   external, // Garmin Connect → HealthKit/Health Connect 경유 등 사후 임포트
+}
+
+/// 러닝 기록에 데이터를 기여한 **물리 기기의 벤더**.
+///
+/// [RunSampleSource]와 **직교하는 별도 축**이다. 하나로 합치지 않는다:
+///
+/// | 축 | 답하는 질문 | 값 |
+/// |---|---|---|
+/// | [RunSampleSource] | 데이터가 **어떤 경로로 언제** 들어왔나 | `phone` / `watch`(실시간) / `external`(사후 동기화) |
+/// | [DeviceVendor] | 데이터를 **어느 기기**가 만들었나 | `phone` / `watchApple` / `watchGarmin` / … |
+///
+/// 두 축을 한 enum으로 접으면 `watchGarminLive` × `watchGarminImported` 식으로
+/// 값이 곱해진다. 또 Garmin은 **항상** 동기화 경유(PRD §5.7 WR-03)라 벤더와
+/// 실시간성이 상관은 있지만 동치가 아니다 — Apple Watch 기록도 나중에
+/// HealthKit에서 통째로 임포트하면 `external`이 된다.
+///
+/// ## ⚠️ 이 enum만 snake_case 규약의 예외다
+/// 값 문자열이 뱃지 카탈로그에 **이미 camelCase로 박혀 있다**:
+/// `docs/badge-catalog.csv`의 `device_source_count_gte` 조건값
+/// (`{"source": "watchApple", "count": 1}`), 시드된 `badge_catalog.condition_value`
+/// jsonb(마이그레이션 26), 그리고 `device_watchApple_1` 같은 **뱃지 id(PK)**.
+/// 저장 라벨을 snake_case로 따로 두면 "카탈로그 토큰"과 "저장 라벨" 두 이름이
+/// 생기고, 그 사이 매핑이 어긋나면 뱃지가 **조용히 미지급**된다
+/// (`lib/core/api/wire_enums.dart` 상단 경고와 같은 실패 양상).
+///
+/// 그래서 **Postgres enum 라벨 / `@JsonValue` / 뱃지 조건 토큰을 모두 동일한
+/// 문자열로 통일**한다. 이 값 목록이 세 계층의 최종 확정본이다.
+enum DeviceVendor {
+  @JsonValue('phone')
+  phone, // Runnit 앱이 폰 GPS로 직접 기록
+
+  @JsonValue('watchApple')
+  watchApple, // Apple Watch (HealthKit 네이티브 경로)
+
+  @JsonValue('watchGarmin')
+  watchGarmin, // Garmin (Garmin Connect → HealthKit/Health Connect 동기화 경유)
+
+  @JsonValue('watchOther')
+  watchOther, // 그 외 웨어러블 — Wear OS, Samsung, Polar, Coros, Suunto 등
+
+  @JsonValue('unknown')
+  unknown, // 외부 기여가 있었으나 기기를 식별하지 못함
+}
+
+extension DeviceVendorX on DeviceVendor {
+  /// 웨어러블 여부. `device_source_diversity_gte`의 "워치 사용" 판정에 쓴다.
+  bool get isWatch => switch (this) {
+        DeviceVendor.watchApple ||
+        DeviceVendor.watchGarmin ||
+        DeviceVendor.watchOther =>
+          true,
+        DeviceVendor.phone || DeviceVendor.unknown => false,
+      };
 }
 
 /// 러닝 세션의 생명주기 상태.

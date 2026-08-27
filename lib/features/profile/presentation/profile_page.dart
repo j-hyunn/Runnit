@@ -207,7 +207,7 @@ class _ProfileCard extends StatelessWidget {
     final tier = profile?.currentTier;
     final label = profile?.label ?? 'My profile';
     final runCount = profile?.totalRunCount ?? 0;
-    final points = profile?.totalPoints ?? 0;
+    final points = profile?.totalXp ?? 0;
 
     return Container(
       padding: const EdgeInsets.all(AppTokens.s16),

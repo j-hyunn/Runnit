@@ -14,6 +14,7 @@ import 'tracking_format.dart';
 import 'tracking_ui_providers.dart';
 import 'wearable_connect_page.dart';
 import 'widgets/run_map_view.dart';
+import 'widgets/summary_achievements.dart';
 import 'widgets/tracking_stats.dart';
 
 /// 실시간 러닝 트래킹 화면.
@@ -1468,7 +1469,14 @@ class _ActiveControls extends StatelessWidget {
 
 // ═══════════════════════ 요약 국면 ═══════════════════════
 
-class _SummaryView extends StatelessWidget {
+/// 요약 국면 — **HI-10의 주 무대**.
+///
+/// 러닝 자체의 공유 버튼([RunShareButton])이 여기서 시작된다. 성취(뱃지/티어/
+/// PB) 축하는 2026-08-27부터 이 화면 **위에 풀페이지로 덮이는**
+/// `AchievementCelebrationHost`(`achievement_celebration.dart`)가 전담한다 —
+/// 예전에는 이 화면이 떠 있는 동안 전역 축하를 억제하고 인라인으로 직접
+/// 그렸지만, 이제는 억제하지 않는다.
+class _SummaryView extends ConsumerStatefulWidget {
   const _SummaryView({
     required this.record,
     required this.onDone,
@@ -1480,9 +1488,17 @@ class _SummaryView extends StatelessWidget {
   final VoidCallback onOpenHistory;
 
   @override
+  ConsumerState<_SummaryView> createState() => _SummaryViewState();
+}
+
+class _SummaryViewState extends ConsumerState<_SummaryView> {
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final record = widget.record;
+    final onDone = widget.onDone;
+    final onOpenHistory = widget.onOpenHistory;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppTokens.s24),
@@ -1572,16 +1588,15 @@ class _SummaryView extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: AppTokens.s12),
-              // 포인트/뱃지는 서버 재검증 뒤 확정된다 — 클라이언트가 미리 단언하면
-              // 나중에 값이 바뀌어 신뢰를 잃는다.
-              Text(
-                '포인트와 뱃지는 서버 확인 후 기록 화면에 반영돼요.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: AppTokens.s24),
+              const SizedBox(height: AppTokens.s16),
+              // 성취 블록(HI-10). 서버가 확정한 뱃지/티어/PB가 도착하면 여기에
+              // 축하와 공유 버튼이 뜨고, 아직이면 상태만 정직하게 말한다.
+              SummaryAchievements(record: record),
+              const SizedBox(height: AppTokens.s16),
+              // 러닝 자체를 공유하는 경로(HI-08). 대부분의 러닝은 뱃지를
+              // 터뜨리지 않으므로, 성취가 없어도 자랑할 수 있어야 한다.
+              RunShareButton(record: record),
+              const SizedBox(height: AppTokens.s16),
               FilledButton(
                 onPressed: onDone,
                 style: FilledButton.styleFrom(
