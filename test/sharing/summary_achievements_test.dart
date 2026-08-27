@@ -6,16 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:runnit/core/auth/auth_providers.dart';
 import 'package:runnit/core/theme/app_theme.dart';
 import 'package:runnit/features/history/data/history_providers.dart';
-import 'package:runnit/features/sharing/data/share_providers.dart';
 import 'package:runnit/features/tracking/presentation/widgets/summary_achievements.dart';
 import 'package:runnit/models/models.dart';
 
 /// 요약 화면 성취 블록(HI-10)의 **게이트 분기**를 검증한다.
 ///
-/// 핵심 규칙 세 가지:
-/// 1. 서버 확정 전(`pending`)에는 잠정 문구만 — 성취 축하도 공유도 없다.
+/// 2026-08-27부터 성취(뱃지/티어/PB) 축하는 이 위젯이 아니라 전역
+/// `AchievementCelebrationHost`의 풀페이지가 담당한다(사용자 요청) — 이
+/// 위젯은 게이트 상태 문구만 그린다. 핵심 규칙 두 가지:
+/// 1. 서버 확정 전(`pending`)에는 잠정 문구만.
 /// 2. 서버가 플래그한 기록(`flagged`)은 블록 자체가 사라진다(회수 연출 없음).
-/// 3. 큐에 도착한 성취는 **그 자체로 서버 확정**이라 공유 버튼이 붙는다.
 void main() {
   const runId = 'run-1';
 
@@ -47,32 +47,11 @@ void main() {
         isFlagged: isFlagged,
       );
 
-  const badge = Badge(
-    id: 'b_dawn',
-    name: '새벽 러너',
-    description: '오전 6시 이전에 10번 달렸어요',
-    category: BadgeCategory.timeOfDayWeekday,
-    scope: BadgeScope.permanent,
-    triggerType: BadgeTriggerType.session,
-    conditionType: 'x',
-    badgeGrade: 'silver',
-  );
-
-  final earned = UserBadge(
-    id: 'ub1',
-    userId: 'u1',
-    badgeId: badge.id,
-    earnedAt: DateTime.utc(2026, 8, 26, 9, 30),
-    verified: true,
-    badge: badge,
-  );
-
   /// [stored]는 로컬 DB가 들고 있는 **서버 확정본**(`storedRunProvider`의 출처).
   /// null이면 아직 업로드 결과가 도착하지 않은 상태다.
   Future<void> pumpBlock(
     WidgetTester tester, {
     RunRecord? stored,
-    List<UserBadge> queue = const [],
     bool signedIn = true,
   }) async {
     tester.view.physicalSize = const Size(420, 900);
@@ -87,7 +66,6 @@ void main() {
           myRunsProvider.overrideWith(
             (ref) => Stream.value(stored == null ? const [] : [stored]),
           ),
-          pendingAchievementsProvider.overrideWith((ref) => Stream.value(queue)),
         ],
         child: MaterialApp(
           theme: AppTheme.light(),
@@ -106,11 +84,10 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('업로드 전에는 잠정 문구만 나오고 성취 축하는 없다', (tester) async {
+  testWidgets('업로드 전에는 잠정 문구만 나온다', (tester) async {
     await pumpBlock(tester);
 
     expect(find.textContaining('아직 서버에 올리는 중'), findsOneWidget);
-    expect(find.text('공유하기'), findsNothing);
   });
 
   testWidgets('서버 확인이 끝나면 확정 문구로 바뀐다', (tester) async {
@@ -141,51 +118,6 @@ void main() {
     expect(find.textContaining('아직 서버에 올리는 중'), findsNothing);
     // 회수 애니메이션도, 사유 안내도 없다 — 조용히 생략한다(TRD §11).
     expect(find.text('이 러닝 공유하기'), findsNothing);
-  });
-
-  testWidgets('큐에 도착한 성취는 축하 + 공유 버튼을 받는다', (tester) async {
-    await pumpBlock(
-      tester,
-      stored: record(syncStatus: SyncStatus.synced, isFlagged: false),
-      queue: [earned],
-    );
-
-    expect(find.text('새 뱃지 획득'), findsOneWidget);
-    expect(find.text('새벽 러너'), findsOneWidget);
-    expect(find.text('공유하기'), findsOneWidget);
-    expect(find.text('확인'), findsOneWidget);
-  });
-
-  testWidgets('여러 건이 동시에 와도 한 번에 하나만 연출하고 남은 수를 알린다', (tester) async {
-    await pumpBlock(
-      tester,
-      stored: record(syncStatus: SyncStatus.synced, isFlagged: false),
-      queue: [
-        earned,
-        earned.copyWith(id: 'ub2', badgeId: 'b2'),
-      ],
-    );
-
-    expect(find.text('새벽 러너'), findsOneWidget);
-    expect(find.text('외 1개 더 있어요'), findsOneWidget);
-    expect(find.text('다음'), findsOneWidget);
-  });
-
-  testWidgets('밀려 있던 성취는 한 장으로 접어 보여준다', (tester) async {
-    // 연출을 처음 켜는 순간 기존 사용자에게 쏟아지는 뱃지(TRD §14 #19).
-    await pumpBlock(
-      tester,
-      stored: record(syncStatus: SyncStatus.synced, isFlagged: false),
-      queue: [
-        for (var i = 0; i < 8; i++)
-          earned.copyWith(id: 'ub$i', badgeId: 'b$i'),
-      ],
-    );
-
-    expect(find.text('그동안 받은 뱃지 8개'), findsOneWidget);
-    // 여덟 번 넘기게 만들지 않는다.
-    expect(find.text('다음'), findsNothing);
-    expect(find.text('공유하기'), findsNothing);
   });
 
   testWidgets('러닝 자체는 성취가 없어도 공유할 수 있다', (tester) async {

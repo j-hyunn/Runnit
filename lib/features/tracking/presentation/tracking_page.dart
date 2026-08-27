@@ -9,7 +9,6 @@ import '../../../core/providers/repository_providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../models/models.dart';
-import '../../sharing/presentation/widgets/achievement_celebration.dart';
 import '../data/tracking_providers.dart';
 import 'tracking_format.dart';
 import 'tracking_ui_providers.dart';
@@ -1472,10 +1471,11 @@ class _ActiveControls extends StatelessWidget {
 
 /// 요약 국면 — **HI-10의 주 무대**.
 ///
-/// 성취 축하(뱃지/티어/PB)와 공유 버튼이 여기서 시작된다. 이 화면이 떠 있는
-/// 동안에는 전역 축하 다이얼로그([AchievementCelebrationHost])를 억제하고
-/// 성취를 **인라인**으로 그린다 — 방금 끝낸 러닝의 맥락 위에 축하가 얹히는 것이
-/// 같은 내용을 다이얼로그로 덮는 것보다 낫다.
+/// 러닝 자체의 공유 버튼([RunShareButton])이 여기서 시작된다. 성취(뱃지/티어/
+/// PB) 축하는 2026-08-27부터 이 화면 **위에 풀페이지로 덮이는**
+/// `AchievementCelebrationHost`(`achievement_celebration.dart`)가 전담한다 —
+/// 예전에는 이 화면이 떠 있는 동안 전역 축하를 억제하고 인라인으로 직접
+/// 그렸지만, 이제는 억제하지 않는다.
 class _SummaryView extends ConsumerStatefulWidget {
   const _SummaryView({
     required this.record,
@@ -1492,18 +1492,6 @@ class _SummaryView extends ConsumerStatefulWidget {
 }
 
 class _SummaryViewState extends ConsumerState<_SummaryView> {
-  @override
-  void initState() {
-    super.initState();
-    suppressAchievementCelebrations();
-  }
-
-  @override
-  void dispose() {
-    resumeAchievementCelebrations();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

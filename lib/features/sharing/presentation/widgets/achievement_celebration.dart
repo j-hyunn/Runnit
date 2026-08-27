@@ -6,8 +6,8 @@
 /// 일만 한다 — 새 조회도, 클라이언트 판정도 없다.
 ///
 /// ## 한 번에 하나
-/// 10km 달성 러닝 하나가 뱃지를 다섯 개 터뜨리는 일이 실제로 있다. 다이얼로그
-/// 다섯 개가 쌓이면 아무것도 축하가 되지 않으므로 큐 맨 앞 1건만 연출하고,
+/// 10km 달성 러닝 하나가 뱃지를 다섯 개 터뜨리는 일이 실제로 있다. 풀페이지
+/// 다섯 장이 쌓이면 아무것도 축하가 되지 않으므로 큐 맨 앞 1건만 연출하고,
 /// 사용자가 닫으면 `markAchievementsSeen`으로 큐를 한 칸 밀어 다음 건이 뜬다.
 ///
 /// ## 큐에 뜬 것은 이미 서버 확정이다
@@ -17,6 +17,8 @@
 /// 블록은 아직 확정 전일 수 있어 [AchievementGate]로 따로 판정한다
 /// (`tracking_page.dart`).
 library;
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -32,7 +34,7 @@ import 'share_card_body.dart';
 /// 전역 축하 연출을 잠시 멈추는 화면의 수.
 ///
 /// 러닝 요약 화면은 성취를 **인라인으로** 직접 그린다(그게 HI-10이 말하는 주
-/// 무대다). 그동안 [AchievementCelebrationHost]까지 다이얼로그를 띄우면 같은
+/// 무대다). 그동안 [AchievementCelebrationHost]까지 풀페이지를 띄우면 같은
 /// 성취가 두 번 축하된다.
 ///
 /// Riverpod provider가 아니라 [ValueNotifier]인 이유: 이 값을 바꾸는 시점이
@@ -139,11 +141,19 @@ class _AchievementCelebrationHostState
       }
 
       final next = queue.first;
-      await showDialog<void>(
-        context: context,
-        builder: (_) => AchievementCelebrationDialog(
-          userBadge: next,
-          remaining: queue.length - 1,
+      // 2026-08-27: 다이얼로그 → 풀페이지(사용자 요청). 뱃지 획득은 러닝
+      // 요약 화면 다음으로 큰 "성취 모먼트"라 알림 팝업 취급보다 화면 하나를
+      // 온전히 차지할 값어치가 있고, 애니메이션도 더 넓은 캔버스가 필요하다.
+      // `rootNavigator: true`는 공유 카드 페이지와 같은 이유다 — 이 컨텍스트는
+      // `AppShell`(셸 바깥 루트 라우트) 소유라 이미 루트에 가깝지만, 명시해서
+      // 나중에 중첩 구조가 바뀌어도 네비바 없는 진짜 전체 화면이 보장된다.
+      await Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => AchievementCelebrationPage(
+            userBadge: next,
+            remaining: queue.length - 1,
+          ),
         ),
       );
       _presented.add(next.id);
@@ -157,10 +167,16 @@ class _AchievementCelebrationHostState
   }
 }
 
-// ════════════════════════ 다이얼로그 ════════════════════════
+// ════════════════════════ 풀페이지 ════════════════════════
 
-class AchievementCelebrationDialog extends StatelessWidget {
-  const AchievementCelebrationDialog({
+/// 뱃지 획득(HI-10)의 **풀페이지** 축하 화면.
+///
+/// 2026-08-27 이전에는 `Dialog`(모달)였다. 사용자 요청으로 페이지 전환했다 —
+/// 뱃지 획득은 알림 팝업이 아니라 러닝 요약 화면 다음으로 큰 성취 모먼트이고,
+/// [_AchievementBurst] 애니메이션(글로우·컨페티·탄성 팝인)도 다이얼로그의
+/// 좁은 상자보다 화면 전체가 훨씬 잘 산다.
+class AchievementCelebrationPage extends StatelessWidget {
+  const AchievementCelebrationPage({
     required this.userBadge,
     this.remaining = 0,
     super.key,
@@ -171,14 +187,35 @@ class AchievementCelebrationDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(AppTokens.s24),
-      child: Padding(
-        padding: const EdgeInsets.all(AppTokens.s24),
-        child: AchievementCelebrationView(
-          userBadge: userBadge,
-          remaining: remaining,
-          onDismiss: () => Navigator.of(context).maybePop(),
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Align(
+              alignment: Alignment.topLeft,
+              child: IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: '닫기',
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ),
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppTokens.s24),
+                child: AchievementCelebrationView(
+                  userBadge: userBadge,
+                  remaining: remaining,
+                  // 다이얼로그의 좁은 상자를 벗어났으니 메달도 더 크게 —
+                  // 풀페이지가 주는 여유를 실제로 쓴다.
+                  badgeSize: 168,
+                  onDismiss: () => Navigator.of(context).maybePop(),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -237,13 +274,14 @@ class AchievementBacklogDialog extends ConsumerWidget {
 
 // ════════════════════════ 연출 본문 ════════════════════════
 
-/// 성취 1건의 축하 본문. 다이얼로그(전역)와 요약 화면(인라인)이 **같은 위젯**을
-/// 쓴다 — 두 경로의 문구와 메달이 갈라지지 않게.
+/// 성취 1건의 축하 본문. 풀페이지(전역, [AchievementCelebrationPage])와 요약
+/// 화면(인라인)이 **같은 위젯**을 쓴다 — 두 경로의 문구와 메달이 갈라지지 않게.
 class AchievementCelebrationView extends ConsumerWidget {
   const AchievementCelebrationView({
     required this.userBadge,
     required this.onDismiss,
     this.remaining = 0,
+    this.badgeSize = 132,
     super.key,
   });
 
@@ -254,6 +292,11 @@ class AchievementCelebrationView extends ConsumerWidget {
 
   /// 이 건 뒤에 남은 성취 수. 0이면 표시하지 않는다.
   final int remaining;
+
+  /// 메달 지름. 요약 화면 인라인(좁음)과 풀페이지(넓음)가 같은 위젯을 쓰되
+  /// 크기만 다르게 준다 — [AchievementCelebrationPage]는 168, 인라인은
+  /// 기본값 132.
+  final double badgeSize;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -278,10 +321,12 @@ class AchievementCelebrationView extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (asset != null)
-              _PopIn(
+              _AchievementBurst(
+                accent: accent,
+                size: badgeSize,
                 child: ShareCardEmblem(
                   assetPath: asset,
-                  size: 132,
+                  size: badgeSize,
                   accent: accent,
                 ),
               ),
@@ -319,14 +364,18 @@ class AchievementCelebrationView extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: AppTokens.s20),
-            FilledButton.icon(
-              onPressed: () => showShareCardSheet(context, data),
-              icon: const Icon(Icons.ios_share),
-              label: const Text('공유하기'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(AppTokens.minTapTarget),
+            // 일반 뱃지는 공유하지 않는다(2026-08-27, 사용자 요청) — 티어
+            // 승급·PB 카드만 남긴다. 카탈로그의 "뱃지"는 대부분 티어/PB보다
+            // 덜 자랑할 만한 잡다한 카테고리라 공유 값어치가 낮다는 판단이다.
+            if (data is! BadgeEarnedCardData)
+              FilledButton.icon(
+                onPressed: () => showShareCardSheet(context, data),
+                icon: const Icon(Icons.ios_share),
+                label: const Text('공유하기'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(AppTokens.minTapTarget),
+                ),
               ),
-            ),
             TextButton(
               onPressed: onDismiss,
               child: Text(remaining > 0 ? '다음' : '확인'),
@@ -358,23 +407,187 @@ class _Fallback extends StatelessWidget {
   }
 }
 
-/// 메달이 살짝 튀어오르며 등장한다. 갤러리의 획득 연출과 같은 커브·시간을 써서
-/// 앱 전체에서 "성취"의 몸짓이 하나로 읽히게 한다.
-class _PopIn extends StatelessWidget {
-  const _PopIn({required this.child});
+/// **획득 애니메이션**(2026-08-27 추가, 사용자 요청). 메달이 등장하는 0.9초
+/// 동안 세 가지가 동시에 진행된다 — 자체 `AnimationController` 하나로 전부
+/// 구동해 위젯 3개가 각자 타이머를 갖고 미묘하게 어긋나는 일이 없게 한다.
+///
+/// 1. **글로우 링**: 뒤에서 팽창하며 옅어진다("펑" 하고 터지는 느낌).
+/// 2. **컨페티**: 중심에서 사방으로 튀어나가며 페이드아웃.
+/// 3. **메달**: [Curves.elasticOut]으로 살짝 오버슈트했다 정착한다.
+///
+/// 컨페티 좌표는 고정 시드로 한 번만 만든다 — 매 프레임 다시 뽑으면 입자가
+/// 순간이동하는 것처럼 보인다.
+class _AchievementBurst extends StatefulWidget {
+  const _AchievementBurst({
+    required this.child,
+    required this.accent,
+    required this.size,
+  });
 
   final Widget child;
+  final Color accent;
+  final double size;
+
+  @override
+  State<_AchievementBurst> createState() => _AchievementBurstState();
+}
+
+class _AchievementBurstState extends State<_AchievementBurst>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final List<_ConfettiParticle> _particles;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..forward();
+    _particles = _ConfettiParticle.generate(16, widget.accent);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.7, end: 1),
-      duration: const Duration(milliseconds: 420),
-      curve: Curves.easeOutBack,
-      builder: (_, scale, inner) => Transform.scale(scale: scale, child: inner),
-      child: child,
+    final stageSize = widget.size * 2.4;
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = _controller.value;
+        // 글로우는 앞쪽 60%에서 팽창하며 사라진다.
+        final glowT = Curves.easeOut.transform((t / 0.6).clamp(0.0, 1.0));
+        // 메달은 앞쪽 55%에서 탄성 있게 튀어 들어온다.
+        final badgeT = Curves.elasticOut.transform((t / 0.55).clamp(0.0, 1.0));
+        // 컨페티는 살짝 늦게 출발해 전체 구간에 걸쳐 퍼진다.
+        final confettiT = ((t - 0.05) / 0.95).clamp(0.0, 1.0);
+
+        return SizedBox(
+          width: stageSize,
+          height: stageSize,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              IgnorePointer(
+                child: Opacity(
+                  opacity: (1 - glowT).clamp(0.0, 1.0) * 0.55,
+                  child: Transform.scale(
+                    scale: 0.5 + glowT * 1.3,
+                    child: Container(
+                      width: widget.size * 1.7,
+                      height: widget.size * 1.7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [
+                            widget.accent.withValues(alpha: 0.55),
+                            widget.accent.withValues(alpha: 0),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              IgnorePointer(
+                child: CustomPaint(
+                  size: Size(stageSize, stageSize),
+                  painter: _ConfettiPainter(
+                    progress: confettiT,
+                    particles: _particles,
+                  ),
+                ),
+              ),
+              Transform.scale(
+                scale: badgeT.clamp(0.0, 1.6),
+                child: Opacity(
+                  opacity: badgeT.clamp(0.0, 1.0),
+                  child: widget.child,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
+}
+
+class _ConfettiParticle {
+  const _ConfettiParticle({
+    required this.angle,
+    required this.distance,
+    required this.radius,
+    required this.color,
+    required this.delay,
+  });
+
+  /// 진행 방향(라디안).
+  final double angle;
+
+  /// 무대 반지름 대비 이동 거리 배율.
+  final double distance;
+  final double radius;
+  final Color color;
+
+  /// 0~1. 전체 애니메이션 중 이 입자가 출발하는 시점 — 한꺼번에 튀지 않고
+  /// 아주 살짝씩 어긋나야 "펑" 하나가 아니라 자연스러운 흩날림으로 읽힌다.
+  final double delay;
+
+  static List<_ConfettiParticle> generate(int count, Color accent) {
+    // 고정 시드 — 리빌드마다 입자가 재배치되면 애니메이션이 아니라 잡음이 된다.
+    final random = math.Random(7);
+    final palette = [accent, Colors.white, accent.withValues(alpha: 0.7)];
+    return List.generate(count, (i) {
+      return _ConfettiParticle(
+        angle: (2 * math.pi / count) * i + random.nextDouble() * 0.4,
+        distance: 0.65 + random.nextDouble() * 0.55,
+        radius: 2.5 + random.nextDouble() * 2.5,
+        color: palette[i % palette.length],
+        delay: random.nextDouble() * 0.25,
+      );
+    });
+  }
+}
+
+class _ConfettiPainter extends CustomPainter {
+  const _ConfettiPainter({required this.progress, required this.particles});
+
+  final double progress;
+  final List<_ConfettiParticle> particles;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final maxRadius = size.shortestSide / 2;
+
+    for (final p in particles) {
+      final local = ((progress - p.delay) / (1 - p.delay)).clamp(0.0, 1.0);
+      if (local <= 0) continue;
+      final eased = Curves.easeOut.transform(local);
+      final travelled = maxRadius * p.distance * eased;
+      final position = center +
+          Offset(math.cos(p.angle), math.sin(p.angle)) * travelled;
+      final opacity = (1 - local).clamp(0.0, 1.0);
+      if (opacity <= 0) continue;
+
+      canvas.drawCircle(
+        position,
+        p.radius * (1 - local * 0.35),
+        Paint()..color = p.color.withValues(alpha: opacity),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
 
 /// 카드 종류별 머리말. 사용자가 "무슨 일이 일어났는지"를 0.5초 안에 알아야 한다.

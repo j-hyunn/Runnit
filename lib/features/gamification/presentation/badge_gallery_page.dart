@@ -9,6 +9,7 @@ import '../../../core/widgets/app_shell.dart';
 import '../../../models/models.dart';
 import '../../auth/presentation/widgets/guest_login_prompt.dart';
 import '../../sharing/data/share_providers.dart';
+import '../../sharing/domain/share_card_data.dart';
 import '../../sharing/presentation/share_card_sheet.dart';
 import '../data/gamification_providers.dart';
 import '../domain/badge_assets.dart';
@@ -282,6 +283,10 @@ class _GalleryBody extends ConsumerWidget {
 ///
 /// 카드를 만들 수 없으면(획득 행 미로딩, 카탈로그 조인 누락) 버튼을 그리지
 /// 않는다 — 눌러도 아무 일이 없는 버튼보다 없는 편이 낫다.
+///
+/// **일반 뱃지([BadgeEarnedCardData])는 공유하지 않는다**(2026-08-27, 사용자
+/// 요청) — 티어 승급·PB 카드만 남긴다. 카탈로그의 "뱃지"는 대부분 티어/PB보다
+/// 덜 자랑할 만한 잡다한 카테고리라 공유 값어치가 낮다는 판단이다.
 class _BadgeShareButton extends ConsumerWidget {
   const _BadgeShareButton({required this.badgeId});
 
@@ -303,6 +308,7 @@ class _BadgeShareButton extends ConsumerWidget {
 
     final card = ref.watch(shareCardForAchievementProvider(mine)).valueOrNull;
     if (card == null) return const SizedBox.shrink();
+    if (card is BadgeEarnedCardData) return const SizedBox.shrink();
 
     return FilledButton.tonalIcon(
       onPressed: () => showShareCardSheet(context, card),
