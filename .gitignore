@@ -28,3 +28,6 @@ android/local.properties
 
 # 로컬 개발용 dart-define 값 (Supabase URL/키 등). 절대 커밋하지 않는다.
 env/*.json
+
+# 개발용 데모 진입점 (로컬 전용, 커밋 안 함)
+lib/main_demo.dart

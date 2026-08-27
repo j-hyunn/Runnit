@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/theme/app_tokens.dart';
+import '../../../../core/widgets/osm_attribution.dart';
 import '../tracking_ui_providers.dart';
 
 /// 진행 중 경로를 그리는 지도.
@@ -104,6 +105,11 @@ class _RunMapViewState extends ConsumerState<RunMapView> {
           IgnorePointer(
             child: ColoredBox(color: scheme.surface.withValues(alpha: 0.45)),
           ),
+        // OSM 타일 이용 정책상 필수. 딤 오버레이 위에 둬서 일시정지 중에도 읽힌다.
+        const Align(
+          alignment: Alignment.bottomRight,
+          child: OsmAttribution(),
+        ),
       ],
     );
   }

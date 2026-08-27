@@ -10,9 +10,8 @@ import '../../../tracking/presentation/tracking_format.dart';
 /// 공유하는 행. 왼쪽 활동유형+날짜, 가운데 거리/페이스/시간 3항목(초록
 /// SemiBold 값 + 회색 라벨), 오른쪽 chevron.
 ///
-/// 상세 화면이 아직 없어 [onTap]은 지금은 항상 null(비활성) — Figma는
-/// chevron을 그리지만 눌러서 이동할 곳이 없다. 나중에 상세 화면이 생기면
-/// 이 위젯 변경 없이 호출부에서 [onTap]만 넘기면 된다.
+/// [onTap]을 넘기면 chevron이 활성화된다 — 활동 탭 목록·전체 기록 목록은
+/// [RunDetailPage](HI-02)로 이동시킨다. 넘기지 않으면 비활성 행이 된다.
 class RunHistoryTile extends StatelessWidget {
   const RunHistoryTile({super.key, required this.record, this.onTap});
 

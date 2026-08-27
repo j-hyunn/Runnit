@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/history/presentation/history_page.dart';
+import '../../features/history/presentation/run_detail_page.dart';
 import '../../features/home/presentation/home_page.dart';
 import '../../features/profile/presentation/profile_page.dart';
 import '../../features/tracking/presentation/tracking_page.dart';
@@ -111,7 +112,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 routes: [
                   GoRoute(
                     path: Routes.runDetail,
-                    builder: (_, state) => RunDetailPlaceholder(
+                    builder: (_, state) => RunDetailPage(
                       runId: state.pathParameters['runId'] ?? '',
                     ),
                   ),
@@ -194,17 +195,4 @@ extension AuthNavigation on BuildContext {
       ).toString(),
     );
   }
-}
-
-/// 러닝 상세 화면 자리표시자 — flutter-ui-designer가 교체한다.
-class RunDetailPlaceholder extends StatelessWidget {
-  const RunDetailPlaceholder({required this.runId, super.key});
-
-  final String runId;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('러닝 상세')),
-        body: Center(child: Text('runId: $runId')),
-      );
 }
