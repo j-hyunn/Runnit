@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/theme/app_tokens.dart';
+import '../../../../core/widgets/osm_attribution.dart';
 import '../../../tracking/presentation/widgets/run_map_view.dart'
     show mapTileProviderOverride;
 
@@ -86,7 +87,7 @@ class RunRouteMap extends ConsumerWidget {
               ],
             ),
             // OSM 타일 이용 정책상 출처 표기는 선택이 아니라 필수다.
-            const Positioned(right: 0, bottom: 0, child: _OsmAttribution()),
+            const Positioned(right: 0, bottom: 0, child: OsmAttribution()),
           ],
         ),
       ),
@@ -105,22 +106,4 @@ class RunRouteMap extends ConsumerWidget {
           ),
         ),
       );
-}
-
-class _OsmAttribution extends StatelessWidget {
-  const _OsmAttribution();
-
-  @override
-  Widget build(BuildContext context) {
-    return const DecoratedBox(
-      decoration: BoxDecoration(color: Color(0xCCFFFFFF)),
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: AppTokens.s4, vertical: 2),
-        child: Text(
-          '© OpenStreetMap',
-          style: TextStyle(fontSize: 10, color: Color(0xFF616161)),
-        ),
-      ),
-    );
-  }
 }
