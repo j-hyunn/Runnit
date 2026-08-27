@@ -2,17 +2,18 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.1 (초안) |
-| 작성일 | 2026-08-25 |
+| 문서 버전 | v0.2 (초안) |
+| 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | Phase 0 초안 — 실제 구현 착수 전 검토 필요 |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.3 (확정), `.claude/agents/*`, `.claude/skills/*` (하네스 기술 컨벤션) |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), `.claude/agents/*`, `.claude/skills/*` (하네스 기술 컨벤션) |
 | 하위 문서 | [`docs/TRD.md`](./TRD.md) — 이 문서의 결정을 구현 가능한 스펙으로 세분화 |
 
 **변경 이력**
 | 버전 | 변경 내용 |
 |------|----------|
 | v0.1 | 최초 작성. `claude/phase-0-start` 브랜치에서 구성된 하네스(에이전트 6개·스킬 7개)에 이미 반영되어 있던 아키텍처 결정을 PRD v1.3 기준으로 정리·문서화. PRD §11의 Phase 0 산출물(아키텍처·데이터 모델·Supabase 스키마 확정)에 해당 |
+| v0.2 | **성취 축하 구조를 "두 소비 지점 + 억제 카운터"에서 "전역 풀페이지 단일 지점"으로 갱신**(§7.4.1, PRD v1.4·TRD §3.9.3). 요약 화면 인라인 축하와 `achievementCelebrationSuppressors`를 제거하고 `AchievementCelebrationHost` 하나가 항상 풀페이지(`rootNavigator` + `fullscreenDialog`)로 축하한다. 공유 카드(§3.1 파일 트리)도 같은 날 9:16 투명 오버레이로 최종 확정된 상태를 반영 |
 
 > 📌 **원천 우선순위**: 이 문서와 `docs/PRD.md`가 충돌하면 **PRD가 우선**한다. 이 문서는 PRD의 제품 사양을 구현 구조로 번역한 것이며, 사양 자체를 새로 정의하지 않는다.
 
@@ -129,7 +130,7 @@ lib/
         share_card_sheet.dart     # 미리보기 + 공유(캡처 전 SVG 프리캐시, 캡처 중 버튼 잠금)
         widgets/share_card_surface.dart      # 9:16 투명 프레임 + 캡처 계약(배경 금지)
         widgets/share_card_body.dart         # 카드 4종의 실제 그림 + 경로 페인터
-        widgets/achievement_celebration.dart # 축하 연출 + 전역 큐 호스트(트리거 #2)
+        widgets/achievement_celebration.dart # 축하 연출(풀페이지+애니메이션) + 전역 큐 호스트, 성취 축하의 유일한 소비 지점(§7.4.1)
     notifications/            # 알림 설정/수신(NT-01~08)
 ```
 
@@ -385,20 +386,29 @@ before/after를 비교할 필요가 없다 — 그 방식은 시즌 롤오버 �
 ⚠️ `tier_change_history`(마이그레이션 33/34)는 XP-4 적립용 상승 이벤트 로그이며 realtime
 publication에 **없다**. 승급 시각을 정확히 알아야 할 때만 조회한다(RLS: 본인 행만 select).
 
-#### 7.4.1 큐를 소비하는 두 지점 (2026-08-26 UI 구현)
+#### 7.4.1 큐를 소비하는 단일 지점 (2026-08-27 갱신)
 
-| 지점 | 위젯 | 역할 |
-|---|---|---|
-| 러닝 요약 화면 | `tracking/presentation/widgets/summary_achievements.dart` | 주 무대. 성취를 **인라인**으로 1건씩 축하하고 공유 버튼을 준다. 화면이 살아 있는 동안 전역 호스트를 억제한다 |
-| 앱 전역 | `sharing/presentation/widgets/achievement_celebration.dart`의 `AchievementCelebrationHost` (`AppShell`에 부착) | 뒤늦게 도착하는 성취(사용자가 이미 홈으로 이동, 오프라인 러닝이 며칠 뒤 동기화)를 다이얼로그로 잡는다 |
+성취(뱃지·티어 승급·PB) 축하는 **`sharing/presentation/widgets/achievement_celebration.dart`의
+`AchievementCelebrationHost`(`AppShell`에 부착) 하나가 유일한 소비 지점**이다. 러닝 요약
+화면이 떠 있든, 사용자가 이미 홈으로 이동했든, 오프라인 러닝이 며칠 뒤 동기화됐든 항상 같은
+경로로 축하한다 — `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute
+(fullscreenDialog: true)`로 진짜 풀페이지를 띄우고(하단 네비바까지 가림, §3.9.2 공유 카드
+페이지와 동일 패턴), 글로우 링·컨페티·엘라스틱 팝인 애니메이션(`_AchievementBurst`)을 붙인다.
 
-두 지점이 동시에 축하하지 않도록 `achievementCelebrationSuppressors`(전역 `ValueNotifier<int>`
-카운터)를 쓴다. Riverpod provider가 아닌 이유는 값을 바꾸는 시점이 화면의 `initState`/`dispose`
-— 즉 빌드 페이즈 안일 수 있어 provider 수정이 막히기 때문이다(`AppShell.measuredHeight`와 동일한 패턴).
+`tracking/presentation/widgets/summary_achievements.dart`(러닝 요약 화면)는 더 이상 성취를
+축하하지 않는다 — `AchievementGate`(confirmed/pending/flagged)만 계산해 상태 문구를 그리고,
+실제 축하 UI는 전역 호스트가 그 위에 덮어씌운다.
 
-두 경로 모두 **이번 실행에서 이미 보여준 성취 id를 로컬에 기억한다.** `markBadgesSeen`은 네트워크
+⚠️ **이전 설계였던 "두 소비 지점 + `achievementCelebrationSuppressors` 억제 카운터"는
+폐기됐다**(사용자 요청, 2026-08-27) — 요약 화면 인라인 축하가 없어지면서 억제할 대상 자체가
+사라졌다. 예전에 이 카운터가 막던 "인라인 축하와 전역 다이얼로그가 동시에 뜨는" 프레임 경합
+버그(TRD §14 #20)도 원인이 없어져 함께 해소됐다. 공유 버튼은 `PersonalBestCardData`에만
+붙는다 — 일반 뱃지·티어 승급은 이 풀페이지로 축하는 받지만 공유는 하지 않는다(PRD v1.4·HI-10,
+TRD §3.9.3).
+
+호스트는 **이번 실행에서 이미 보여준 성취 id를 로컬에 기억한다.** `markBadgesSeen`은 네트워크
 실패 시 조용히 넘어가는데(축하 화면이 오류로 안 닫히는 쪽이 더 나쁘다), 그 기억이 없으면 스트림이
-같은 행을 다시 밀어 **다이얼로그가 무한 반복**되거나 요약 화면의 "확인"이 먹히지 않는 것처럼 보인다.
+같은 행을 다시 밀어 **풀페이지가 무한 반복**되거나 "확인"이 먹히지 않는 것처럼 보인다.
 
 ---
 
