@@ -4,8 +4,9 @@
 
 ## Language policy
 
-- **Harness files are written in English** — this file, `.claude/agents/*`, `.claude/skills/*`, and `docs/HARNESS.md`. When you log or update anything in these files, write it in English.
-- **Product docs stay in Korean** — `docs/PRD.md`, `docs/BRD.md`, `docs/ARCHITECTURE.md`, `docs/TRD.md`.
+- **Match the document's existing language when updating it.** A document written in English is updated, logged, and appended to in English; a document written in Korean stays Korean. Never switch a document's language as a side effect of an edit.
+- **Harness files are English** — this file, `.claude/agents/*`, `.claude/skills/*`, `docs/HARNESS.md`. New harness files are authored in English.
+- **Product docs are Korean** — `docs/PRD.md`, `docs/BRD.md`, `docs/ARCHITECTURE.md`, `docs/TRD.md`. Existing `_workspace/*` deliverables are Korean; keep each one in its own language.
 - **Always reply to the user in Korean**, regardless of which document you read.
 
 ## Reference documents — read the section you need directly
