@@ -218,18 +218,36 @@ class LocalRunRepository implements RunRepository {
           ..where((t) => t.id.equals(id))
           ..limit(1))
         .getSingleOrNull();
+
     if (row != null) {
-      return runRecordFromRow(row, includeSamples: includeSamples);
+      final local = runRecordFromRow(row, includeSamples: includeSamples);
+      // 로컬 행에 samples가 없는데 상세용으로 요청됐고, 경로가 있었던
+      // 기록이면(routePolyline 존재 = 야외 러닝) 이 행은 samples 없이 캐시된
+      // 불완전한 행이다. 로컬 히트로 끝내면 빈 경로/랩이 그대로 나가므로
+      // (그리고 재조회로도 복구 불가) 원격에서 온전한 행을 다시 가져온다.
+      final incomplete = includeSamples &&
+          local.samples.isEmpty &&
+          (local.routePolyline?.isNotEmpty ?? false);
+      if (!incomplete) return local;
     }
 
-    // 로컬에 없다 = 다른 기기에서 뛴 기록. 원격을 한 번 본다.
+    // 로컬에 없거나(다른 기기 기록) samples가 유실됐다. 원격을 본다.
     return guardSupabase(() async {
       final remote =
           await _client.from(_table).select().eq('id', id).maybeSingle();
-      if (remote == null) return null;
+      if (remote == null) {
+        // 원격에도 없으면: 로컬에 있던 (불완전할 수 있는) 행이라도 돌려준다.
+        return row == null
+            ? null
+            : runRecordFromRow(row, includeSamples: includeSamples);
+      }
       final record = _fromRemote(remote, includeSamples: includeSamples);
-      // 다음 조회부터는 로컬에서 답하도록 캐시해 둔다.
-      await _writeLocal(record.copyWith(syncStatus: SyncStatus.synced));
+      // ⚠️ samples 없이 가져온 결과는 로컬에 캐시하지 않는다. 캐시하면 이후
+      // findById(includeSamples: true) 조회가 이 빈 행에 막혀 상세/공유 카드가
+      // 조용히 깨진다(QA I-2). samples를 실제로 받아온 경우에만 캐시한다.
+      if (includeSamples) {
+        await _writeLocal(record.copyWith(syncStatus: SyncStatus.synced));
+      }
       return record;
     });
   }
