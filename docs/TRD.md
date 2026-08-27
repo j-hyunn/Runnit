@@ -2,11 +2,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.8 (초안) |
-| 작성일 | 2026-08-26 |
+| 문서 버전 | v0.9 (초안) |
+| 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | Phase 0 초안 — 구현 착수 전 검토 필요 |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.3 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.1 |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.2 |
 
 **변경 이력**
 | 버전 | 변경 내용 |
@@ -19,6 +19,7 @@
 | v0.6 | **뱃지 백로그 7건 실제 구현·적용 완료**(마이그레이션 36~41, Supabase `xwtbwexcofcgmbvktwdo`). §3.8·§10.2가 설계 확정 문서였던 것을 라이브 스키마 사실로 갱신 — `device_vendor` enum + `runs.device_vendors`(36), `district_diversity_gte` 삭제 + `condition_type` CHECK 39종·`category` CHECK 14종·`bucket` 도메인 CHECK(37), `lunar_holidays` 테이블 2026~2040(38), `total_points`→`total_xp`/`awarded_points`→`awarded_xp` 개명 + XP 4원천 + 60레벨 정수 배열 + 주간 스트릭 4컬럼 + XP 갱신 트리거 2개 + `evaluate_badges` 3패스 수렴 루프(39), `leaderboard_entries.reached_at` + PRD §8.2 3단계 타이브레이크(40), 판정 스텁 5종 전량 해제 + §5 임계값 정본화 + 스플릿 선형 보간(41). **`evaluate_badge_condition`의 `raise notice … 보류` 스텁이 0개가 됐다.** §4.2 신설(음력 룩업), §4.3 신설(랭킹 캐시 실제 테이블명) |
 | v0.7 | **거리 허용오차 통일**(마이그레이션 42) — `session_first_long_distance`(고정 98%)와 `session_distance_gte` 5종(허용오차 없음)을 `pb_first_achieved`/`pb_time_lte`와 동일한 `목표 − min(목표×2%, 300m)`로 통일. gamification-designer 확인 완료(§14 #13·#15 해소). 완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 즉시 채움 |
 | v0.8 | **공유 카드 규격 확정 — 9:16 투명 오버레이 스티커**(§3.9.2). 같은 날 16:9 가로 밴드로 바꿨다가, 사용자가 준 정확한 레퍼런스 이미지(9:16 세로, 투명 배경 + 흰색 콘텐츠, 그림자 없음)를 확인하고 되돌렸다 — 최종 확정은 **9:16, 배경/그림자/모서리 전부 없음, 세로 1열 중앙 정렬**(워드마크 → 시각 → 아트 → [성취 3종만 헤드라인] → 수치 스택), 기록 카드 수치 라벨은 레퍼런스 그대로 영문(`Distance`/`Pace`/`Time`). 규격 변경 히스토리 표는 §3.9.2 참조 |
+| v0.9 | **성취 축하 연출을 다이얼로그→풀페이지로 전환, 공유 버튼을 PB 전용으로 축소**(§3.9.3, PRD v1.4·HI-10). `AchievementCelebrationHost`가 `showDialog` 대신 `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute(fullscreenDialog: true)`로 진짜 풀페이지를 띄운다(하단 네비바 우회, §7 구조와 동일 패턴). 글로우 링·컨페티·엘라스틱 팝인으로 구성된 `_AchievementBurst` 애니메이션 신설. **일반 뱃지·티어 승급은 공유 버튼을 받지 않는다** — PB만 받는다(사용자 확정, 2026-08-27). `summary_achievements.dart`의 인라인 축하·억제 카운터(`achievementCelebrationSuppressors`)를 전부 제거 — 전역 호스트 하나가 유일한 소비 지점이 되면서 §14 #20(프레임 경합)이 원인 자체가 사라져 해소됨 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
 
@@ -597,6 +598,41 @@ final class RunRecapCardData     extends ShareCardData { double distanceMeters; 
 캡션 등에서 계속 쓰임)과는 별개로 이 카드 그림에서만 다르게 표기한다. 나머지 3종의
 라벨은 한글을 유지한다(레퍼런스가 다루지 않은 영역이라 기존 표기를 바꿀 근거가 없었다).
 
+#### 3.9.3 성취 축하 연출 — 풀페이지 + 애니메이션, 공유는 PB 전용 (2026-08-27 확정)
+
+구현: `lib/features/sharing/presentation/widgets/achievement_celebration.dart`.
+ARCHITECTURE §7.4.1의 "두 소비 지점" 구조는 폐기됐다 — `summary_achievements.dart`는
+더 이상 성취를 축하하지 않고 게이트 상태 문구(확정/잠정/비노출)만 그린다. **성취 축하는
+전역 `AchievementCelebrationHost` 하나가 유일한 권한자**다: 러닝 요약 화면이 떠 있든
+아니든, 새 성취가 큐에 오르면 항상 같은 풀페이지가 그 위를 덮는다.
+
+- **다이얼로그 → 풀페이지 전환 이유**: `showDialog`는 배경 화면 위에 뜨는 오버레이라
+  "성취 하나에 화면 하나"라는 무게감이 안 나오고, 좁은 다이얼로그 폭 안에서 컨페티
+  애니메이션이 잘려 보였다. `Navigator.of(context, rootNavigator: true)` +
+  `MaterialPageRoute(fullscreenDialog: true)`로 바꿔 `AppShell`의 하단 네비바까지
+  완전히 가린다 — 공유 카드 페이지(§3.9.2)가 같은 이유로 같은 패턴을 쓴다(둘 다 처음엔
+  `rootNavigator: true`를 빼먹어 네비바가 떠 있는 회귀가 있었다, 커밋 `607f8dc`).
+- **`_AchievementBurst` 애니메이션**: 단일 900ms `AnimationController`가 글로우 링 확장
+  (`Curves.easeOut`) · 컨페티 파티클(`_ConfettiPainter`, 고정 시드 `math.Random(7)`로
+  스크린샷/골든 테스트 재현성 확보) · 뱃지 엘라스틱 팝인(`Curves.elasticOut`)을 동시에 구동한다.
+- **공유 버튼은 `PersonalBestCardData`에만 있다.** `AchievementCelebrationView`는
+  `if (data is! BadgeEarnedCardData && data is! TierPromotionCardData)` 조건으로
+  버튼을 숨긴다. 같은 규칙이 뱃지 갤러리 상세(`badge_gallery_page.dart`의
+  `_BadgeShareButton`)에도 적용돼, 어느 진입점에서 봐도 뱃지·티어 카드는 공유 버튼이
+  없다. 사용자가 세 라운드에 걸쳐 범위를 좁혔다(처음엔 뱃지만 제외 → 티어도 제외) —
+  최종적으로 "PB만 공유, 나머지는 풀페이지 축하로 끝"이 확정 규칙이다. PRD 반영은
+  v1.4/HI-10 참조.
+- **억제 카운터 삭제**: 예전에는 요약 화면이 떠 있는 동안 전역 호스트를 죽이는
+  `achievementCelebrationSuppressors`(전역 `ValueNotifier<int>`)가 있었다 — 인라인
+  축하와 전역 다이얼로그가 동시에 뜨는 걸 막기 위해서였다. 소비 지점이 하나로 줄면서
+  이 메커니즘 자체가 필요 없어져 통째로 제거했다(`tracking_page.dart`의
+  `initState`/`dispose` 훅도 함께 제거). §14 #20(프레임 경합 버그)은 이 카운터가
+  없어지면서 원인이 사라져 자동 해소됐다.
+- **테스트**: `test/sharing/achievement_celebration_test.dart`(신규)가
+  `AchievementCelebrationView`를 네비게이션 우회하고 직접 pump해 카드 종류별
+  공유 버튼 유무를 검증한다. `test/sharing/summary_achievements_test.dart`는
+  게이트 문구 분기만 남기고 인라인 축하/큐 소비 테스트를 제거했다.
+
 ---
 
 ## 4. Supabase 스키마 사양 (DDL)
@@ -1155,6 +1191,6 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 18 | **`user_badges`에 "판정 확정값" 컬럼이 없다** — PB 카드가 서버가 확정한 기록(초)을 그릴 수 없는 구간이 생긴다(§3.9.1). 제안: `achieved_value numeric null` 한 컬럼에 서버가 판정 시점 값(PB 초 / 스트릭 주 / 주간 순위)을 적는다. **P0는 이것 없이 성립**한다(102% 이내는 `moving_seconds`가 곧 서버 규칙, 초과 구간은 시간을 비운 카드) — 이 컬럼이 생기면 폴백 분기가 사라진다 | P1, backend-engineer |
 | ~~19~~ | ~~성취 큐에 소비자가 없어 밀린 `is_seen=false` 뱃지가 한꺼번에 쏟아진다~~ → **해소(2026-08-26, UI 구현)**. `isAchievementBacklog()`(`features/sharing/domain/achievement_backlog.dart`)가 **개수(>5) 또는 획득 시각 간격(>24h)** 중 하나라도 걸리면 큐를 "밀린 성취"로 보고 "그동안 받은 뱃지 N개" 한 장으로 접은 뒤 **일괄** `markBadgesSeen` 한다. 요약 화면·전역 호스트 양쪽에 같은 판정이 걸려 있다. **로컬 "이미 처리함" 플래그는 두지 않았다** — 접고 나면 서버 행이 `is_seen=true`가 되어 큐에서 영구히 빠지므로 그 상태는 이미 서버가 들고 있고, 같은 사실을 두 곳에 적으면 재설치·기기 변경에서 어긋난다 | — |
 | 17 | **클라이언트 진행률 바가 마이그레이션 42의 새 허용오차(§10.2)를 반영하지 않는다.** `badge_condition.dart`의 `sessionDistanceGte` 진행률 계산이 여전히 `distance/목표`(정확 비율)라, 텐런을 9.8km(서버 인정 기준)에서 뛰어도 바는 98.00%로 멈춘다. 실제 지급 시점에 `isEarned`가 `ratio: 1.0`으로 스냅해 자가 치유되므로 사용자에게 "받았는데 바가 98%"로 잠깐 보이는 정도이며, 클라이언트가 값을 내는 조건이 이 하나뿐이라 영향 범위는 좁다 | 다음 gamification-designer/flutter-ui-designer 라운드에서 진행률 계산에 동일 허용오차 반영 |
-| 20 | **성취 억제 카운터와 전역 축하 다이얼로그 사이에 프레임 경합이 있다**(QA F-2, `achievement_celebration.dart`). `suppressAchievementCelebrations()`는 다음 프레임에 +1 하고 `AchievementCelebrationHost._present`도 같은 프레임에 post-frame으로 등록되는데, 호스트가 조상이라 먼저 실행돼 억제 카운터를 아직 0으로 본다. 정상 흐름(러닝 종료 후 뱃지가 뒤늦게 도착)에서는 발생하지 않고, "요약 화면 진입 시점에 이미 큐가 차 있는 경우"(밀린 뱃지 등)에 한정된다 — 전역 다이얼로그와 인라인 축하가 동시에 뜰 수 있다 | flutter-ui-designer, `_present` 진입부에서 `endOfFrame` 후 재확인 한 줄로 해소 가능 |
+| ~~20~~ | ~~성취 억제 카운터와 전역 축하 다이얼로그 사이에 프레임 경합이 있다~~ → **해소(2026-08-27).** 인라인 축하(요약 화면)와 억제 카운터 메커니즘 자체를 제거하고 전역 `AchievementCelebrationHost` 풀페이지 하나로 통합했다(사용자 요청, §3.9.3). 경합을 일으키던 두 소비 지점 중 하나가 사라져 원인이 구조적으로 없어졌다 | — |
 | 21 | **뱃지 아트 경로 규칙이 다시 두 곳이다**(QA O-4) — `badge_assets.dart`의 정본 `badgeAssetPath`와 `share_card_body.dart`의 `tierEmblemAssetPath`가 별도로 존재한다. 현재는 `assets/badges/tier/{bronze,silver,gold,platinum}.svg` 파일명이 우연히 일치해 문제가 드러나지 않지만, 이번 라운드가 없앤 이원화와 같은 형태다 | flutter-ui-designer, 정본으로 통합 |
 | 22 | **`share_card_renderer.dart` 주석의 뱃지 SVG 종수가 158종으로 적혀 있으나 정본(`docs/badge-catalog.csv`)은 현재 146개다.** 판정 로직에 쓰이는 숫자는 아니고 서술뿐이지만, 카탈로그 삭제(마이그레이션 35/37)가 반영 안 된 흔적이다 | 문서 정리, 낮은 우선순위 |
