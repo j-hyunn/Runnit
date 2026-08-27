@@ -364,10 +364,10 @@ class AchievementCelebrationView extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: AppTokens.s20),
-            // 일반 뱃지는 공유하지 않는다(2026-08-27, 사용자 요청) — 티어
-            // 승급·PB 카드만 남긴다. 카탈로그의 "뱃지"는 대부분 티어/PB보다
-            // 덜 자랑할 만한 잡다한 카테고리라 공유 값어치가 낮다는 판단이다.
-            if (data is! BadgeEarnedCardData)
+            // 일반 뱃지·티어 승급은 공유하지 않는다(2026-08-27, 사용자 요청) —
+            // 둘 다 이 풀페이지 축하(애니메이션 포함) 하나로 끝나고, 별도
+            // 공유 카드로 이어지지 않는다. PB만 공유 버튼을 남긴다.
+            if (data is! BadgeEarnedCardData && data is! TierPromotionCardData)
               FilledButton.icon(
                 onPressed: () => showShareCardSheet(context, data),
                 icon: const Icon(Icons.ios_share),

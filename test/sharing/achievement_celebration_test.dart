@@ -11,8 +11,9 @@ import 'package:runnit/models/models.dart';
 
 /// [AchievementCelebrationView]의 카드 종류별 공유 버튼 노출을 검증한다.
 ///
-/// 2026-08-27(사용자 요청): 일반 뱃지([BadgeEarnedCardData])는 공유하지
-/// 않는다 — 티어 승급·PB 카드만 공유 버튼을 받는다. 이 분기는 예전에
+/// 2026-08-27(사용자 요청): 일반 뱃지([BadgeEarnedCardData])와 티어 승급
+/// ([TierPromotionCardData])은 공유하지 않는다 — 둘 다 이 풀페이지 축하
+/// 애니메이션 하나로 끝난다. **PB만** 공유 버튼을 받는다. 이 분기는 예전에
 /// `SummaryAchievements`(요약 화면 인라인)에서도 간접적으로 검증됐지만,
 /// 그 위젯이 게이트 문구만 그리도록 단순화되면서 이 파일로 옮겨왔다.
 void main() {
@@ -84,7 +85,7 @@ void main() {
     expect(find.text('확인'), findsOneWidget);
   });
 
-  testWidgets('티어 승급 카드는 공유 버튼을 받는다', (tester) async {
+  testWidgets('티어 승급 카드는 축하하되 공유 버튼을 주지 않는다', (tester) async {
     await pumpView(
       tester,
       TierPromotionCardData(
@@ -97,7 +98,9 @@ void main() {
     );
 
     expect(find.text('티어 승급'), findsOneWidget);
-    expect(find.text('공유하기'), findsOneWidget);
+    expect(find.text('골드 달성'), findsOneWidget);
+    expect(find.text('공유하기'), findsNothing);
+    expect(find.text('확인'), findsOneWidget);
   });
 
   testWidgets('PB 카드는 공유 버튼을 받는다', (tester) async {
