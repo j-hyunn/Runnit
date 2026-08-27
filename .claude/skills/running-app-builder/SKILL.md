@@ -1,163 +1,163 @@
 ---
 name: running-app-builder
-description: "Runnit(러닝 기록/랭킹/뱃지 게이미피케이션 Flutter 앱)의 개발 작업을 조율하는 오케스트레이터. GPS 트래킹, 웨어러블(Apple Watch/Wear OS) 연동, 러닝 기록, 랭킹/리더보드, 뱃지·레벨 게이미피케이션, Flutter 화면, Supabase 백엔드 등 이 프로젝트의 기능 개발/구현/수정 요청 시 사용. 예: '러닝 트래킹 화면 만들어줘', '뱃지 시스템 추가해줘', '랭킹 API 붙여줘', 'GPS 정확도 개선', '워치 연동 붙여줘'. 후속 작업 키워드: 기존 기능 수정/보완/재작업/버그 수정/업데이트/개선 요청, '트래킹만 다시', '뱃지 조건 바꿔줘', '이전 결과 기반으로' 요청 시에도 반드시 이 스킬을 사용."
+description: "Orchestrator that coordinates development work for Runnit (a run-record/ranking/badge-gamification Flutter app). Use for feature development / implementation / modification requests for this project — GPS tracking, wearable (Apple Watch/Wear OS) integration, run records, ranking/leaderboard, badge·level gamification, Flutter screens, Supabase backend, etc. Examples: 'build the run-tracking screen', 'add a badge system', 'wire up the ranking API', 'improve GPS accuracy', 'add watch integration'. Follow-up keywords: modify/supplement/rework/bug-fix/update/improve an existing feature, 'just redo tracking', 'change the badge conditions', 'based on the previous result' — always use this skill for those too."
 ---
 
-# Runnit Builder — 러닝 앱 개발 오케스트레이터
+# Runnit Builder — running-app development orchestrator
 
-Runnit(**개인 중심** 러닝 기록·티어·랭킹·뱃지 앱) Flutter 앱의 기능 개발을 전문 에이전트 팀으로 조율하는 통합 스킬.
+The unified skill that coordinates feature development of the Runnit (**individual-centric** run-record·tier·ranking·badge) Flutter app through a team of specialist agents.
 
-> 📌 **제품 사양의 단일 진실 원천은 `docs/PRD.md`(확정본)이며, 사업 맥락은 `docs/BRD.md`다.**
-> 이 스킬을 포함한 모든 하네스 문서의 서술이 PRD와 충돌하면 **PRD가 우선한다.**
-> 핵심 구조 — **티어**(3개월 분기 시즌, 절대평가, 4단계 0/25/100/250km) × **주간 랭킹**(티어 내 상대평가) × **뱃지·레벨**(영구). 포인트는 Phase 4로 MVP 범위 밖이며, **크루/그룹은 P2다.**
-> 구현 구조(데이터 모델·Supabase 스키마·API 스펙)는 `docs/ARCHITECTURE.md`와 `docs/TRD.md`를 따른다 — 두 문서도 PRD를 구현 구조로 번역한 것이므로 PRD와 충돌하면 PRD가 우선한다.
+> 📌 **The single source of truth for product spec is `docs/PRD.md` (confirmed), and the business context is `docs/BRD.md`.**
+> When any harness file, including this skill, conflicts with the PRD, **the PRD wins.**
+> Core structure — **tier** (3-month quarterly season, absolute, 4 levels 0/25/100/250km) × **weekly ranking** (relative within tier) × **badge·level** (permanent). Points are Phase 4, out of MVP scope, and **crews/groups are P2.**
+> Implementation structure (data model · Supabase schema · API spec) follows `docs/ARCHITECTURE.md` and `docs/TRD.md` — those two docs also translate the PRD into implementation structure, so if they conflict with the PRD, the PRD wins.
 
-## 실행 모드: 에이전트 팀 (감독자 + 전문가 풀 하이브리드)
+## Execution mode: agent team (supervisor + specialist pool hybrid)
 
-이 오케스트레이터는 매 요청마다 6명 전원을 소집하지 않는다. **감독자(리더)가 요청 범위를 분석해 필요한 전문가만 선별하여 동적으로 팀을 구성**하고, 선별된 팀원들은 공유 작업 목록과 SendMessage로 자체 조율한다. QA는 팀 전체가 끝난 뒤 한 번이 아니라, 모듈이 완성되는 즉시 투입한다(incremental QA).
+This orchestrator does not summon all 6 members on every request. **The supervisor (leader) analyzes the request scope and dynamically forms a team of only the needed specialists**, and the selected members self-coordinate via the shared task list and SendMessage. QA is not run once at the end but deployed the moment a module is finished (incremental QA).
 
-## 에이전트 구성 (전문가 풀)
+## Agent composition (specialist pool)
 
-| 전문가 | 에이전트 타입 | 담당 | 스킬 | 산출물 |
-|--------|-------------|------|------|--------|
-| mobile-architect | 커스텀 | 앱 구조·상태관리·핵심 데이터 모델 | flutter-architecture-setup | `lib/models/`, `_workspace/*_architect_data-model.md` |
-| gps-tracking-engineer | 커스텀 | GPS·웨어러블 트래킹, 거리/페이스 계산 | gps-wearable-tracking | `lib/features/tracking/`, `_workspace/*_gps_tracking_notes.md` |
-| gamification-designer | 커스텀 | 뱃지·랭킹 로직·레벨·챌린지 | gamification-system-design | `lib/features/gamification/`, `_workspace/*_badge_rules.md` |
-| backend-engineer | 커스텀 | Supabase 스키마·RLS·랭킹 API·서버 검증 | supabase-running-backend | Supabase 마이그레이션, `lib/core/api/`, `_workspace/*_backend_schema.md` |
-| flutter-ui-designer | 커스텀 | 화면·위젯·디자인 시스템 | flutter-ui-patterns | `lib/features/*/presentation/`, `_workspace/*_ui_design_tokens.md` |
-| qa-integration-tester | general-purpose | 경계면 통합 정합성 검증 | integration-qa-flutter | `_workspace/*_qa_report.md` |
+| Specialist | Agent type | Owns | Skill | Deliverables |
+|------------|-----------|------|-------|--------------|
+| mobile-architect | custom | app structure · state management · core data models | flutter-architecture-setup | `lib/models/`, `_workspace/*_architect_data-model.md` |
+| gps-tracking-engineer | custom | GPS·wearable tracking, distance/pace calculation | gps-wearable-tracking | `lib/features/tracking/`, `_workspace/*_gps_tracking_notes.md` |
+| gamification-designer | custom | badge·ranking logic·level·challenges | gamification-system-design | `lib/features/gamification/`, `_workspace/*_badge_rules.md` |
+| backend-engineer | custom | Supabase schema·RLS·ranking API·server validation | supabase-running-backend | Supabase migrations, `lib/core/api/`, `_workspace/*_backend_schema.md` |
+| flutter-ui-designer | custom | screens·widgets·design system | flutter-ui-patterns | `lib/features/*/presentation/`, `_workspace/*_ui_design_tokens.md` |
+| qa-integration-tester | general-purpose | boundary integration-consistency verification | integration-qa-flutter | `_workspace/*_qa_report.md` |
 
-모든 Agent/TeamCreate 호출에 `model: "opus"`를 명시한다.
+Specify `model: "opus"` on every Agent/TeamCreate call.
 
-## 워크플로우
+## Workflow
 
-### Phase 0: 컨텍스트 확인 (후속 작업 지원)
+### Phase 0: context check (follow-up support)
 
-0. **`docs/PRD.md`를 먼저 읽는다 (생략 불가).** 요청과 관련된 섹션(티어 §5.3 / 주간 랭킹 §5.4 / 뱃지 §5.5 / 정책 §8)을 확인하고, 요청이 PRD의 확정 사양과 충돌하면 **구현 전에 사용자에게 알린다.** 요청이 PRD에 없는 신규 기능이면 그 사실을 보고하고, 구현 후 PRD 반영이 필요함을 명시한다. **이어서 `docs/ARCHITECTURE.md`·`docs/TRD.md`에서 관련 섹션(데이터 모델·스키마·API 스펙)을 확인한다** — 이미 확정된 구조와 다르게 구현하면 팀원 간 경계면 불일치가 발생하므로, 기존 결정을 우선 따르고 확장이 필요하면 팀원에게 문서도 함께 갱신하도록 지시한다.
-1. `_workspace/` 디렉토리와 `pubspec.yaml`(Flutter 프로젝트 존재 여부)을 확인한다.
-2. 실행 모드 결정:
-   - **`pubspec.yaml` 미존재** → 초기 실행. mobile-architect를 반드시 포함해 프로젝트 골격부터 시작.
-   - **`pubspec.yaml` 존재 + 새 기능 요청** → 증분 실행. 기존 `lib/models/`, `_workspace/*_architect_data-model.md` 등을 팀원 프롬프트에 포함해 기존 산출물을 존중하도록 지시.
-   - **`_workspace/` 존재 + 특정 영역 수정/버그 요청** → 부분 재실행. 관련 전문가만 재소집.
-3. 이전 `_workspace/*_qa_report.md`가 있으면 미해결 항목을 확인하고, 이번 작업 범위와 겹치면 우선 반영 대상에 포함한다.
+0. **Read `docs/PRD.md` first (not skippable).** Check the sections relevant to the request (tier §5.3 / weekly ranking §5.4 / badge §5.5 / policy §8), and if the request conflicts with the PRD's confirmed spec, **tell the user before implementing.** If the request is a new feature not in the PRD, report that fact and note that the PRD will need updating after implementation. **Then check the relevant sections of `docs/ARCHITECTURE.md` · `docs/TRD.md` (data model · schema · API spec)** — implementing differently from the already-confirmed structure causes boundary mismatches between teammates, so follow existing decisions first, and if an extension is needed, instruct teammates to update the docs alongside.
+1. Check the `_workspace/` directory and `pubspec.yaml` (whether a Flutter project exists).
+2. Decide the execution mode:
+   - **No `pubspec.yaml`** → initial run. Always include mobile-architect and start from the project skeleton.
+   - **`pubspec.yaml` exists + new feature request** → incremental run. Include existing `lib/models/`, `_workspace/*_architect_data-model.md`, etc. in teammate prompts so existing deliverables are respected.
+   - **`_workspace/` exists + a specific-area modification/bug request** → partial re-run. Re-summon only the relevant specialists.
+3. If a prior `_workspace/*_qa_report.md` exists, check its unresolved items and include any that overlap this work's scope as priority.
 
-### Phase 1: 요청 분석 및 전문가 선별 (감독자 판단)
+### Phase 1: request analysis and specialist selection (supervisor judgment)
 
-리더가 사용자 요청을 분석해 관여할 전문가를 결정한다. 판단 기준:
+The leader analyzes the user request and decides which specialists to involve. Criteria:
 
-| 요청 키워드/성격 | 소집 전문가 |
-|-----------------|-----------|
-| 신규 데이터 모델이 필요하거나 앱 구조 관련 | mobile-architect (거의 항상 포함 — 새 필드/모델이 생기면 이 팀부터) |
-| GPS, 위치, 워치, 백그라운드 추적, 거리/페이스 계산 | gps-tracking-engineer |
-| 뱃지, 업적, **티어·시즌**, 랭킹 규칙, 레벨, 챌린지, 포인트 | gamification-designer |
-| 백엔드, DB, API, 인증, 랭킹 쿼리, 실시간 동기화 | backend-engineer |
-| 화면, UI, 위젯, 디자인, 지도/차트 표시 | flutter-ui-designer |
+| Request keyword/nature | Specialists to summon |
+|------------------------|-----------------------|
+| Needs a new data model or is about app structure | mobile-architect (almost always included — start with this team when a new field/model appears) |
+| GPS, location, watch, background tracking, distance/pace calculation | gps-tracking-engineer |
+| Badge, achievement, **tier·season**, ranking rules, level, challenge, points | gamification-designer |
+| Backend, DB, API, auth, ranking query, realtime sync | backend-engineer |
+| Screen, UI, widget, design, map/chart display | flutter-ui-designer |
 
-기능이 여러 계층에 걸치면(예: "GPS 트래킹 화면 만들어줘" → 모델+트래킹+UI, 최소 3명) 관련 전문가 전원을 팀에 포함한다. 단일 계층 수정(예: "뱃지 아이콘 색상만 바꿔줘")은 flutter-ui-designer 1명을 **서브 에이전트**로 호출해도 충분하다 — 이 경우 팀 통신 오버헤드가 불필요하므로 `Agent` 도구 직접 호출로 처리한다.
+If a feature spans multiple layers (e.g. "build the GPS-tracking screen" → model + tracking + UI, at least 3 people), include all relevant specialists in the team. A single-layer modification (e.g. "just change the badge icon color") is fine to handle by calling one flutter-ui-designer as a **subagent** — team-communication overhead is unnecessary here, so use a direct `Agent` tool call.
 
-`_workspace/` 생성(초기 실행 시, 또는 이전 작업 보존이 필요한 새 실행에서는 `_workspace_{YYYYMMDD_HHMMSS}/`로 이동 후 재생성).
+Create `_workspace/` (on the initial run; on a new run where prior work must be preserved, move it to `_workspace_{YYYYMMDD_HHMMSS}/` then recreate).
 
-### Phase 2: 팀 구성
+### Phase 2: team formation
 
 ```
 TeamCreate(
   team_name: "runnit-team",
   members: [
-    { name: "architect", agent_type: "mobile-architect", model: "opus", prompt: "{요청 요약 + 기존 산출물 경로 + 'docs/PRD.md를 먼저 읽고 확정 사양을 따를 것'}" },
+    { name: "architect", agent_type: "mobile-architect", model: "opus", prompt: "{request summary + existing deliverable paths + 'read docs/PRD.md first and follow the confirmed spec'}" },
     { name: "tracking", agent_type: "gps-tracking-engineer", model: "opus", prompt: "..." },
     { name: "gamification", agent_type: "gamification-designer", model: "opus", prompt: "..." },
     { name: "backend", agent_type: "backend-engineer", model: "opus", prompt: "..." },
     { name: "ui", agent_type: "flutter-ui-designer", model: "opus", prompt: "..." }
-    // Phase 1에서 선별된 전문가만 포함
+    // only the specialists selected in Phase 1
   ]
 )
 ```
 
 ```
 TaskCreate(tasks: [
-  { title: "데이터 모델 확정", assignee: "architect" },
-  { title: "GPS 트래킹 구현", assignee: "tracking", depends_on: ["데이터 모델 확정"] },
-  { title: "뱃지/랭킹 로직 구현", assignee: "gamification", depends_on: ["데이터 모델 확정"] },
-  { title: "백엔드 스키마·API", assignee: "backend", depends_on: ["데이터 모델 확정"] },
-  { title: "화면 구현", assignee: "ui", depends_on: ["GPS 트래킹 구현", "뱃지/랭킹 로직 구현", "백엔드 스키마·API"] }
+  { title: "confirm data model", assignee: "architect" },
+  { title: "implement GPS tracking", assignee: "tracking", depends_on: ["confirm data model"] },
+  { title: "implement badge/ranking logic", assignee: "gamification", depends_on: ["confirm data model"] },
+  { title: "backend schema·API", assignee: "backend", depends_on: ["confirm data model"] },
+  { title: "implement screens", assignee: "ui", depends_on: ["implement GPS tracking", "implement badge/ranking logic", "backend schema·API"] }
 ])
 ```
 
-> **모든 팀원 프롬프트에 `docs/PRD.md`·`docs/ARCHITECTURE.md`·`docs/TRD.md`를 먼저 읽으라는 지시를 반드시 포함한다.** 팀원은 이 문서들을 모른 채 시작하면 크루 중심·상대평가 리그 등 폐기된 전제로 설계하거나, 이미 확정된 데이터 모델·스키마 구조를 임의로 재정의할 위험이 있다.
+> **Every teammate prompt MUST include an instruction to read `docs/PRD.md` · `docs/ARCHITECTURE.md` · `docs/TRD.md` first.** A teammate who starts without knowing these docs risks designing on retired assumptions (crew-centric, relative-evaluation leagues, etc.) or arbitrarily redefining the already-confirmed data model / schema structure.
 >
-> mobile-architect의 데이터 모델이 다른 모든 작업의 선행 조건이다. 팀원당 3~5개 작업이 적정 범위(팀 크기 가이드라인 참조).
+> The mobile-architect's data model is the prerequisite for all other work. 3~5 tasks per teammate is the right range (see the team-size guideline).
 
-### Phase 3: 협업 실행
+### Phase 3: collaborative execution
 
-**실행 방식:** 팀원들이 공유 작업 목록에서 자체 조율.
+**Execution style:** teammates self-coordinate from the shared task list.
 
-- architect가 데이터 모델을 확정하면 즉시 전원에게 SendMessage로 브로드캐스트 — 나머지 작업은 이 브로드캐스트를 신호로 시작한다.
-- tracking이 세션 종료 이벤트 구조를 확정하면 gamification에게 SendMessage로 전달.
-- backend가 스키마를 확정하면 architect에게 필드 매핑 확인 요청, 불일치 시 즉시 SendMessage로 조율.
-- ui는 architect/gamification/backend 산출물을 순차적으로 소비하므로 의존 작업이 완료되기 전까지 목업 데이터로 골격만 먼저 진행할 수 있다.
-- 리더는 팀원 유휴 알림을 모니터링하고, 막힌 팀원에게 SendMessage로 개입하거나 TaskUpdate로 작업을 재조정한다.
+- When the architect confirms the data model, immediately SendMessage-broadcast to everyone — the rest of the work starts on this broadcast as the signal.
+- When tracking confirms the session-end event structure, SendMessage it to gamification.
+- When backend confirms the schema, ask the architect to check the field mapping; on any mismatch, coordinate via SendMessage immediately.
+- ui consumes the architect/gamification/backend deliverables sequentially, so it can build the skeleton with mock data first until the dependencies are done.
+- The leader monitors teammate-idle notifications, and intervenes in a stuck teammate via SendMessage or re-balances work via TaskUpdate.
 
-**incremental QA:** 각 팀원이 담당 모듈을 완료했다고 보고하면(TaskUpdate 완료), 리더는 즉시 qa-integration-tester를 **서브 에이전트로** 호출해 해당 모듈의 경계면만 검증한다. 팀 전체 작업이 끝날 때까지 QA를 미루지 않는다. 발견된 이슈는 담당 팀원에게 SendMessage로 즉시 전달해 같은 세션 내에서 수정한다.
+**incremental QA:** when a teammate reports their module done (TaskUpdate complete), the leader immediately calls qa-integration-tester **as a subagent** to verify only that module's boundaries. Do not defer QA until the whole team's work is done. Pass any finding to the responsible teammate via SendMessage immediately so it's fixed within the same session.
 
-### Phase 4: 최종 통합 검증
+### Phase 4: final integration verification
 
-모든 작업 완료 후(TaskGet으로 확인), qa-integration-tester를 1회 더 호출해 전체 경계면(모델↔스키마↔API↔UI↔이벤트 흐름)을 종합 재검증한다. incremental QA에서 다룬 항목은 "재확인"으로, 새로 나타난 통합 지점만 신규 검증으로 표시한다.
+After all work is done (confirm via TaskGet), call qa-integration-tester once more to comprehensively re-verify all boundaries (model↔schema↔API↔UI↔event flow). Mark items covered in incremental QA as "recheck" and only newly-appeared integration points as new verification.
 
-### Phase 5: 정리
+### Phase 5: cleanup
 
-1. 팀원들에게 종료 요청(SendMessage) 후 TeamDelete
-2. `_workspace/` 보존 (설계 문서, QA 리포트는 다음 세션의 컨텍스트로 재사용됨)
-3. 사용자에게 요약 보고: 구현된 기능, 소집된 전문가, QA 결과(통과/미해결), 다음 추천 작업
+1. Send teammates a shutdown request (SendMessage), then TeamDelete
+2. Preserve `_workspace/` (design docs and QA reports are reused as context for the next session)
+3. Summary report to the user: implemented features, summoned specialists, QA result (pass/unresolved), next recommended work
 
-## 데이터 흐름
+## Data flow
 
 ```
-[architect] --SendMessage(모델 확정)--> [tracking, gamification, backend, ui]
+[architect] --SendMessage(model confirmed)--> [tracking, gamification, backend, ui]
      |
      v
-lib/models/*.dart  (모든 팀원의 공통 기준점)
+lib/models/*.dart  (common baseline for all teammates)
      |
-     +--> [tracking] --이벤트--> [gamification] --뱃지 판정--> [backend] --재검증--> leaderboard_cache
+     +--> [tracking] --event--> [gamification] --badge eval--> [backend] --re-validate--> leaderboard_cache
      |                                                              |
-     +--> [backend] --스키마 확정--> [architect] (필드 매핑 재확인)   |
+     +--> [backend] --schema confirmed--> [architect] (re-check field mapping)   |
      |                                                              v
-     +----------------------------------------------------------> [ui] (최종 소비자)
+     +----------------------------------------------------------> [ui] (final consumer)
      |
      v
-[qa-integration-tester] --incremental--> 각 모듈 완료 시 즉시 검증
-                        --final--> 전체 완료 후 종합 검증
+[qa-integration-tester] --incremental--> verify each module the moment it's done
+                        --final--> comprehensive verification after everything is done
 ```
 
-## 에러 핸들링
+## Error handling
 
-| 상황 | 전략 |
-|------|------|
-| 팀원 1명 실패/중지 | 리더가 유휴 알림으로 감지 → SendMessage로 상태 확인 → 재시작. 재시작 실패 시 해당 영역을 리더가 직접 서브 에이전트로 대체 호출 |
-| architect의 모델이 확정되지 않은 채 다른 팀원이 대기 | 리더가 architect에게 우선순위 상향 요청, 30분 이상 지연 시 잠정 모델로 나머지 팀원을 우선 진행시키고 추후 조정 |
-| QA에서 CONFIRMED 이슈 발견 | 담당 팀원에게 즉시 SendMessage, 수정 완료까지 해당 모듈은 "미완료"로 유지 |
-| 팀원 간 데이터(필드명 등) 충돌 | 삭제하지 않고 양쪽 주장을 병기해 사용자에게 보고, architect가 최종 결정 |
-| **팀원 산출물이 PRD·ARCHITECTURE·TRD와 불일치** | qa-integration-tester가 문서 대조로 검출 → 담당 팀원에게 SendMessage로 수정 요청. PRD가 항상 최우선이며, PRD 자체를 바꿔야 한다면 **사용자 확인 후** `docs/PRD.md`를 갱신한다. ARCHITECTURE/TRD는 구현 세부가 정당하게 발전한 결과라면(예: 배치 전략 변경) **문서 쪽을 갱신**해 코드와 맞춘다 |
-| Supabase 마이그레이션 실패 | backend-engineer가 원인을 리더에게 보고, 파괴적 변경이면 사용자 확인 후 재시도 |
+| Situation | Strategy |
+|-----------|----------|
+| One teammate fails/stops | Leader detects via idle notification → SendMessage to check status → restart. If restart fails, the leader covers that area directly via a subagent call |
+| Other teammates wait while the architect's model is unconfirmed | Leader asks the architect to raise priority; after 30+ min of delay, proceed with a provisional model for the rest and adjust later |
+| A CONFIRMED issue found in QA | SendMessage the responsible teammate immediately; the module stays "incomplete" until the fix is done |
+| Data conflict between teammates (field names, etc.) | Do not delete; report both claims to the user side by side; the architect makes the final call |
+| **A teammate's deliverable conflicts with PRD·ARCHITECTURE·TRD** | qa-integration-tester detects it via doc cross-check → SendMessage the responsible teammate for a fix. The PRD is always top priority; if the PRD itself must change, **update `docs/PRD.md` after user confirmation**. If ARCHITECTURE/TRD divergence is a legitimate evolution of implementation detail (e.g. a batch-strategy change), **update the docs** to match the code |
+| Supabase migration fails | backend-engineer reports the cause to the leader; if it's a destructive change, retry after user confirmation |
 
-## 팀 크기
+## Team size
 
-이 프로젝트는 소~중규모 기능 단위 작업이 반복되므로, 매 실행마다 Phase 1에서 선별된 2~5명 규모를 유지한다(가이드라인상 소규모 2~3명, 중규모 3~5명). 6명 전원이 필요한 요청(예: "MVP 전체 뼈대 잡아줘")은 예외적으로 발생할 수 있다.
+This project repeats small-to-medium feature-unit work, so keep the Phase 1-selected team at 2~5 people on each run (per the guideline, small 2~3, medium 3~5). Requests that need all 6 (e.g. "lay out the whole MVP skeleton") can occur as an exception.
 
-## 테스트 시나리오
+## Test scenarios
 
-### 정상 흐름
-1. 사용자: "러닝 시작하면 GPS로 경로 기록하고, 끝나면 완주 뱃지 주는 기능 만들어줘"
-2. Phase 0: `pubspec.yaml` 없음 → 초기 실행
-3. Phase 1: 데이터 모델(신규) + GPS + 뱃지 + 화면 필요 → architect, tracking, gamification, ui 4명 선별 (backend는 이번 요청에 없으므로 제외)
-4. Phase 2: TeamCreate 4명, TaskCreate 4개(의존관계 포함)
-5. Phase 3: architect가 RunSample/RunRecord/Badge 모델 확정 → 브로드캐스트 → tracking·gamification·ui 병렬 착수 → 각 완료 시 qa-integration-tester incremental 검증
-6. Phase 4: 종합 검증, 경계면 문제 없음 확인
-7. Phase 5: 팀 정리, 사용자에게 구현 요약 + "다음으로 랭킹/백엔드 연동을 추천합니다" 보고
+### Happy flow
+1. User: "build a feature that records the route via GPS when a run starts and gives a completion badge when it ends"
+2. Phase 0: no `pubspec.yaml` → initial run
+3. Phase 1: needs data model (new) + GPS + badge + screen → select 4: architect, tracking, gamification, ui (backend excluded since it's not in this request)
+4. Phase 2: TeamCreate 4, TaskCreate 4 (with dependencies)
+5. Phase 3: architect confirms the RunSample/RunRecord/Badge models → broadcast → tracking·gamification·ui start in parallel → qa-integration-tester incremental verification as each finishes
+6. Phase 4: comprehensive verification, confirm no boundary issues
+7. Phase 5: team cleanup, report implementation summary to the user + "recommend wiring up ranking/backend next"
 
-### 에러 흐름
-1. Phase 3에서 gamification이 뱃지 판정 로직 작성 중 architect의 `Badge` 모델에 필드(등급) 누락을 발견
-2. gamification이 architect에게 SendMessage로 필드 추가 요청
-3. architect가 모델을 확장하고 변경 사실을 전원에게 재브로드캐스트
-4. tracking·ui는 이미 진행 중이던 작업에 영향 없음을 확인, gamification만 갱신된 모델로 재작업
-5. incremental QA에서 확장된 필드가 실제 DB 스키마에는 아직 반영 안 됐음을 발견(backend가 이번 요청에 없었으므로) → 리포트에 "backend 미포함 — 다음 세션에서 반영 필요"로 명시
-6. Phase 5 보고에 이 미해결 항목을 명확히 포함
+### Error flow
+1. In Phase 3, gamification finds a missing field (grade) in the architect's `Badge` model while writing the badge-evaluation logic
+2. gamification SendMessages the architect to add the field
+3. architect extends the model and re-broadcasts the change to everyone
+4. tracking·ui confirm no impact on their in-progress work; only gamification reworks with the updated model
+5. incremental QA finds the extended field is not yet reflected in the actual DB schema (because backend wasn't in this request) → the report notes "backend not included — needs reflecting in the next session"
+6. The Phase 5 report clearly includes this unresolved item

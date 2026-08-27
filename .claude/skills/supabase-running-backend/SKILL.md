@@ -1,24 +1,24 @@
 ---
 name: supabase-running-backend
-description: "러닝 앱의 Supabase 백엔드(스키마, RLS, 랭킹 집계, 실시간 동기화, 서버 재검증) 설계 워크플로우. 테이블 설계, camelCase↔snake_case 매핑, 리더보드 성능 전략을 다룬다. 'Supabase 스키마 짜줘', 'RLS 정책', '랭킹 쿼리 최적화', '실시간 동기화' 요청 시 사용."
+description: "Design workflow for the running app's Supabase backend (schema, RLS, ranking aggregation, realtime sync, server re-validation). Covers table design, camelCase↔snake_case mapping, and leaderboard performance strategy. Use for 'write the Supabase schema', 'RLS policy', 'optimize the ranking query', 'realtime sync' requests."
 ---
 
-# Supabase 러닝 백엔드 설계
+# Supabase running-backend design
 
-러닝 앱의 Supabase 스키마와 API를 설계하는 절차. Supabase MCP 도구(`list_tables`, `apply_migration`, `execute_sql`, `get_advisors`)를 사용해 실제 프로젝트에 반영한다.
+The procedure for designing the running app's Supabase schema and API. Use the Supabase MCP tools (`list_tables`, `apply_migration`, `execute_sql`, `get_advisors`) to apply it to the real project.
 
-> 📌 **제품 사양은 `docs/PRD.md`가 단일 진실 원천이다.** 이 스킬의 서술과 충돌하면 PRD가 우선한다. 티어(분기 시즌·절대평가)와 주간 랭킹(티어 내·상대평가)의 구분, 크루가 P2라는 점을 반드시 확인하고 작업한다.
+> 📌 **`docs/PRD.md` is the single source of truth for product spec.** When this skill conflicts with the PRD, the PRD wins. Always confirm the distinction between tier (quarterly season · absolute) and weekly ranking (within tier · relative), and that crews are P2, before working.
 >
-> 📐 구현 구조 상세는 `docs/ARCHITECTURE.md` §5(백엔드 아키텍처)와 `docs/TRD.md` §4~§7(DDL·RLS·API·서버 검증 규칙)을 참조한다 — 이 스킬의 예시 DDL이 TRD와 다르면 TRD를 최신 기준으로 갱신한다.
+> 📐 For implementation-structure detail, see `docs/ARCHITECTURE.md` §5 (backend architecture) and `docs/TRD.md` §4~§7 (DDL·RLS·API·server-validation rules) — if this skill's example DDL differs from the TRD, update the TRD to the current baseline.
 
-## 1. 스키마 골격
+## 1. Schema skeleton
 
 ```sql
--- users: Supabase Auth의 auth.users를 확장
+-- users: extends Supabase Auth's auth.users
 create table public.profiles (
   id uuid primary key references auth.users(id),
   display_name text not null,
-  total_distance_m numeric not null default 0,  -- 캐시 필드, 트리거로 갱신
+  total_distance_m numeric not null default 0,  -- cache field, updated by trigger
   created_at timestamptz not null default now()
 );
 
@@ -30,12 +30,12 @@ create table public.run_records (
   distance_m numeric not null,
   duration_s integer not null,
   avg_heart_rate integer,
-  samples jsonb,  -- 대용량이면 별도 storage/테이블 분리 검토
+  samples jsonb,  -- if large, consider a separate storage/table
   created_at timestamptz not null default now()
 );
 
 create table public.badges (
-  id text primary key,          -- 'cumulative_100km' 같은 의미있는 slug
+  id text primary key,          -- a meaningful slug like 'cumulative_100km'
   name text not null,
   trigger_type text not null check (trigger_type in ('session', 'cumulative')),
   condition jsonb not null
@@ -45,14 +45,14 @@ create table public.user_badges (
   user_id uuid references public.profiles(id),
   badge_id text references public.badges(id),
   earned_at timestamptz not null default now(),
-  verified boolean not null default false,  -- 서버 재검증 결과
+  verified boolean not null default false,  -- server re-validation result
   primary key (user_id, badge_id)
 );
 
--- ⚠️ Runnit 확정 사양: 티어(시즌 누적, 절대평가)와 주간 랭킹(티어 내, 상대평가)은
---    집계 주기와 평가 방식이 다르므로 반드시 테이블을 분리한다. 상세는 docs/PRD.md §5.3~§5.4.
---    필요 테이블: seasons / user_season_tier / weekly_ranking_cache
---    아래는 랭킹 캐시의 기본형 예시다.
+-- ⚠️ Runnit confirmed spec: tier (cumulative season, absolute) and weekly ranking (within tier, relative)
+--    have different aggregation cycles and evaluation methods, so keep the tables separate. Details: docs/PRD.md §5.3~§5.4.
+--    Required tables: seasons / user_season_tier / weekly_ranking_cache
+--    Below is a basic example of the ranking cache.
 create table public.leaderboard_cache (
   scope text not null,          -- 'global' | 'weekly' | 'crew:{id}'
   user_id uuid references public.profiles(id),
@@ -63,39 +63,39 @@ create table public.leaderboard_cache (
 );
 ```
 
-## 2. camelCase ↔ snake_case 매핑 문서화
+## 2. Document the camelCase ↔ snake_case mapping
 
-Dart 모델(camelCase)과 Postgres 컬럼(snake_case)의 변환은 `supabase_flutter`의 직렬화 계층(freezed의 `@JsonKey(name: 'distance_m')` 또는 공통 컨버터)에서 처리하되, **필드 하나하나를 문서로 남긴다**. 이 매핑이 암묵적이면 mobile-architect가 모델 필드를 추가했을 때 백엔드 컬럼명과 어긋나는 사고가 나기 쉽다.
+Handle the conversion between Dart models (camelCase) and Postgres columns (snake_case) in `supabase_flutter`'s serialization layer (freezed's `@JsonKey(name: 'distance_m')` or a shared converter), but **document every single field**. If this mapping is implicit, it's easy to get a mismatch with the backend column name when the mobile-architect adds a model field.
 
 ```
-_workspace/{date}_backend_schema.md 예시:
+_workspace/{date}_backend_schema.md example:
 
-| Dart 필드 (RunRecord) | Postgres 컬럼 (run_records) | 타입 |
+| Dart field (RunRecord) | Postgres column (run_records) | Type |
 |---|---|---|
 | distanceMeters | distance_m | numeric |
 | avgHeartRate | avg_heart_rate | integer nullable |
 ```
 
-## 3. 리더보드 성능 전략
+## 3. Leaderboard performance strategy
 
-사용자 수가 늘어나면 매 조회마다 `run_records`를 전체 집계하는 쿼리는 느려진다. 다음 중 하나를 프로젝트 규모에 맞게 선택한다:
+As the user count grows, a query that aggregates all of `run_records` on every read gets slow. Pick one of the following to match the project scale:
 
-1. **배치 갱신**: `leaderboard_cache` 테이블을 스케줄 함수(Supabase Edge Function + cron)로 주기 갱신 (예: 5분마다). 초기 규모에 적합, 구현이 단순.
-2. **트리거 기반 증분 갱신**: `run_records` insert 시 트리거로 해당 사용자의 랭킹만 재계산. 실시간성이 필요할 때.
-3. **머티리얼라이즈드 뷰**: 집계 로직이 복잡해지면(다중 스코프, 다중 기간) 고려.
+1. **Batch refresh**: refresh the `leaderboard_cache` table periodically with a scheduled function (Supabase Edge Function + cron), e.g. every 5 minutes. Fits early scale, simple to implement.
+2. **Trigger-based incremental refresh**: on `run_records` insert, recompute only that user's rank via a trigger. When real-time fidelity is needed.
+3. **Materialized view**: consider it when the aggregation logic gets complex (multiple scopes, multiple periods).
 
-초기 단계에서는 1번(배치 갱신)을 기본값으로 권장한다 — 과도한 최적화보다 단순함을 우선한다.
+At the early stage, recommend option 1 (batch refresh) as the default — favor simplicity over premature optimization.
 
-## 4. RLS 정책 원칙
+## 4. RLS policy principles
 
-- `run_records`: `user_id = auth.uid()`인 행만 insert/update 가능, select는 본인 것만 (랭킹은 별도 `leaderboard_cache`를 통해 공개)
-- `leaderboard_cache`: 전체 조회(select) 허용, insert/update는 service role(Edge Function)만
-- `user_badges`: 본인 것만 select, insert는 service role을 통한 서버 재검증 후에만 (`verified = true`로 갱신)
+- `run_records`: only rows where `user_id = auth.uid()` can be inserted/updated; select is own-rows-only (rankings are exposed separately via `leaderboard_cache`)
+- `leaderboard_cache`: select allowed for everyone; insert/update only by the service role (Edge Function)
+- `user_badges`: select own-rows-only; insert only after server re-validation via the service role (update to `verified = true`)
 
-## 5. 서버 재검증 (부정행위 방지)
+## 5. Server re-validation (anti-cheat)
 
-클라이언트가 계산해 올린 뱃지/점수는 그대로 반영하지 않는다. `run_records`의 원시 데이터(거리, 시간)로 평균 페이스를 서버에서 재계산해 비현실적 값(예: 도보/러닝 상한을 초과하는 속도)이면 해당 기록을 랭킹 집계에서 제외하고 `flagged` 처리한다. 삭제하지 않는 이유: 오탐 가능성이 있으므로 사용자 문의 시 근거 데이터가 남아있어야 한다.
+Do not reflect badges/scores the client computed and uploaded as-is. Recompute average pace on the server from the raw data of `run_records` (distance, time); if the value is unrealistic (e.g. a speed above the walking/running ceiling), exclude that record from ranking aggregation and mark it `flagged`. Why not delete: false positives are possible, so the supporting data must remain for user inquiries.
 
-## 6. 실시간 동기화
+## 6. Realtime sync
 
-`leaderboard_cache` 변경을 Supabase Realtime으로 구독하면 클라이언트가 폴링 없이 랭킹 변동을 받을 수 있다. 단, 갱신 주기가 배치(5분 등)라면 실시간 구독의 체감 효과는 제한적이므로, "언제 갱신됐는지" UI에 타임스탬프를 노출하는 것을 flutter-ui-designer와 협의한다.
+Subscribing to `leaderboard_cache` changes via Supabase Realtime lets the client receive ranking changes without polling. But if the refresh cycle is a batch (5 min etc.), the perceived effect of a realtime subscription is limited, so agree with the flutter-ui-designer on exposing a "when was this refreshed" timestamp in the UI.

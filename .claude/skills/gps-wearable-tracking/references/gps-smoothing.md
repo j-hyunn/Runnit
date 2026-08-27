@@ -1,37 +1,37 @@
-# GPS 스무딩 및 이상치 제거
+# GPS smoothing and outlier removal
 
-## 왜 필요한가
+## Why it's needed
 
-GPS 원시 좌표는 도심/실내/터널 근처에서 실제 위치와 수 미터~수십 미터 오차가 난다. 이 오차를 그대로 거리 계산에 사용하면 정지 상태에서도 거리가 누적되는 "GPS 드리프트" 버그가 발생한다.
+Raw GPS coordinates are several to tens of meters off the real position near city centers / indoors / tunnels. Using that error directly in distance calculation produces the "GPS drift" bug where distance accumulates even while stationary.
 
-## 기본 필터: 정확도 기반 거부
+## Base filter: accuracy-based rejection
 
-가장 단순하고 효과적인 1차 필터. `Position.accuracy`(반경, 미터)가 임계값(예: 20m)을 초과하는 포인트는 아예 버린다.
+The simplest and most effective first-pass filter. Discard any point whose `Position.accuracy` (radius, meters) exceeds a threshold (e.g. 20m) outright.
 
 ```dart
-if (position.accuracy > 20) return; // 신뢰도 낮은 포인트 무시
+if (position.accuracy > 20) return; // ignore low-confidence points
 ```
 
-## 2차 필터: 속도 기반 이상치 제거
+## Second filter: speed-based outlier removal
 
-연속된 두 포인트 사이의 계산된 속도가 인간의 러닝 한계(예: 시속 30km, 100m 단거리 기준으로도 초과하기 어려운 값)를 넘으면 GPS 튐(jump)으로 간주하고 제외한다.
+If the computed speed between two consecutive points exceeds a human running limit (e.g. 30 km/h — hard to exceed even over a 100m sprint), treat it as a GPS jump and exclude it.
 
 ```dart
 final speedKmh = distanceBetween(prev, curr) / timeDelta.inSeconds * 3.6;
 if (speedKmh > 30) {
-  // 이 포인트는 튐으로 간주, 거리 계산에서 제외 (단, 다음 포인트 비교의 기준점으로는 prev를 유지)
+  // treat this point as a jump, exclude from distance calculation (but keep prev as the reference point for the next comparison)
   return;
 }
 ```
 
-## 3차 필터: 이동평균 스무딩
+## Third filter: moving-average smoothing
 
-좌표 자체의 미세한 흔들림(지그재그)을 줄이기 위해, 최근 N개(예: 3~5개) 포인트의 이동평균으로 좌표를 보정한 뒤 지도에 그리고 거리를 계산한다. N이 너무 크면 실제 코너링(방향 전환)이 뭉개지므로, 도심(건물 밀집) 여부에 따라 N을 가변적으로 조정하는 것도 고려할 수 있다.
+To reduce the fine jitter (zigzag) of the coordinates themselves, correct the coordinate with a moving average of the last N points (e.g. 3~5) before drawing on the map and computing distance. If N is too large, real cornering (direction changes) is smeared, so consider adjusting N dynamically based on whether you're in a dense-building city area.
 
-## 정지 상태 감지
+## Stationary detection
 
-일정 시간(예: 10초) 이상 위치 변화가 임계값(예: 3m) 이하로 유지되면 "정지"로 판정하고, 그 구간 동안의 미세한 GPS 흔들림은 거리 계산에서 완전히 제외한다. 신호등 대기, 인터벌 러닝의 휴식 구간에서 거리가 잘못 누적되는 것을 막는다.
+If the position change stays below a threshold (e.g. 3m) for a period (e.g. 10s+), decide "stationary" and completely exclude the fine GPS jitter during that window from distance calculation. This prevents distance being wrongly accumulated while waiting at traffic lights or during interval-run rest periods.
 
-## 검증 방법
+## Verification method
 
-스무딩 로직을 구현한 뒤, 정지 상태로 5분 이상 유지한 실제 GPS 로그(또는 합성 데이터)를 입력해 계산된 거리가 0에 가까운지 확인한다. 이것이 스무딩이 실제로 동작하는지 확인하는 가장 직접적인 테스트다.
+After implementing the smoothing logic, feed it a real GPS log (or synthetic data) of staying stationary for 5+ minutes and check that the computed distance is near zero. This is the most direct test that the smoothing actually works.
