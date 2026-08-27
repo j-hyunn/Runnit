@@ -10,6 +10,7 @@ import '../../../models/models.dart';
 import '../../auth/presentation/widgets/guest_login_prompt.dart';
 import '../../gamification/presentation/badge_gallery_page.dart';
 import '../data/history_providers.dart';
+import 'run_detail_page.dart';
 import 'run_history_list_page.dart';
 import 'widgets/monthly_chart.dart';
 import 'widgets/run_tile.dart';
@@ -351,7 +352,14 @@ class _RecentRunsSection extends ConsumerWidget {
         else
           for (var i = 0; i < recent.length; i++) ...[
             if (i > 0) const RunTileDivider(),
-            RunHistoryTile(record: recent[i]),
+            RunHistoryTile(
+              record: recent[i],
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => RunDetailPage(runId: recent[i].id),
+                ),
+              ),
+            ),
           ],
         const SizedBox(height: AppTokens.s8),
         InkWell(
