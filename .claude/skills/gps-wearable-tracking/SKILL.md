@@ -1,69 +1,69 @@
 ---
 name: gps-wearable-tracking
-description: "Flutter 러닝 앱의 GPS 위치 추적 및 웨어러블(Apple Watch·Garmin 우선, HealthKit/Health Connect) 연동 구현 워크플로우. 권한 처리, 백그라운드 추적, GPS 스무딩, 거리/페이스/칼로리 계산을 다룬다. 'GPS 트래킹 구현', '워치 연동', '애플워치 연동', '가민 연동', '백그라운드에서 기록 유지', '거리 계산 이상함' 요청 시 사용."
+description: "Implementation workflow for the Flutter running app's GPS location tracking and wearable integration (Apple Watch·Garmin first, HealthKit/Health Connect). Covers permission handling, background tracking, GPS smoothing, and distance/pace/calorie calculation. Use for 'implement GPS tracking', 'watch integration', 'Apple Watch integration', 'Garmin integration', 'keep recording in the background', 'distance calculation is off' requests."
 ---
 
-# GPS·웨어러블 트래킹 구현
+# GPS & wearable tracking implementation
 
-폰 GPS와 웨어러블 센서로 러닝을 정확하게 기록하는 절차.
+The procedure for accurately recording runs with phone GPS and wearable sensors.
 
-> 📌 **제품 사양은 `docs/PRD.md`가 단일 진실 원천이다.** 이 스킬의 서술과 충돌하면 PRD가 우선한다. 티어(분기 시즌·절대평가)와 주간 랭킹(티어 내·상대평가)의 구분, 크루가 P2라는 점을 반드시 확인하고 작업한다.
+> 📌 **`docs/PRD.md` is the single source of truth for product spec.** When this skill conflicts with the PRD, the PRD wins. Always confirm the distinction between tier (quarterly season · absolute) and weekly ranking (within tier · relative), and that crews are P2, before working.
 >
-> 📐 구현 구조 상세는 `docs/ARCHITECTURE.md` §6(GPS·웨어러블 트래킹 아키텍처)과 `docs/TRD.md` §8(GPS/웨어러블 기술 사양)을 참조한다.
+> 📐 For implementation-structure detail, see `docs/ARCHITECTURE.md` §6 (GPS·wearable tracking architecture) and `docs/TRD.md` §8 (GPS/wearable tech spec).
 
-## 1. 전체 흐름
+## 1. Overall flow
 
 ```
-권한 요청 → 위치 스트림 시작(포그라운드 서비스) → 원시 RunSample 수집
-  → 스무딩/이상치 제거 → 거리·페이스·칼로리 계산 → RunRecord 조립 → 세션 종료 이벤트 발행
+request permission → start location stream (foreground service) → collect raw RunSamples
+  → smoothing / outlier removal → compute distance·pace·calories → assemble RunRecord → publish session-end event
 ```
 
-## 2. 권한 처리
+## 2. Permission handling
 
-권한 요청은 단계적으로 한다 — 한 번에 "항상 허용"을 요청하면 iOS/Android 모두 거부율이 높아진다:
-1. 앱 사용 중 위치 권한 요청 (`when in use`)
-2. 백그라운드 트래킹이 실제로 필요한 시점(러닝 시작 버튼)에 "항상 허용" 승격 요청
-3. 웨어러블 연동은 별도로 Health Connect/HealthKit 권한을 요청 (위치 권한과 별개 플로우)
+Request permissions in stages — requesting "Always Allow" up front raises the denial rate on both iOS and Android:
+1. Request in-use location permission (`when in use`)
+2. At the moment background tracking is actually needed (the start-run button), request the "Always Allow" upgrade
+3. Wearable integration requests Health Connect/HealthKit permission separately (a distinct flow from location permission)
 
-플랫폼별 상세 API는 필요한 쪽만 로드한다:
-- Android 구현 세부사항(Foreground Service, Health Connect — Garmin/Wear OS 공통 경로) → [references/android-health-connect.md](references/android-health-connect.md)
-- iOS 구현 세부사항(Background Modes, HealthKit — Apple Watch 네이티브 + Garmin 동기화 경로) → [references/ios-healthkit.md](references/ios-healthkit.md)
-- Garmin 특화 사항(Garmin Connect 동기화 설정, Garmin Health API 개요) → [references/garmin-integration.md](references/garmin-integration.md)
+Load only the per-platform detail you need:
+- Android implementation detail (Foreground Service, Health Connect — the common Garmin/Wear OS path) → [references/android-health-connect.md](references/android-health-connect.md)
+- iOS implementation detail (Background Modes, HealthKit — the Apple Watch native + Garmin sync path) → [references/ios-healthkit.md](references/ios-healthkit.md)
+- Garmin-specific detail (Garmin Connect sync settings, Garmin Health API overview) → [references/garmin-integration.md](references/garmin-integration.md)
 
-## 3. 웨어러블 우선순위와 연동 경로
+## 3. Wearable priority and integration paths
 
-이 앱은 Apple Watch와 Garmin을 우선 지원 대상으로 한다. 두 기기는 연동 경로 자체가 다르므로 구분해서 설계한다.
+This app treats Apple Watch and Garmin as priority support targets. The two devices have fundamentally different integration paths, so design them separately.
 
-| 기기 | 연동 경로 | 실시간성 | 우선순위 |
-|------|----------|----------|----------|
-| Apple Watch | HealthKit 네이티브 (`HKWorkoutSession`, 필요 시 watchOS 컴패니언 앱) | 높음 | 1순위 |
-| Garmin | Garmin Connect 앱이 사용자 설정에 따라 HealthKit(iOS)/Health Connect(Android)에 운동 데이터를 동기화 → 앱은 그 경로로 읽음 | 낮음(동기화 지연) | 1순위 (경로는 다르지만 지원 우선순위는 Apple Watch와 동급) |
-| 기타 Wear OS 기기 | Health Connect | 중간 | 2순위 |
+| Device | Integration path | Real-time fidelity | Priority |
+|--------|-----------------|--------------------|----------|
+| Apple Watch | HealthKit native (`HKWorkoutSession`, a watchOS companion app if needed) | High | 1st |
+| Garmin | The Garmin Connect app syncs workout data into HealthKit (iOS) / Health Connect (Android) per the user's settings → the app reads it via that path | Low (sync lag) | 1st (different path but same support priority as Apple Watch) |
+| Other Wear OS devices | Health Connect | Medium | 2nd |
 
-**핵심:** Garmin은 기기와 직접 통신하는 것이 아니라 Garmin Connect의 동기화를 경유한다. 즉 iOS에서는 HealthKit 연동을, Android에서는 Health Connect 연동을 이미 구현했다면 Garmin 지원은 대부분 "추가로 얻어지는" 것에 가깝다 — 별도의 Garmin 전용 SDK 통합 없이도 동작한다. 실시간성이 부족한 점(동기화 지연)만 UI에 명시하면 된다. 완전한 실시간 연동이 꼭 필요해지는 시점에는 Garmin Health API(개발자 승인 필요) 직접 연동을 검토하되, MVP에서는 권장하지 않는다. 상세: [references/garmin-integration.md](references/garmin-integration.md)
+**Key:** Garmin does not communicate with the device directly — it goes through the Garmin Connect sync. That means if you've already implemented HealthKit integration on iOS and Health Connect integration on Android, Garmin support is mostly "obtained for free" — it works without a separate Garmin-specific SDK integration. You only need to note the lack of real-time fidelity (sync lag) in the UI. When full real-time integration becomes truly necessary, consider direct Garmin Health API integration (requires developer approval), but it is not recommended for the MVP. Details: [references/garmin-integration.md](references/garmin-integration.md)
 
-워치가 연결되지 않았거나 사용자가 폰만 소지한 경우, 폰 GPS 단독 트래킹으로 자동 폴백한다. 이것은 에러가 아니라 정상 경로다 — 워치 연동을 필수 요구사항처럼 처리해 트래킹 자체를 막지 않는다. `RunSample.source`를 `phone`/`watch`로 표시해 두면, 이후 세션에서 데이터 출처를 구분할 수 있다(§ mobile-architect의 `RunSample` 모델 참조). Garmin과 Apple Watch를 소스 값으로 더 세분화할지(`watch:apple` vs `watch:garmin`)는 뱃지/통계에서 기기별 구분이 필요한지에 따라 mobile-architect와 협의한다.
+If no watch is connected or the user only has the phone, auto-fall-back to phone-only GPS tracking. This is not an error, it is a normal path — do not treat watch integration as a mandatory requirement that blocks tracking itself. Marking `RunSample.source` as `phone`/`watch` lets you distinguish the data origin in later sessions (see the mobile-architect's `RunSample` model). Whether to further subdivide the source value for Garmin vs Apple Watch (`watch:apple` vs `watch:garmin`) is agreed with the mobile-architect based on whether badges/stats need per-device distinction.
 
-## 4. GPS 스무딩 — 왜 필요한가
+## 4. GPS smoothing — why it's needed
 
-GPS 원시 좌표는 실내/도심에서 실제 위치보다 수 미터~수십 미터 벗어난 값을 반환할 수 있다. 스무딩 없이 연속된 두 좌표 간 직선거리를 그대로 누적하면, 사용자가 정지해 있어도 GPS 드리프트로 거리가 계속 증가하는 버그가 생긴다. 반드시 필터링 후 거리를 계산한다. 알고리즘 상세와 이상치 판정 기준은 [references/gps-smoothing.md](references/gps-smoothing.md) 참조.
+Raw GPS coordinates can be several to tens of meters off the real position near buildings/indoors/tunnels. Accumulating straight-line distance between consecutive coordinates without smoothing produces a bug where distance keeps growing from "GPS drift" even while stationary. Always compute distance after filtering. For algorithm detail and outlier-detection criteria, see [references/gps-smoothing.md](references/gps-smoothing.md).
 
-## 5. 배터리 최적화
+## 5. Battery optimization
 
-GPS 폴링 주기와 정확도(`LocationAccuracy`)는 배터리 소모와 직결된다. 다음을 사용자 설정으로 노출하는 것을 권장한다:
+The GPS polling interval and accuracy (`LocationAccuracy`) directly affect battery drain. Recommend exposing the following as a user setting:
 
-| 모드 | 정확도 | 폴링 주기 | 용도 |
-|------|--------|----------|------|
-| 고정밀 | best | 1~2초 | 대회/기록 갱신용 러닝 |
-| 표준 | high | 5초 | 일반 러닝 |
-| 절전 | medium | 10초+ | 장거리(마라톤) |
+| Mode | Accuracy | Polling interval | Use |
+|------|----------|-----------------|-----|
+| High precision | best | 1~2s | races / PB-attempt runs |
+| Standard | high | 5s | regular runs |
+| Power saving | medium | 10s+ | long distance (marathon) |
 
-## 6. 거리/페이스/칼로리 계산
+## 6. Distance/pace/calorie calculation
 
-- 거리: 스무딩된 연속 포인트 간 Haversine 공식 누적
-- 페이스: `duration / distance_km` (분/km), 구간별(1km 단위 split) 계산도 함께 제공하면 gamification/UI 양쪽에서 유용
-- 칼로리: MET(Metabolic Equivalent) 기반 추정 — 정확한 값이 아니라 추정치임을 UI에서 명시 (심박수 데이터가 있으면 더 정교한 추정 가능)
+- Distance: Haversine formula accumulated between smoothed consecutive points
+- Pace: `duration / distance_km` (min/km); also providing per-segment (1km split) calculation is useful for both gamification and UI
+- Calories: MET (Metabolic Equivalent)-based estimate — state in the UI that it's an estimate, not an exact value (a more precise estimate is possible with heart-rate data)
 
-## 7. 산출물
+## 7. Deliverable
 
-`RunRecord` 조립이 끝나면 세션 종료 이벤트를 발행한다 — gamification-designer의 뱃지 판정과 backend-engineer의 업로드 로직이 이 이벤트를 구독한다. 이벤트에는 최종 `RunRecord` 전체(또는 그 ID)를 포함해, 구독 측이 다시 계산할 필요가 없도록 한다.
+When `RunRecord` assembly finishes, publish a session-end event — the gamification-designer's badge evaluation and the backend-engineer's upload logic subscribe to it. Include the full final `RunRecord` (or its ID) in the event so subscribers don't need to recompute.

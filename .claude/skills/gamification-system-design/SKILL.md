@@ -1,61 +1,61 @@
 ---
 name: gamification-system-design
-description: "러닝 앱의 뱃지/업적, 레벨/포인트, 랭킹 알고리즘, 챌린지 설계 워크플로우. 뱃지 카탈로그 설계, 트리거 시점, 동점 처리, 부정행위 방지(서버 재검증) 원칙을 다룬다. '뱃지 조건 정해줘', '랭킹 점수 어떻게 계산할지', '레벨업 기준' 요청 시 사용."
+description: "Design workflow for the running app's badges/achievements, level/points, ranking algorithm, and challenges. Covers badge-catalog design, trigger timing, tie-breaking, and the anti-cheat (server re-validation) principle. Use for 'set the badge conditions', 'how to calculate the ranking score', 'level-up criteria' requests."
 ---
 
-# 게이미피케이션 시스템 설계
+# Gamification system design
 
-러닝 앱에서 사용자의 지속적 참여를 이끄는 뱃지·랭킹·레벨 시스템을 설계하는 절차.
+The procedure for designing the badge·ranking·level system that drives sustained engagement in the running app.
 
-> 📌 **제품 사양은 `docs/PRD.md`가 단일 진실 원천이다.** 이 스킬의 서술과 충돌하면 PRD가 우선한다. 티어(분기 시즌·절대평가)와 주간 랭킹(티어 내·상대평가)의 구분, 크루가 P2라는 점을 반드시 확인하고 작업한다.
+> 📌 **`docs/PRD.md` is the single source of truth for product spec.** When this skill conflicts with the PRD, the PRD wins. Always confirm the distinction between tier (quarterly season · absolute) and weekly ranking (within tier · relative), and that crews are P2, before working.
 >
-> 📐 구현 구조 상세는 `docs/ARCHITECTURE.md` §7(게이미피케이션 아키텍처)과 `docs/TRD.md` §9~§10(티어·랭킹 집계·뱃지 판정 기술 사양)을 참조한다.
+> 📐 For implementation-structure detail, see `docs/ARCHITECTURE.md` §7 (gamification architecture) and `docs/TRD.md` §9~§10 (tier·ranking aggregation · badge-evaluation tech spec).
 
-## 1. 뱃지 카탈로그 설계
+## 1. Badge-catalog design
 
-뱃지는 두 가지 트리거 유형으로 나뉜다. 둘 다 구현해야 마일스톤형 뱃지 누락을 막을 수 있다.
+Badges split into two trigger types. Implement both to avoid missing milestone badges.
 
-| 유형 | 예시 | 트리거 시점 |
-|------|------|-----------|
-| 세션형 | "첫 5km 완주", "새벽 러닝 뱃지"(오전 6시 이전 시작) | 러닝 세션 종료 시 |
-| 누적형 | "누적 100km 달성", "30일 연속 러닝" | 세션 종료 후 누적 통계가 갱신될 때마다 |
+| Type | Example | Trigger timing |
+|------|---------|----------------|
+| Session | "first 5km", "dawn-run badge" (started before 6 AM) | at run-session end |
+| Cumulative | "cumulative 100km", "30 consecutive days" | every time a cumulative stat updates after session end |
 
-**동기부여 곡선:** 초반 뱃지(첫 러닝, 첫 1km)는 낮은 임계값으로 빠른 성취감을 주고, 후반 뱃지(누적 1000km, 100일 연속)는 장기 목표로 설계한다. 임계값을 등간격(10km, 20km, 30km...)으로 나열하면 후반부가 지루해진다 — 로그 스케일이나 의미 있는 단위(하프마라톤 거리, 마라톤 거리 등)를 활용한다.
+**Motivation curve:** early badges (first run, first 1km) use low thresholds for quick achievement; later badges (cumulative 1000km, 100 consecutive days) are long-term goals. Listing thresholds at even intervals (10km, 20km, 30km...) makes the later part dull — use a log scale or meaningful units (half-marathon distance, marathon distance, etc.).
 
 ```
-뱃지 카탈로그 문서 형식 (_workspace/{date}_badge_rules.md):
+Badge-catalog doc format (_workspace/{date}_badge_rules.md):
 
 ## BADGE_ID: first_run
-- 이름: 첫 발걸음
-- 조건: RunRecord 최초 1건 생성
-- 트리거: 세션 종료
-- 등급: bronze
+- Name: First Step
+- Condition: first RunRecord ever created
+- Trigger: session end
+- Grade: bronze
 
 ## BADGE_ID: cumulative_100km
-- 이름: 100km 클럽
-- 조건: user.totalDistanceMeters >= 100_000
-- 트리거: 누적 통계 갱신
-- 등급: gold
+- Name: 100km Club
+- Condition: user.totalDistanceMeters >= 100_000
+- Trigger: cumulative-stat update
+- Grade: gold
 ```
 
-## 2. 랭킹 알고리즘
+## 2. Ranking algorithm
 
-- **점수 산정**: 단순 누적거리 기준이 기본. 페이스 가중치를 넣을 경우 공식을 명시적으로 문서화한다(예: `score = distance_km * pace_factor`).
-- **이중 구조 (Runnit 확정 사양)**: **티어 = 분기 시즌 누적 거리 절대평가**, **주간 랭킹 = 티어 내 상대평가**. 신규 사용자가 항상 하위에 머무는 문제를 티어 분리가 해결하므로, 랭킹 점수식에 형평성 보정을 추가하지 않는다(이중 보정). 상세는 `docs/PRD.md` §5.3~§5.4.
-- **동점 처리**: 반드시 명시적 규칙을 정한다. 예: 점수 동일 시 해당 점수를 먼저 달성한 시각(timestamp) 기준 오름차순.
-- **스코프**: Runnit MVP의 랭킹 스코프는 **티어 내 주간 랭킹 하나뿐**이다. 크루/지역 스코프는 P2이며 MVP에 넣지 않는다(PRD §5.9). 스코프를 늘릴 경우에만 스코프별 독립 캐시를 설계한다.
+- **Scoring**: plain cumulative distance is the default. If you add a pace weight, document the formula explicitly (e.g. `score = distance_km * pace_factor`).
+- **Dual structure (Runnit confirmed spec)**: **tier = absolute evaluation of cumulative season distance**, **weekly ranking = relative evaluation within the tier**. The tier split already solves the problem of new users always staying at the bottom, so do not add a fairness correction to the ranking score formula (double correction). Details in `docs/PRD.md` §5.3~§5.4.
+- **Tie-breaking**: always set an explicit rule. E.g. on equal score, ascending by the timestamp at which the score was first reached.
+- **Scope**: the Runnit MVP has exactly one ranking scope — **weekly ranking within tier**. Crew/regional scopes are P2 and not in the MVP (PRD §5.9). Design per-scope independent caches only if you add scopes.
 
-## 3. 레벨/포인트 시스템
+## 3. Level/point system
 
-- 러닝 1회 완주 시 기본 포인트 + 거리/페이스 보너스로 XP를 산정한다.
-- 레벨업 임계값은 지수적으로 증가시켜(예: `level_n_threshold = base * n^1.5`) 저레벨 구간의 레벨업 빈도를 높여 초기 리텐션을 확보한다.
+- On completing a run, compute XP as base points + distance/pace bonus.
+- Increase level-up thresholds exponentially (e.g. `level_n_threshold = base * n^1.5`) to raise level-up frequency in the low-level range and secure early retention.
 
-## 4. 챌린지 시스템
+## 4. Challenge system
 
-개인 기간 한정 목표(예: "이번 달 50km 달성")를 설계할 때는 (⚠️ 크루 대항전은 P2, MVP 제외):
-- 챌린지 시작/종료 시각을 명시하고, 챌린지 종료 후에도 참여 기록은 보존한다(재계산 불가능하게 삭제하지 않는다).
-- 챌린지 진행률은 랭킹과 마찬가지로 실시간 전체 재계산이 아닌 캐시 전략을 backend-engineer와 협의한다.
+When designing individual time-boxed goals (e.g. "reach 50km this month") (⚠️ crew battles are P2, excluded from the MVP):
+- State the challenge start/end time, and preserve participation records even after the challenge ends (do not delete them in a way that makes recomputation impossible).
+- Agree with the backend-engineer on a cache strategy for challenge progress, same as ranking — not real-time full recomputation.
 
-## 5. 부정행위 방지 원칙
+## 5. Anti-cheat principle
 
-클라이언트가 계산한 뱃지 획득/점수는 **잠정치**다. GPS 조작이나 비현실적 페이스(예: 도보 앱인데 시속 40km 기록)로 부정 획득이 가능하므로, 판정 로직을 순수 함수로 작성해 backend-engineer가 서버에서 원시 `RunRecord`를 재계산·재검증할 수 있게 한다. 서버 검증에 실패한 기록은 "검증 대기" 상태로 표시하고 자동 삭제하지 않는다 — 오탐(false positive)일 수 있으므로 사용자에게 설명 없이 박탈하지 않는다.
+Badge earns / scores computed on the client are **provisional**. Fraudulent earns are possible via GPS manipulation or unrealistic pace (e.g. a walking app logging 40 km/h), so write the evaluation logic as pure functions so the backend-engineer can recompute and re-validate from the raw `RunRecord` on the server. Records that fail server validation are shown in a "pending verification" state and not auto-deleted — they may be false positives, so do not revoke without explanation to the user.

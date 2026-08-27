@@ -1,20 +1,26 @@
-## 하네스: Runnit 러닝 앱 개발
+## Harness: Runnit running-app development
 
-**트리거:** 이 앱의 기능 개발/구현/수정 요청(GPS 트래킹, 웨어러블 연동, 러닝 기록, 티어/랭킹, 뱃지·레벨, Flutter 화면, Supabase 백엔드 등) 시 `running-app-builder` 스킬을 사용하라. 단순 질문은 직접 응답 가능.
+**Trigger:** For any feature development / implementation / modification request for this app (GPS tracking, wearable integration, run records, tier/ranking, badge·level, Flutter screens, Supabase backend, etc.), use the `running-app-builder` skill. Simple questions may be answered directly.
 
-## 참조 문서 — 필요한 섹션을 직접 읽는다
+## Language policy
 
-| 문서 | 무엇을 담고 있나 | 언제 읽나 |
-|------|----------------|----------|
-| [docs/PRD.md](docs/PRD.md) | **제품 사양의 유일한 기준.** 기능·정책·우선순위 | 기능을 설계·구현·검증하기 전 항상 |
-| [docs/BRD.md](docs/BRD.md) | 사업 배경·수익 모델·GTM·손익 구조 | 수익화·성장 레버 관련 판단 시 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 시스템 아키텍처 — 클라이언트/백엔드 구조, 데이터 흐름, 모듈 경계 | 구조·상태관리·모듈 경계 결정 시 |
-| [docs/TRD.md](docs/TRD.md) | 데이터 모델 코드, Supabase DDL, API/검증 규칙 스펙 | 스키마·API·검증 로직 구현 시 |
-| [docs/HARNESS.md](docs/HARNESS.md) | 하네스 목표, 핵심 구조 요약(티어/랭킹/뱃지), 폐기된 전제, 변경 이력 | 하네스 배경·이력 확인 시 |
+- **Harness files are written in English** — this file, `.claude/agents/*`, `.claude/skills/*`, and `docs/HARNESS.md`. When you log or update anything in these files, write it in English.
+- **Product docs stay in Korean** — `docs/PRD.md`, `docs/BRD.md`, `docs/ARCHITECTURE.md`, `docs/TRD.md`.
+- **Always reply to the user in Korean**, regardless of which document you read.
 
-## 규칙
+## Reference documents — read the section you need directly
 
-1. 기능을 설계·구현·검증하기 전에 **반드시 `docs/PRD.md`의 관련 섹션을 읽는다.** 아키텍처·스키마 작업이면 ARCHITECTURE/TRD의 관련 섹션도 함께 확인한다.
-2. 하네스 문서(에이전트·스킬·이 파일)나 ARCHITECTURE/TRD의 서술이 PRD와 충돌하면 **PRD가 우선한다.**
-3. ARCHITECTURE/TRD는 사양을 새로 정의하지 않고 PRD를 구현 구조로 번역한 살아있는 문서다. 구현이 발전해 이들과 달라지면(스키마 확장, 배치 전략 변경 등) 문서를 갱신해 코드와 어긋나지 않게 한다.
-4. PRD에 없는 신규 기능을 구현했거나 확정 사양을 바꿔야 하면, **사용자 확인 후 `docs/PRD.md`를 갱신하고 변경 이력에 기록한다.** 하네스 구성 변경은 `docs/HARNESS.md` 변경 이력에 기록한다.
+| Document | What it holds | When to read |
+|----------|---------------|--------------|
+| [docs/PRD.md](docs/PRD.md) | **The single source of truth for product spec.** Features, policy, priorities | Always, before designing / implementing / verifying a feature |
+| [docs/BRD.md](docs/BRD.md) | Business context, revenue model, GTM, P&L structure | When judging monetization / growth-lever questions |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture — client/backend structure, data flow, module boundaries | When deciding structure, state management, module boundaries |
+| [docs/TRD.md](docs/TRD.md) | Data-model code, Supabase DDL, API / validation-rule specs | When implementing schema, API, validation logic |
+| [docs/HARNESS.md](docs/HARNESS.md) | Harness goal, core-structure summary (tier/ranking/badge), retired assumptions, change history | When checking harness background / history |
+
+## Rules
+
+1. Before designing / implementing / verifying a feature, **you MUST read the relevant section of `docs/PRD.md`.** For architecture / schema work, also check the relevant sections of ARCHITECTURE / TRD.
+2. When a harness file (agents, skills, this file) or ARCHITECTURE / TRD conflicts with the PRD, **the PRD wins.**
+3. ARCHITECTURE / TRD do not define new spec — they translate the PRD into implementation structure and are living documents. When the implementation evolves past them (schema extensions, batch-strategy changes, etc.), update the documents so code and docs do not drift apart.
+4. If you implement a new feature not in the PRD, or need to change a confirmed spec, **get the user's confirmation, then update `docs/PRD.md` and record it in the change history.** Record harness-configuration changes in the `docs/HARNESS.md` change history.
