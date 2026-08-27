@@ -265,12 +265,18 @@ class _DistanceBasis {
     return result;
   }
 
-  /// 시각이 **엄격히 증가**하는 샘플만 남긴다. 같은 초의 중복 샘플이 섞이면
-  /// 보간 분모가 0이 되고, 역행 샘플은 누적거리를 되감는다.
+  /// 샘플을 시각순으로 **정렬**한 뒤, 시각이 엄격히 증가하는 것만 남긴다.
+  ///
+  /// 서버 `_run_km_split_seconds`는 `order by cumulative_distance_meters,
+  /// timestamp`로 정렬해 전부 쓴다. 여기서도 먼저 정렬해 순서가 뒤바뀐 임포트
+  /// 샘플(워치 동기화 등)이 서버와 다른 결과를 내지 않게 한다. 다만 같은
+  /// 시각의 중복 샘플은 버린다 — 보간 분모(시간 차)가 0이 되기 때문이다.
   static List<RunSample> _timeOrdered(Iterable<RunSample> samples) {
+    final sorted = samples.toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final result = <RunSample>[];
     DateTime? last;
-    for (final s in samples) {
+    for (final s in sorted) {
       if (last != null && !s.timestamp.isAfter(last)) continue;
       result.add(s);
       last = s.timestamp;

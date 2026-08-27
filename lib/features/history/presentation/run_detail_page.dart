@@ -154,14 +154,25 @@ class _DetailBody extends ConsumerWidget {
             ),
           ),
         ],
-        ..._lapSections(splits, hasRoute: hasRoute),
+        ..._lapSections(
+          splits,
+          hasRoute: hasRoute,
+          // 랩 시간은 샘플 타임스탬프 차이(= 경과 시간, 일시정지 포함)라
+          // 위 "평균 페이스"(이동 시간 기준)와 기준이 다르다. 일시정지가
+          // 길었던 러닝에서만 눈에 띄므로 그때만 한 줄로 밝힌다.
+          paused: record.elapsedSeconds - record.movingSeconds > 60,
+        ),
       ],
     );
   }
 
   /// 랩·그래프 영역. 데이터가 없을 때 제목만 남은 빈 섹션을 만들지 않는다 —
   /// 대신 왜 없는지 한 줄로 설명한다.
-  List<Widget> _lapSections(List<LapSplit> splits, {required bool hasRoute}) {
+  List<Widget> _lapSections(
+    List<LapSplit> splits, {
+    required bool hasRoute,
+    required bool paused,
+  }) {
     if (splits.isEmpty) {
       return [
         const SizedBox(height: AppTokens.s24),
@@ -177,6 +188,13 @@ class _DetailBody extends ConsumerWidget {
     return [
       const SizedBox(height: AppTokens.s32),
       _Section(title: '구간 (1km)', child: LapTable(splits: splits)),
+      if (paused) ...[
+        const SizedBox(height: AppTokens.s8),
+        const Text(
+          '구간 시간은 일시정지를 포함한 경과 시간 기준이에요.',
+          style: TextStyle(fontSize: 12, color: RunDetailPage._mutedText),
+        ),
+      ],
       if (PaceChart.canRender(splits)) ...[
         const SizedBox(height: AppTokens.s32),
         _Section(title: '페이스 그래프', child: PaceChart(splits: splits)),

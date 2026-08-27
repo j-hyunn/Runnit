@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runnit/features/history/domain/lap_splits.dart';
 import 'package:runnit/models/models.dart';
@@ -245,19 +247,34 @@ void main() {
       expect(computeLapSplits(record([cum(0, 0), cum(80, 30)])), isEmpty);
     });
 
-    test('시각이 역행하거나 중복된 샘플은 버린다', () {
+    test('같은 시각의 중복 샘플은 버린다 (보간 분모 0 방지)', () {
       final splits = computeLapSplits(
         record([
           cum(0, 0),
+          cum(400, 150), // 같은 초 중복 — 하나만 남는다
           cum(500, 150),
-          cum(400, 150), // 같은 초 — 버림
-          cum(300, 100), // 역행 — 버림
           cum(1000, 300),
         ]),
       );
 
       expect(splits, hasLength(1));
       expect(splits.single.durationSeconds, 300);
+    });
+
+    test('순서가 뒤섞인 샘플은 버리지 않고 정렬해서 쓴다 (서버 order by와 동일, I-6)', () {
+      final ordered = [
+        for (var i = 0; i <= 20; i++) cum(i * 100.0, i * 30),
+      ];
+      final shuffled = [...ordered]..shuffle(Random(7));
+
+      final a = computeLapSplits(record(ordered));
+      final b = computeLapSplits(record(shuffled));
+
+      expect(b, hasLength(a.length));
+      for (var i = 0; i < a.length; i++) {
+        expect(b[i].durationSeconds, a[i].durationSeconds);
+        expect(b[i].distanceMeters, a[i].distanceMeters);
+      }
     });
   });
 
