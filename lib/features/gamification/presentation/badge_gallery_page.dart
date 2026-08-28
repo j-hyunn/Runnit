@@ -59,9 +59,6 @@ class _GalleryBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final earnedCount = signedIn
-        ? progressList.where((p) => p.isEarned).length
-        : 0;
     final loadingEarned = signedIn && ref.watch(userBadgesProvider).isLoading;
 
     return CustomScrollView(
@@ -76,8 +73,7 @@ class _GalleryBody extends ConsumerWidget {
           sliver: SliverToBoxAdapter(
             child: signedIn
                 ? _EarnedSummary(
-                    total: progressList.length,
-                    earned: earnedCount,
+                    progressList: progressList,
                     loading: loadingEarned,
                   )
                 : const GuestLoginPromptCard(
@@ -367,22 +363,36 @@ class _CategorySectionHeader extends StatelessWidget {
   }
 }
 
+/// 획득 요약 — **영구 뱃지**(한 번 얻으면 유지)와 **시즌 뱃지**(시즌 종료 시
+/// 초기화)를 나눠서 각각 획득 개수를 보여준다. 두 축은 리셋 주기가 달라
+/// 하나로 합산하면 "이번 시즌에 뭘 얼마나 모았는지"가 묻힌다(PRD §5.5, §8.5).
+///
+/// 시즌 뱃지는 **이번 시즌 인스턴스**(`badge.seasonId == Season.currentId()`)만
+/// 센다 — 지난 시즌에 획득한 뱃지는 역대 기록(HI-06)의 몫이지 이번 시즌
+/// 진행 현황이 아니다.
 class _EarnedSummary extends StatelessWidget {
   const _EarnedSummary({
-    required this.total,
-    required this.earned,
+    required this.progressList,
     required this.loading,
   });
 
-  final int total;
-  final int earned;
+  final List<BadgeProgress> progressList;
   final bool loading;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    final ratio = total == 0 ? 0.0 : earned / total;
+    final currentSeasonId = Season.currentId();
+
+    final permanent = progressList
+        .where((p) => p.badge.scope == BadgeScope.permanent)
+        .toList();
+    final seasonal = progressList
+        .where((p) =>
+            p.badge.scope == BadgeScope.seasonal &&
+            p.badge.seasonId == currentSeasonId)
+        .toList();
 
     return Container(
       padding: const EdgeInsets.all(AppTokens.s16),
@@ -393,40 +403,98 @@ class _EarnedSummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text('내 뱃지',
-                  style:
-                      text.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-              const Spacer(),
-              if (loading)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                Text('$earned / $total',
-                    style: text.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700)),
-            ],
+          Text('내 뱃지',
+              style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: AppTokens.s16),
+          _SummaryRow(
+            label: '영구 뱃지',
+            caption: '한 번 얻으면 계속 유지돼요',
+            earned: permanent.where((p) => p.isEarned).length,
+            total: permanent.length,
+            color: scheme.primary,
+            loading: loading,
           ),
-          const SizedBox(height: AppTokens.s12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppTokens.rPill),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: loading ? 0 : ratio),
-              duration: const Duration(milliseconds: 600),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, _) => LinearProgressIndicator(
-                value: value,
-                minHeight: 8,
-                backgroundColor: scheme.surfaceContainerHighest,
-              ),
-            ),
+          const SizedBox(height: AppTokens.s16),
+          _SummaryRow(
+            label: '시즌 뱃지',
+            caption: seasonal.isEmpty
+                ? '이번 시즌 뱃지가 아직 없어요'
+                : '시즌이 끝나면 초기화돼요',
+            earned: seasonal.where((p) => p.isEarned).length,
+            total: seasonal.length,
+            color: AppTokens.tierSpecial,
+            loading: loading,
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({
+    required this.label,
+    required this.caption,
+    required this.earned,
+    required this.total,
+    required this.color,
+    required this.loading,
+  });
+
+  final String label;
+  final String caption;
+  final int earned;
+  final int total;
+  final Color color;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final ratio = total == 0 ? 0.0 : earned / total;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label,
+                style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+            const Spacer(),
+            if (loading)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Text('$earned / $total',
+                  style:
+                      text.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+          ],
+        ),
+        const SizedBox(height: AppTokens.s8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(AppTokens.rPill),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: loading ? 0 : ratio),
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeOutCubic,
+            builder: (context, value, _) => LinearProgressIndicator(
+              value: value,
+              minHeight: 8,
+              backgroundColor: scheme.surfaceContainerHighest,
+              color: color,
+            ),
+          ),
+        ),
+        const SizedBox(height: AppTokens.s4),
+        Text(
+          caption,
+          style: text.bodySmall?.copyWith(color: const Color(0xFF9B9B9B)),
+        ),
+      ],
     );
   }
 }
