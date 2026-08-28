@@ -8,6 +8,7 @@ import '../../../core/utils/formatters.dart';
 import '../../../models/models.dart';
 import '../../../core/widgets/app_shell.dart';
 import '../../auth/presentation/widgets/guest_login_prompt.dart';
+import '../../gamification/domain/level_curve.dart';
 import '../../ranking/data/ranking_providers.dart';
 import '../../sharing/data/share_providers.dart';
 import '../../sharing/presentation/share_card_sheet.dart';
@@ -282,8 +283,68 @@ class _WeeklyTierCard extends ConsumerWidget {
               color: const Color(0xFF616161),
             ),
           ),
+          // 시즌 티어(리셋되는 상대 진행)와 별개로, 리셋되지 않는 영구 루프인
+          // 레벨/XP 진행을 같은 카드에서 함께 보여준다(PRD §4.3·GM-04).
+          const SizedBox(height: AppTokens.s16),
+          const Divider(height: 1, color: Color(0xFFEEEEEE)),
+          const SizedBox(height: AppTokens.s16),
+          _LevelProgress(level: profile.level, totalXp: profile.totalXp),
         ],
       ),
+    );
+  }
+}
+
+/// 홈 시즌 카드 하단의 레벨/XP 진행률 — 티어 바 아래에 같은 규격으로 얹는다.
+/// 레벨 숫자는 서버가 확정한 [level]을 그대로 쓰고, 구간 진행률·남은 XP만
+/// [LevelCurve]로 계산한다(서버 왕복 없이 문구를 만들기 위함).
+class _LevelProgress extends StatelessWidget {
+  const _LevelProgress({required this.level, required this.totalXp});
+
+  final int level;
+  final int totalXp;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final atMax = LevelCurve.isMaxLevel(level);
+    final progress = LevelCurve.levelProgress(totalXp, level: level);
+    final toNext = LevelCurve.xpToNextLevel(totalXp, level: level);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Lv.$level',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+              ),
+            ),
+            Text(
+              atMax || toNext == null ? '최고 레벨 달성' : '다음 레벨까지 $toNext XP',
+              style: text.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF616161),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppTokens.s8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(AppTokens.rPill),
+          child: LinearProgressIndicator(
+            value: atMax ? 1.0 : progress,
+            minHeight: 11,
+            backgroundColor: AppTokens.levelXp.withValues(alpha: 0.12),
+            color: AppTokens.levelXp,
+          ),
+        ),
+      ],
     );
   }
 }
