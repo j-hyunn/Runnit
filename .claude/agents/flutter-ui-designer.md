@@ -31,7 +31,7 @@ The final authority for data shapes is `docs/TRD.md` §3 (Dart model definitions
 ## Core responsibilities
 1. Design and implement the core screens: run-tracking screen (live map + stats), record detail, history, ranking/leaderboard, badge gallery, profile
 2. Establish a design system (color/typography/spacing tokens) and apply it consistently
-3. Route visualization with a map widget (flutter_map or google_maps_flutter)
+3. Route visualization with the map widget (`flutter_naver_map` — PRD §7). Never call `NaverMap` directly from a screen: go through the `mapSurfaceBuilderProvider` injection point in `lib/core/map/map_surface.dart`, and keep `latlong2` `LatLng` as the app-internal coordinate model, converting to `NLatLng` only at that boundary (`lib/core/map/map_geo.dart`)
 4. Chart/stat visualization (fl_chart etc.) for pace/distance trends
 5. Gamification presentation — badge-earned animations, level-up effects, and other micro-interactions that reinforce motivation
 

@@ -1,20 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../../core/map/map_geo.dart';
+import '../../../../core/map/map_surface.dart';
 import '../../../../core/theme/app_tokens.dart';
-import '../../../../core/widgets/osm_attribution.dart';
 import '../tracking_ui_providers.dart';
 
-/// 진행 중 경로를 그리는 지도.
+/// 진행 중 경로를 그리는 지도 (Naver Map).
 ///
 /// ## 리빌드 범위
-/// 이 위젯은 [liveRouteProvider] **하나만** 구독한다. 통계 텍스트(1초마다 갱신되는
-/// `activeRunProvider`)와 분리돼 있으므로, 매 초 타이머가 흘러도 지도 타일은
-/// 다시 그려지지 않는다. 반대로 새 GPS 샘플이 와도 통계 패널은 건드리지 않는다.
+/// 이 위젯의 `build`는 [liveRouteProvider]를 **`watch`하지 않는다.** GPS 샘플은
+/// `ref.listen`으로 받아 폴리라인·마커·카메라를 **명령형으로** 갱신한다 —
+/// 초당 몇 번씩 오는 좌표 때문에 네이티브 지도 뷰가 재생성되면 프레임이 날아간다.
+/// "GPS 신호를 잡는 중" 안내만 [_WaitingForFixOverlay]라는 별도 구독 단위로
+/// 떼어 두어, 첫 fix가 들어올 때 그 조각만 사라진다.
 ///
-/// 지도 타일은 네트워크가 없으면(지하 주차장·기내 등) 회색으로 남지만 폴리라인과
+/// 통계 텍스트(1초마다 갱신되는 `activeRunProvider`)와도 분리돼 있어, 매 초
+/// 타이머가 흘러도 지도는 다시 그려지지 않는다.
+///
+/// 지도 타일은 네트워크가 없으면(지하 주차장·기내 등) 비어 보이지만 폴리라인과
 /// 통계는 그대로 동작한다 — 트래킹이 타일 로딩에 종속되지 않게 한 것이다.
 class RunMapView extends ConsumerStatefulWidget {
   const RunMapView({super.key, this.dimmed = false});
@@ -27,121 +33,148 @@ class RunMapView extends ConsumerStatefulWidget {
 }
 
 class _RunMapViewState extends ConsumerState<RunMapView> {
-  final MapController _controller = MapController();
-  bool _mapReady = false;
+  static const String _routeOverlayId = 'live-route';
+  static const String _positionOverlayId = 'live-position';
 
   /// 서울 시청. 첫 GPS fix가 오기 전 잠깐 보여줄 초기 카메라일 뿐이며,
   /// fix가 들어오는 순간 사용자 위치로 이동한다.
   static const LatLng _fallbackCenter = LatLng(37.5665, 126.9780);
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  NaverMapController? _controller;
+  NPolylineOverlay? _routeLine;
+  NMarker? _positionMarker;
 
-  void _follow(List<LatLng> route) {
-    if (!_mapReady || route.isEmpty) return;
-    // 카메라 이동은 프레임 도중 호출하면 안 된다(빌드 중 상태 변경).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _controller.move(route.last, _controller.camera.zoom);
-    });
-  }
+  /// 마커 아이콘을 굽는 작업이 여러 번 겹치지 않게 막는다.
+  bool _buildingMarker = false;
+
+  /// 첫 프레임의 카메라 위치. 매 빌드마다 옵션 인스턴스를 새로 만들면
+  /// (`NaverMapViewOptions`는 `==`가 없다) 옵션 갱신이 계속 네이티브로 날아간다.
+  late final LatLng _initialCenter =
+      ref.read(liveRouteProvider).lastOrNull ?? _fallbackCenter;
+
+  late final NaverMapViewOptions _normalOptions = RunMapStyle.baseOptions(
+    initialCameraPosition: NCameraPosition(
+      target: _initialCenter.toNaver(),
+      zoom: 16,
+    ),
+  );
+
+  /// 일시정지 표시는 **화면을 덮는 딤 대신 지도 자체를 어둡게** 해서 만든다.
+  /// 전면 딤 오버레이는 네이버 SDK가 그리는 로고·저작권 표기까지 덮어버리는데,
+  /// 그 표기는 가리면 안 된다(이용약관).
+  late final NaverMapViewOptions _dimmedOptions = RunMapStyle.baseOptions(
+    initialCameraPosition: NCameraPosition(
+      target: _initialCenter.toNaver(),
+      zoom: 16,
+    ),
+    lightness: -0.35,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final route = ref.watch(liveRouteProvider);
-    _follow(route);
+    // watch가 아니라 listen — 좌표가 와도 이 위젯은 리빌드되지 않는다.
+    ref.listen<List<LatLng>>(liveRouteProvider, (_, next) => _syncRoute(next));
+
+    final builder = ref.watch(mapSurfaceBuilderProvider);
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        FlutterMap(
-          mapController: _controller,
-          options: MapOptions(
-            initialCenter: route.isEmpty ? _fallbackCenter : route.last,
-            initialZoom: 16,
-            // 달리는 중에 지도를 회전시키면 방향 감각이 무너진다.
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
-            ),
-            onMapReady: () => _mapReady = true,
+        builder(
+          MapSurfaceSpec(
+            options: widget.dimmed ? _dimmedOptions : _normalOptions,
+            onMapReady: _onMapReady,
           ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.runnit.app',
-              tileProvider: ref.watch(mapTileProviderOverride),
-            ),
-            if (route.length >= 2)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: route,
-                    strokeWidth: 6,
-                    color: scheme.primary,
-                    borderStrokeWidth: 2,
-                    borderColor: scheme.onPrimary,
-                  ),
-                ],
-              ),
-            if (route.isNotEmpty)
-              MarkerLayer(
-                markers: [
-                  Marker(
-                    point: route.last,
-                    width: 22,
-                    height: 22,
-                    child: _CurrentPositionDot(color: scheme.primary),
-                  ),
-                ],
-              ),
-          ],
         ),
-        if (route.isEmpty) const _WaitingForFixOverlay(),
-        if (widget.dimmed)
-          IgnorePointer(
-            child: ColoredBox(color: scheme.surface.withValues(alpha: 0.45)),
-          ),
-        // OSM 타일 이용 정책상 필수. 딤 오버레이 위에 둬서 일시정지 중에도 읽힌다.
-        const Align(
-          alignment: Alignment.bottomRight,
-          child: OsmAttribution(),
-        ),
+        const _WaitingForFixOverlay(),
       ],
     );
   }
-}
 
-class _CurrentPositionDot extends StatelessWidget {
-  const _CurrentPositionDot({required this.color});
+  void _onMapReady(NaverMapController controller) {
+    _controller = controller;
+    _syncRoute(ref.read(liveRouteProvider));
+  }
 
-  final Color color;
+  /// 폴리라인·현재 위치 마커·카메라를 한 번에 맞춘다.
+  Future<void> _syncRoute(List<LatLng> route) async {
+    final controller = _controller;
+    if (controller == null || route.isEmpty) return;
 
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 3),
-        boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.4), blurRadius: 8),
-        ],
-      ),
-    );
+    final line = _routeLine;
+    if (route.length >= 2) {
+      if (line == null) {
+        final created = RunMapStyle.routeLine(
+          id: _routeOverlayId,
+          route: route,
+          color: Theme.of(context).colorScheme.primary,
+          width: RunMapStyle.liveStrokeWidth,
+        );
+        _routeLine = created;
+        await controller.addOverlay(created);
+      } else {
+        // 오버레이를 다시 만들지 않고 좌표만 갈아끼운다 — 매 샘플마다
+        // add/delete를 반복하면 경로가 깜빡인다.
+        line.setCoords(route.toNaverCoords());
+      }
+    }
+
+    await _syncPositionMarker(controller, route.last);
+
+    // 카메라 이동은 빌드 중에 호출하면 안 된다(빌드 도중 상태 변경).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // zoom을 넘기지 않으면 사용자가 맞춰 둔 줌 배율이 유지된다.
+      controller.updateCamera(
+        NCameraUpdate.scrollAndZoomTo(target: route.last.toNaver()),
+      );
+    });
+  }
+
+  Future<void> _syncPositionMarker(
+    NaverMapController controller,
+    LatLng point,
+  ) async {
+    final marker = _positionMarker;
+    if (marker != null) {
+      marker.setPosition(point.toNaver());
+      return;
+    }
+    if (_buildingMarker) return;
+    _buildingMarker = true;
+    try {
+      final created = await RunMapStyle.dotMarker(
+        context: context,
+        id: _positionOverlayId,
+        point: point,
+        color: Theme.of(context).colorScheme.primary,
+        diameter: 22,
+        glow: true,
+      );
+      if (!mounted) return;
+      _positionMarker = created;
+      await controller.addOverlay(created);
+    } finally {
+      _buildingMarker = false;
+    }
   }
 }
 
 /// GPS가 첫 좌표를 물기 전 몇 초 동안 지도가 텅 비어 보이는 구간을 설명한다.
 /// 아무 표시가 없으면 사용자는 "기록이 안 되고 있다"고 오해한다.
-class _WaitingForFixOverlay extends StatelessWidget {
+///
+/// 지도 본체와 분리된 구독 단위다 — 첫 fix가 들어오면 이 조각만 사라지고
+/// 네이티브 지도 뷰는 건드리지 않는다.
+class _WaitingForFixOverlay extends ConsumerWidget {
   const _WaitingForFixOverlay();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasFix = ref.watch(
+      liveRouteProvider.select((route) => route.isNotEmpty),
+    );
+    if (hasFix) return const SizedBox.shrink();
+
     final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Container(
@@ -169,12 +202,6 @@ class _WaitingForFixOverlay extends StatelessWidget {
     );
   }
 }
-
-/// 지도 타일 소스 주입점. 기본은 OSM 네트워크 타일이다.
-///
-/// 위젯 테스트에서는 이 provider를 override해 네트워크 타일 요청을 끊는다 —
-/// 그러지 않으면 타일 요청 재시도 때문에 `pumpAndSettle`이 영영 끝나지 않는다.
-final mapTileProviderOverride = Provider<TileProvider?>((ref) => null);
 
 /// 실내 러닝처럼 좌표가 없는 활동에서 지도 자리를 대신한다.
 class RunMapUnavailable extends StatelessWidget {

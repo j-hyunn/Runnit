@@ -1,4 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ── 네트워크 ────────────────────────────────────────────────────
+         debug/profile 매니페스트에만 있던 INTERNET을 main으로 올렸다.
+         릴리즈 빌드에는 병합되지 않아 지도 타일·Supabase 요청이 전부
+         막힌다(디버그에서는 멀쩡해 보여 놓치기 쉬운 함정).
+         ACCESS_NETWORK_STATE는 네이버 지도 SDK가 오프라인 판정에 쓴다. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- ── 지도 (flutter_naver_map / PRD §7) ───────────────────────────
+         ⚠️ NCP Client ID는 여기 meta-data가 아니라 **Dart에서** 넘긴다 —
+         `lib/core/map/naver_map_config.dart`의 `initializeNaverMap()`이
+         `FlutterNaverMap().init(clientId: ...)`로 네이티브 SDK를 초기화한다
+         (1.3.1+ 신규 NCP 인증 방식). 매니페스트에 키를 심어도 읽지 않으므로
+         중복 선언하지 말 것. 최소 SDK 23은 `app/build.gradle.kts` 참조. -->
+
     <!-- ── 위치 (features/tracking) ────────────────────────────────────
          COARSE/FINE는 포그라운드 위치. BACKGROUND는 Android 10(API 29)+에서
          분리된 별도 권한으로, GeolocatorRunTrackingService가 "앱 사용 중" 승인

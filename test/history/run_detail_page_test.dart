@@ -1,13 +1,10 @@
 import 'dart:async';
 
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:runnit/core/map/map_surface.dart';
 import 'package:runnit/core/providers/repository_providers.dart';
 import 'package:runnit/core/repositories/run_repository.dart';
 import 'package:runnit/core/theme/app_theme.dart';
@@ -75,8 +72,9 @@ void main() {
       ProviderScope(
         overrides: [
           runRepositoryProvider.overrideWithValue(repository),
-          // 실제 OSM 타일을 받아오면 재시도 루프가 pumpAndSettle을 끝내지 않는다.
-          mapTileProviderOverride.overrideWithValue(_StubTileProvider()),
+          // 네이버 지도는 초기화된 SDK와 네이티브 뷰를 요구한다. 위젯 테스트에는
+          // 둘 다 없으므로 지도 표면을 스텁으로 갈아끼운다.
+          mapSurfaceBuilderProvider.overrideWithValue(stubMapSurfaceBuilder),
         ],
         child: MaterialApp(
           theme: AppTheme.light(),
@@ -262,16 +260,3 @@ class _FakeRunRepository implements RunRepository {
 }
 
 enum _Mode { value, failing, pending }
-
-class _StubTileProvider extends TileProvider {
-  static final Uint8List _pixel = base64Decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  );
-
-  @override
-  ImageProvider<Object> getImage(
-    TileCoordinates coordinates,
-    TileLayer options,
-  ) =>
-      MemoryImage(_pixel);
-}

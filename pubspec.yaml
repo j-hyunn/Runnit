@@ -53,9 +53,14 @@ dependencies:
   shared_preferences: ^2.3.2
 
   # ── 지도 / 차트 ───────────────────────────────────────────
-  # flutter_map: API 키/과금 없이 시작 가능. 초기 단계 비용 0.
-  #   더 정교한 UX가 필요해지면 google_maps_flutter로 교체 (MapView 추상화 뒤에 격리).
-  flutter_map: ^7.0.2
+  # flutter_naver_map: PRD §7 확정 지도 SDK. 국내 지도 품질·무료 한도 우위.
+  #   NCP 클라이언트 ID가 필요하다 (`lib/core/map/naver_map_config.dart`).
+  #   글로벌 확장 시 다른 SDK로 교체할 수 있도록 지도 표면 생성을
+  #   `mapSurfaceBuilderProvider` 하나로 모아 격리했다.
+  flutter_naver_map: ^1.4.4
+  # latlong2: **앱 내부 표준 좌표 모델**. 도메인(공유 카드·폴리라인 디코딩·
+  #   집계)이 전부 이 타입에 묶여 있고, 지도 SDK의 NLatLng로는 지도 위젯
+  #   경계(`lib/core/map/map_geo.dart`)에서만 변환한다.
   latlong2: ^0.9.1
   # fl_chart: 페이스/고도/심박 추이 시각화.
   fl_chart: ^0.69.0
