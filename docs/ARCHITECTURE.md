@@ -2,11 +2,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.3 |
+| 문서 버전 | v0.4 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** Phase 0 산출물로 출발했으나 현재는 실제 코드(`lib/`, `supabase/migrations/`)를 따라간다. 구현이 발전하면 이 문서를 갱신한다(CLAUDE.md 규칙 3) |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), 실제 구현(`lib/`, `supabase/migrations/00~42`) |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.5 (확정), 실제 구현(`lib/`, `supabase/migrations/00~42`) |
 | 하위 문서 | [`docs/TRD.md`](./TRD.md) — 이 문서의 결정을 구현 가능한 스펙으로 세분화 |
 
 **변경 이력**
@@ -14,7 +14,8 @@
 |------|----------|
 | v0.1 | 최초 작성. `claude/phase-0-start` 브랜치에서 구성된 하네스(에이전트 6개·스킬 7개)에 이미 반영되어 있던 아키텍처 결정을 PRD v1.3 기준으로 정리·문서화. PRD §11의 Phase 0 산출물(아키텍처·데이터 모델·Supabase 스키마 확정)에 해당 |
 | v0.2 | **성취 축하 구조를 "두 소비 지점 + 억제 카운터"에서 "전역 풀페이지 단일 지점"으로 갱신**(§7.4.1, PRD v1.4·TRD §3.9.3). 요약 화면 인라인 축하와 `achievementCelebrationSuppressors`를 제거하고 `AchievementCelebrationHost` 하나가 항상 풀페이지(`rootNavigator` + `fullscreenDialog`)로 축하한다. 공유 카드(§3.1 파일 트리)도 같은 날 9:16 투명 오버레이로 최종 확정된 상태를 반영 |
-| v0.3 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** Phase 1~2 구현이 진행되면서 확정된 사실을 반영: (1) **백엔드는 Deno Edge Function을 쓰지 않는다** — 업로드는 `supabase_flutter`의 PostgREST 직접 upsert이고, 서버 검증·티어/랭킹/뱃지 판정·XP는 전부 **Postgres 트리거·함수**(마이그레이션 00~42)다(§2, §5, §8). (2) **지도는 `flutter_map`(OSM 타일)** — `flutter_naver_map`은 채택하지 않았다(§12-#2, PRD §7과 불일치 → 사용자 확인 대기). (3) **로컬 저장소 = drift 확정**(§9, §12-#1). (4) `run_samples`는 별도 테이블이 아니라 `runs.samples jsonb`로 확정(§12-#4). (5) 시즌은 `seasons` 테이블 대신 순수 계산 함수(`Season.idAt` / SQL `season_id_at`). 데이터 모델 필드 상세는 TRD §3 대신 `lib/models/*.dart`가 정본 |
+| v0.3 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** Phase 1~2 구현이 진행되면서 확정된 사실을 반영: (1) **백엔드는 Deno Edge Function을 쓰지 않는다** — 업로드는 `supabase_flutter`의 PostgREST 직접 upsert이고, 서버 검증·티어/랭킹/뱃지 판정·XP는 전부 **Postgres 트리거·함수**(마이그레이션 00~42)다(§2, §5, §8). (2) ~~지도는 `flutter_map`(OSM 타일)~~ — **v0.4에서 `flutter_naver_map`으로 교체돼 해소됨**(§12-#2). (3) **로컬 저장소 = drift 확정**(§9, §12-#1). (4) `run_samples`는 별도 테이블이 아니라 `runs.samples jsonb`로 확정(§12-#4). (5) 시즌은 `seasons` 테이블 대신 순수 계산 함수(`Season.idAt` / SQL `season_id_at`). 데이터 모델 필드 상세는 TRD §3 대신 `lib/models/*.dart`가 정본 |
+| v0.4 | **지도 SDK를 `flutter_map`(OSM 타일) → `flutter_naver_map`으로 교체**(2026-08-28, 사용자 결정). PRD §7과의 불일치(§12-#2)가 해소됐다. 앱 내부 표준 좌표 모델은 `latlong2`의 `LatLng`를 그대로 유지하고 (`share_card_builder`·`polyline_codec`·집계·히스토리 provider가 전부 이 타입에 묶여 있다), **지도 위젯 경계에서만** `NLatLng`로 변환한다(`lib/core/map/map_geo.dart`). 글로벌 확장 시 재교체 여지를 위해 지도 표면 생성을 `mapSurfaceBuilderProvider` 하나(`lib/core/map/map_surface.dart`)로 모아 격리했다 — 위젯 테스트도 이 주입점을 스텁으로 override한다(구 `mapTileProviderOverride` 제거). OSM 전용 `core/widgets/osm_attribution.dart`는 삭제 — 네이버 SDK가 로고·저작권을 자체 렌더하므로 일시정지 딤도 전면 오버레이 대신 지도 `lightness`로 처리해 로고를 가리지 않는다 |
 
 > 📌 **원천 우선순위**: 이 문서와 `docs/PRD.md`가 충돌하면 **PRD가 우선**한다. 이 문서는 PRD의 제품 사양을 구현 구조로 번역한 것이며, 사양 자체를 새로 정의하지 않는다.
 
@@ -51,7 +52,7 @@ flowchart LR
     subgraph External["외부 서비스"]
         Watch["Apple Watch\n(HKWorkoutSession)"]
         GarminApp["Garmin Connect 앱"]
-        OSM["OSM 타일 서버\n(flutter_map)"]
+        Naver["Naver Map SDK\n(flutter_naver_map)"]
         Social["소셜 로그인\n(Kakao — Apple/Google 미구현)"]
     end
 
@@ -68,7 +69,7 @@ flowchart LR
     GarminApp -->|"동기화(지연 있음)"| HC
     App -->|"health 패키지"| HK
     App -->|"health 패키지"| HC
-    App --> OSM
+    App -->|"지도 타일·인증(NCP)"| Naver
     App --> Social
     Social --> Auth
 
@@ -84,7 +85,7 @@ flowchart LR
 - Garmin은 Runnit과 직접 통신하지 않는다. **Garmin Connect → HealthKit/Health Connect → Runnit** 경로를 경유하므로, 아키텍처상 Runnit이 다뤄야 하는 외부 연동 표면은 사실상 **HealthKit/Health Connect 하나**로 수렴한다 (§6.2).
 - Supabase가 **단일 백엔드**다. 별도 마이크로서비스도, **Deno Edge Function도 두지 않는다.** 클라이언트는 `supabase_flutter`로 `runs` 등에 직접 upsert하고, 서버 검증·티어/랭킹/뱃지/XP 판정은 전부 **Postgres 트리거·함수**(마이그레이션 00~42)가 같은 트랜잭션 또는 `pg_cron` 배치로 처리한다 — 1인 개발 기준 운영 복잡도를 최소화하기 위한 선택. (이 문서 곳곳에 남아 있는 "Edge Function" 서술은 초기 설계 표현이며, 실제 구현 위치는 트리거/함수다.)
 - **푸시(FCM)와 Apple/Google 로그인은 아직 없다** — Phase 2 알림 모듈과 계정 모듈에서 붙인다. 로그인은 현재 카카오 OAuth 웹 플로우(`signInWithOAuth`)만 동작한다.
-- **지도는 `flutter_map` + OSM 타일**이다. PRD §7이 확정한 `flutter_naver_map`은 도입하지 않았다 — 이 불일치는 사용자 확인 후 PRD를 갱신하거나 지도 SDK를 교체해 해소해야 한다(§12-#2).
+- **지도는 `flutter_naver_map`이다. PRD §7과 일치한다.** 앱 내부 좌표는 `latlong2`의 `LatLng`로 유지하고, 지도 위젯 경계(`lib/core/map/`)에서만 `NLatLng`로 변환한다. NCP 클라이언트 ID는 `initializeNaverMap()`(`lib/core/map/naver_map_config.dart`)에서 주입한다.
 
 ---
 
@@ -100,6 +101,9 @@ lib/
     api/                    # Supabase 클라이언트 래퍼, wire_enums, realtime_refetch
     auth/                   # 카카오 OAuth 플로우, auth_controller/state/config
     config/  error/  providers/  theme/  utils/  widgets/
+    map/                    # 지도 SDK 경계 — map_surface(표면 주입점·공용 스타일),
+                            #   map_geo(latlong2 LatLng ↔ NLatLng 변환),
+                            #   naver_map_config(NCP 클라이언트 ID·초기화)
     repositories/           # run/user/ranking/gamification 리포지토리 인터페이스
     router/                 # app_router, route_access
     sync/                   # run_sync_coordinator — 오프라인 큐 동기화
@@ -501,7 +505,7 @@ flowchart LR
 | # | 이슈 | 현재 판단 | 상태 |
 |---|---|---|---|
 | ~~1~~ | ~~로컬 영속 저장소 (Hive / Drift / Isar / sqflite)~~ | **해소 — drift 확정·구현**(`lib/features/tracking/data/local_run_database.dart`). §9. | — |
-| 2 | 지도 SDK | **PRD §7은 `flutter_naver_map` 확정이나 실제 구현은 `flutter_map`(OSM 타일)이다.** Naver Map은 API 키·이용약관·쿼터 부담이 있고, 초기 개발/베타에는 OSM으로 충분하다는 판단으로 우선 `flutter_map`을 썼다. **PRD와의 불일치이므로 (a) 사용자 확인 후 PRD를 `flutter_map`으로 갱신하거나 (b) 국내 지도 품질이 필요한 시점에 `flutter_naver_map`으로 교체**해야 한다. | ⚠️ **사용자 결정 필요** |
+| ~~2~~ | ~~지도 SDK~~ | **해소(2026-08-28) — `flutter_naver_map` 채택 확정.** 사용자 결정. latlong2를 내부 좌표 모델로 유지하고 지도 위젯 경계에서 NLatLng로 변환. MapView 주입점 유지로 글로벌 확장 시 교체 여지 확보. | — |
 | ~~3~~ | ~~공유 카드(HI-08) 이미지 생성 방식~~ | **해소(2026-08-26) — 클라이언트 위젯 캡처 확정.** 디자인 시스템(뱃지 SVG·Pretendard·티어 색 토큰)이 전부 Flutter 자산이라 서버 렌더링은 두 번째 구현을 요구한다. TRD §3.9.2 / §14 #3 | — |
 | ~~4~~ | ~~`run_samples` 저장 방식 (jsonb vs 별도 테이블)~~ | **해소 — `runs.samples jsonb` 확정**(마이그레이션 01). 별도 테이블은 만들지 않았다. 대규모에서 분리 검토는 TRD §14 #2로 유지. | — |
 | 5 | P2(크루)·Phase 4(포인트) 스키마 확장 여지 | 테이블은 안 만들되 `runs.user_id`·`profiles.crew_id`·`ranking_scope='crew'`·`challenges` 등 확장 지점은 이미 자리 잡음. Phase 4 포인트는 `total_xp`와 이름을 분리해 충돌 방지(TRD §3.8.1). | 해당 Phase 착수 시 |
@@ -520,4 +524,3 @@ flowchart LR
 4. 과거 시즌 전체 랭킹, 역대 시즌 기록 화면(HI-06) UI 연결
 5. Phase 3: 성능·배터리·GPS 실기기 검증, 접근성, 스토어 심사, 클로즈드 베타
 
-**지도 SDK 불일치(§12-#2)는 착수 전 사용자 확인 대상.**

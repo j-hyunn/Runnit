@@ -2,11 +2,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.10 |
+| 문서 버전 | v0.11 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~42`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
-| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.4 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.3, 실제 구현(`lib/`, `supabase/migrations/`) |
+| 근거 문서 | [`docs/PRD.md`](./PRD.md) v1.5 (확정), [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) v0.4, 실제 구현(`lib/`, `supabase/migrations/`) |
 
 **변경 이력**
 | 버전 | 변경 내용 |
@@ -21,6 +21,7 @@
 | v0.8 | **공유 카드 규격 확정 — 9:16 투명 오버레이 스티커**(§3.9.2). 같은 날 16:9 가로 밴드로 바꿨다가, 사용자가 준 정확한 레퍼런스 이미지(9:16 세로, 투명 배경 + 흰색 콘텐츠, 그림자 없음)를 확인하고 되돌렸다 — 최종 확정은 **9:16, 배경/그림자/모서리 전부 없음, 세로 1열 중앙 정렬**(워드마크 → 시각 → 아트 → [성취 3종만 헤드라인] → 수치 스택), 기록 카드 수치 라벨은 레퍼런스 그대로 영문(`Distance`/`Pace`/`Time`). 규격 변경 히스토리 표는 §3.9.2 참조 |
 | v0.10 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** (1) §2 확정 스택을 실제 `pubspec.yaml`에 맞춤 — 지도 `flutter_naver_map` → **`flutter_map`+`latlong2`**(PRD §7과 불일치, ARCHITECTURE §12-#2), 로컬 저장소 `🔴 미정` → **drift 확정**, `riverpod_generator` 제거(수동 Provider), FCM `NT-01~08` → **미도입(Phase 2)**, 누락 패키지(`flutter_svg`/`share_plus`/`shared_preferences`/`intl`/`collection`/`uuid`/`logger`) 추가. (2) §3 상단에 "Dart 코드는 설계 스냅샷, 정본은 `lib/models/`" 노트 추가 — 실제 enum은 `RunRecordType`이 아니라 `ActivityType`+`RunStatus`+`SyncStatus`, 랭킹은 `RankingPeriod`/`RankingMetric`/`RankingScope` 4축. (3) **§6 "API / Edge Function 사양"은 폐기** — Deno Edge Function은 구현되지 않았고, 업로드는 PostgREST upsert + `runs` 트리거 체인이다(§6.0 노트). (4) §13 Phase 0 DoD를 실제 완료 상태로 갱신 |
 | v0.9 | **성취 축하 연출을 다이얼로그→풀페이지로 전환, 공유 버튼을 PB 전용으로 축소**(§3.9.3, PRD v1.4·HI-10). `AchievementCelebrationHost`가 `showDialog` 대신 `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute(fullscreenDialog: true)`로 진짜 풀페이지를 띄운다(하단 네비바 우회, §7 구조와 동일 패턴). 글로우 링·컨페티·엘라스틱 팝인으로 구성된 `_AchievementBurst` 애니메이션 신설. **일반 뱃지·티어 승급은 공유 버튼을 받지 않는다** — PB만 받는다(사용자 확정, 2026-08-27). `summary_achievements.dart`의 인라인 축하·억제 카운터(`achievementCelebrationSuppressors`)를 전부 제거 — 전역 호스트 하나가 유일한 소비 지점이 되면서 §14 #20(프레임 경합)이 원인 자체가 사라져 해소됨 |
+| v0.11 | **지도 SDK를 `flutter_map`(OSM 타일) → `flutter_naver_map`으로 교체**(2026-08-28, 사용자 결정, ARCHITECTURE v0.4 §12-#2 해소). §2 확정 스택의 지도 행 갱신. `latlong2`는 **앱 내부 표준 좌표 모델로 유지**하고 `NLatLng` 변환은 지도 위젯 경계(`lib/core/map/map_geo.dart`)에 가둔다. 지도 표면 생성은 `mapSurfaceBuilderProvider`(`lib/core/map/map_surface.dart`) 하나로 격리 — 글로벌 확장 시 SDK 교체 지점이자 위젯 테스트 스텁 주입점이다(`flutter_map`의 `TileProvider`에 묶여 있던 `mapTileProviderOverride`는 제거). OSM 전용 `core/widgets/osm_attribution.dart` 삭제(네이버 SDK가 로고·저작권 자체 렌더). NCP 클라이언트 ID는 플레이스홀더 상태 — 배포 전 교체 필요 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
 
@@ -48,7 +49,7 @@ PRD §7의 확정 스택을 실제 패키지 단위로 구체화한다.
 | 웨어러블 센서 | `health` | HealthKit(iOS)/Health Connect(Android) 통합 래퍼 |
 | 권한 | `permission_handler` | iOS/Android 권한 흐름 통합 |
 | 라우팅 | `go_router` | 딥링크(OAuth 콜백), 중첩 라우트(바텀 네비 shell) |
-| 지도 | **`flutter_map` + `latlong2`** | ⚠️ **PRD §7은 `flutter_naver_map` 확정이나 실제 구현은 `flutter_map`(OSM 타일)**. `run_map_view.dart`. 불일치 해소 필요 — ARCHITECTURE §12-#2 |
+| 지도 | **`flutter_naver_map`** + **`latlong2`**(앱 내부 좌표 모델) | PRD §7 확정 SDK. NCP 클라이언트 ID 필요(`core/map/naver_map_config.dart`). 좌표는 `latlong2`의 `LatLng`가 내부 표준이고 **지도 위젯 경계에서만** `NLatLng`로 변환한다(`core/map/map_geo.dart`). 표면 생성 주입점 `core/map/map_surface.dart`(교체 여지·테스트 스텁). `run_map_view.dart`(진행 중), `run_route_map.dart`(HI-02 정적 경로) |
 | 차트 | `fl_chart` | 월간 통계 막대(`monthly_chart.dart`). HI-02 페이스 그래프는 미구현 |
 | SVG | `flutter_svg` | 뱃지 아트·아이콘 |
 | 공유 | `share_plus` | 공유 시트(HI-08) |

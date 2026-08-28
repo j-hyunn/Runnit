@@ -95,7 +95,7 @@ Other core models:
 | State management | `flutter_riverpod` + `riverpod_generator` | see §2 |
 | Immutable models | `freezed` + `json_serializable` | see §3 |
 | Routing | `go_router` | deep links, nested routes |
-| Map | `flutter_map` (open source, no cost) or `google_maps_flutter` (richer UX, needs API key) | choose by budget / UX requirements |
+| Map | `flutter_naver_map` + `latlong2` | **Confirmed** (PRD §7, ARCHITECTURE v0.4). Needs an NCP client ID (`lib/core/map/naver_map_config.dart`). `latlong2` `LatLng` stays the app-internal coordinate model; convert to `NLatLng` only at the map-widget boundary, behind the `mapSurfaceBuilderProvider` injection point that keeps a later global-expansion SDK swap cheap |
 | Charts | `fl_chart` | pace/distance trend visualization |
 | Backend | Supabase (`supabase_flutter`) | Supabase MCP is connected in this environment, so agree with backend-engineer |
 

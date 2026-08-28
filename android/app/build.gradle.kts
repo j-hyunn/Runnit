@@ -19,7 +19,10 @@ android {
         applicationId = "com.runnit.runnit"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // flutter_naver_map(네이버 Mobile Dynamic Map SDK)은 Android 6.0(API 23)
+        // 이상을 요구한다. Flutter 기본값(flutter.minSdkVersion)이 그보다 낮으면
+        // 빌드가 병합 단계에서 깨지므로 명시적으로 올려 둔다.
+        minSdk = maxOf(flutter.minSdkVersion, 23)
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)

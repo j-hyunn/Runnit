@@ -1,13 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:runnit/core/auth/auth_providers.dart';
+import 'package:runnit/core/map/map_surface.dart';
 import 'package:runnit/core/error/failure.dart';
 import 'package:runnit/core/providers/repository_providers.dart';
 import 'package:runnit/core/repositories/run_repository.dart';
@@ -53,8 +51,10 @@ void main() {
           isAuthenticatedProvider.overrideWithValue(true),
           runTrackingServiceProvider.overrideWithValue(service),
           runRepositoryProvider.overrideWithValue(repository),
-          // OSM 타일을 실제로 받아오면 재시도 루프 때문에 pumpAndSettle이 끝나지 않는다.
-          mapTileProviderOverride.overrideWithValue(_StubTileProvider()),
+          // 네이버 지도는 NCP 클라이언트 ID로 초기화돼 있어야 렌더된다
+          // (`NaverMap.build()`가 assert로 시작한다). 위젯 테스트에는 네이티브
+          // 뷰도 키도 없으므로 지도 표면 자체를 스텁으로 갈아끼운다.
+          mapSurfaceBuilderProvider.overrideWithValue(stubMapSurfaceBuilder),
           ...extraOverrides,
         ],
         child: MaterialApp(
@@ -475,20 +475,6 @@ class FakeTrackingService implements RunTrackingService {
 
   @override
   Future<void> discard() async => discarded = true;
-}
-
-/// 네트워크 없이 즉시 해결되는 1×1 투명 타일.
-class _StubTileProvider extends TileProvider {
-  static final Uint8List _pixel = base64Decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  );
-
-  @override
-  ImageProvider<Object> getImage(
-    TileCoordinates coordinates,
-    TileLayer options,
-  ) =>
-      MemoryImage(_pixel);
 }
 
 class FakeRunRepository implements RunRepository {

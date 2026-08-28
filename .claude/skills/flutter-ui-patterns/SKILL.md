@@ -34,8 +34,12 @@ The map widget itself should avoid recomputing the whole polyline every frame �
 
 ## 2. Map route visualization
 
-- `flutter_map`: open source, no API key needed, shows the route via a polyline layer
-- `google_maps_flutter`: choose it if you need a richer UX (3D, indoor maps); API key and cost apply
+The map SDK is **`flutter_naver_map`** (PRD §7, confirmed 2026-08-28). Two rules:
+
+- **Never build `NaverMap` directly in a screen.** Go through `mapSurfaceBuilderProvider` (`lib/core/map/map_surface.dart`). It is the SDK-swap point for global expansion, and widget tests override it with `stubMapSurfaceBuilder` — `NaverMap.build()` starts with `assert(FlutterNaverMap.isInitialized)`, so an un-stubbed map fails in tests.
+- **`latlong2` `LatLng` is the app-internal coordinate model.** Domain code (route decoding, share card, aggregation) never sees `NLatLng`; convert only at the map-widget boundary via `lib/core/map/map_geo.dart`.
+
+Route/marker styling shared by the live and detail maps lives in `RunMapStyle`. Cache the `NaverMapViewOptions` instance in state — it has no `==`, so rebuilding it every frame pushes a redundant option update to the native view. Update the polyline with `setCoords` and the marker with `setPosition` rather than re-adding overlays, and remember the SDK renders its own logo/attribution: never cover it with a full-screen scrim (dim the map with the `lightness` option instead).
 
 Use the smoothed `RunSample` list from the gps-tracking-engineer directly for the route polyline — redrawing raw GPS points makes the map zigzag.
 
