@@ -195,7 +195,7 @@ class _HeaderIconButton extends StatelessWidget {
   }
 }
 
-/// Figma "My profile" 카드 — 아바타 + 이름/이메일 + 설정 아이콘, 아래 티어/러닝/포인트 3분할.
+/// Figma "My profile" 카드 — 아바타 + 이름/이메일 + 설정 아이콘, 아래 티어/러닝/레벨 3분할.
 class _ProfileCard extends StatelessWidget {
   const _ProfileCard({required this.profile, required this.email});
 
@@ -207,7 +207,9 @@ class _ProfileCard extends StatelessWidget {
     final tier = profile?.currentTier;
     final label = profile?.label ?? 'My profile';
     final runCount = profile?.totalRunCount ?? 0;
-    final points = profile?.totalXp ?? 0;
+    // 레벨은 서버가 totalXp에서 파생해 내려준 값(AppUser.level)을 그대로 쓴다.
+    // "포인트"는 PRD §5.6의 Phase 4 화폐라 MVP 프로필에 노출하지 않는다.
+    final level = profile?.level ?? 1;
 
     return Container(
       padding: const EdgeInsets.all(AppTokens.s16),
@@ -279,7 +281,7 @@ class _ProfileCard extends StatelessWidget {
                 child: _ProfileStat(label: '러닝', value: '$runCount'),
               ),
               Expanded(
-                child: _ProfileStat(label: '포인트', value: points > 0 ? '$points' : '-'),
+                child: _ProfileStat(label: '레벨', value: 'Lv.$level'),
               ),
             ],
           ),
