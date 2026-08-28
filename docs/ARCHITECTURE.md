@@ -85,7 +85,7 @@ flowchart LR
 **핵심 관찰**
 - Garmin은 Runnit과 직접 통신하지 않는다. **Garmin Connect → HealthKit/Health Connect → Runnit** 경로를 경유하므로, 아키텍처상 Runnit이 다뤄야 하는 외부 연동 표면은 사실상 **HealthKit/Health Connect 하나**로 수렴한다 (§6.2).
 - Supabase가 **단일 백엔드**다. 별도 마이크로서비스도, **Deno Edge Function도 두지 않는다.** 클라이언트는 `supabase_flutter`로 `runs` 등에 직접 upsert하고, 서버 검증·티어/랭킹/뱃지/XP 판정은 전부 **Postgres 트리거·함수**(마이그레이션 00~42)가 같은 트랜잭션 또는 `pg_cron` 배치로 처리한다 — 1인 개발 기준 운영 복잡도를 최소화하기 위한 선택. (이 문서 곳곳에 남아 있는 "Edge Function" 서술은 초기 설계 표현이며, 실제 구현 위치는 트리거/함수다.)
-- **푸시(FCM)와 Apple/Google 로그인은 아직 없다** — Phase 2 알림 모듈과 계정 모듈에서 붙인다. 로그인은 현재 카카오 OAuth 웹 플로우(`signInWithOAuth`)만 동작한다.
+- **푸시(FCM)는 서버·클라이언트 모두 구현됐다**(마이그레이션 44~48 + `lib/core/notifications/`·`lib/features/notifications/`, 2026-08-28). 남은 것은 운영 설정뿐이다 — FCM 프로젝트·서비스 계정, `google-services.json`/`GoogleService-Info.plist`, Vault 시크릿 2개, `push-dispatch` 배포. 설정 파일이 없으면 `Firebase.initializeApp()`이 실패해도 앱은 그대로 뜨고 푸시만 꺼진다(`core/notifications/firebase_bootstrap.dart`). **Apple/Google 로그인(AC-01)은 여전히 미착수** — 로그인은 카카오 OAuth 웹 플로우(`signInWithOAuth`)만 동작한다.
 - **지도는 `flutter_naver_map`이다. PRD §7과 일치한다.** 앱 내부 좌표는 `latlong2`의 `LatLng`로 유지하고, 지도 위젯 경계(`lib/core/map/`)에서만 `NLatLng`로 변환한다. NCP 클라이언트 ID는 `initializeNaverMap()`(`lib/core/map/naver_map_config.dart`)에서 주입한다.
 
 ---
@@ -142,7 +142,19 @@ lib/
         widgets/share_card_surface.dart      # 9:16 투명 프레임 + 캡처 계약(배경 금지)
         widgets/share_card_body.dart         # 카드 4종의 실제 그림 + 경로 페인터
         widgets/achievement_celebration.dart # 축하 연출(풀페이지+애니메이션) + 전역 큐 호스트, 성취 축하의 유일한 소비 지점(§7.4.1)
-    # notifications/          # 알림 설정/수신(NT-01~08) — 아직 없음. Phase 2, FCM 도입과 함께 생성
+    notifications/            # 알림함·알림 설정(NT-01~08) — 2026-08-28
+      data/
+        supabase_notification_repository.dart  # 조회/읽음/설정/토큰 RPC
+        notification_providers.dart            # 알림함(커서 페이지네이션)·설정·미읽음 배지
+      domain/
+        notification_display.dart              # 종류별 아이콘·라벨·상대 시각(순수 함수)
+      presentation/
+        notification_inbox_page.dart           # `/notifications`
+        notification_settings_page.dart        # `/notifications/settings`
+        widgets/notification_tile.dart         # 타일 + 뷰포트 진입 판정(읽음 처리 기준)
+        widgets/unread_badge.dart              # 헤더 종 아이콘 + 미읽음 배지
+        widgets/notification_banner_host.dart  # 포그라운드 인앱 배너(성취 계열 제외)
+        widgets/notification_permission_primer.dart # 첫 러닝 완료 직후 권한 프라이밍
 ```
 
 > ⚠️ **Riverpod은 코드 생성(`riverpod_generator`)을 쓰지 않는다.** Provider는 수동
@@ -239,9 +251,10 @@ erDiagram
 |---|---|
 | **Postgres** | 단일 진실 원천 — `runs`/`profiles`/`badges`/`user_badges`/`leaderboard_entries`/`season_histories`/`tier_change_history`/`challenges` 등 (마이그레이션 00~42) |
 | **Auth** | 소셜 로그인 세션 관리, `auth.users`. 현재 **카카오 OAuth 웹 플로우만** 연결됨 (Apple/Google는 Phase 2 AC-01) |
-| **Postgres 트리거·함수** | (1) `runs_guard` BEFORE 트리거 — 업로드 시 서버 재검증(거리/페이스 재계산·플래그·`awarded_xp` 확정), (2) `runs_03_evaluate_badges` / `evaluate_badges()` — 뱃지 판정, (3) `recompute_profile_stats()` — 누적 통계·XP·레벨·티어 재집계. **Deno Edge Function은 쓰지 않는다** |
-| **Realtime** | `leaderboard_entries`, `user_badges` 변경을 클라이언트에 push (`realtime_refetch.dart`) |
-| **pg_cron** | `refresh_all_leaderboards`(랭킹 캐시 갱신), `transition_challenge_statuses`(챌린지 상태). 시즌 경계·D-14/D-3 알림 배치는 Phase 2에서 추가 |
+| **Postgres 트리거·함수** | (1) `runs_guard` BEFORE 트리거 — 업로드 시 서버 재검증(거리/페이스 재계산·플래그·`awarded_xp` 확정), (2) `runs_03_evaluate_badges` / `evaluate_badges()` — 뱃지 판정, (3) `recompute_profile_stats()` — 누적 통계·XP·레벨·티어 재집계, (4) `runs_04_notifications` / `tier_change_history_02_notify` / `profiles_02_level_notify` — 알림 발행(NT-01/02/06, 마이그레이션 45). **제품 로직은 전부 여기 있다** |
+| **Edge Function** | **`push-dispatch` 단 하나.** FCM HTTP v1 호출에만 쓰는 원칙의 명시적 예외다 — 서비스 계정 JWT의 RS256 서명을 Postgres가 할 수 없기 때문이며, **제품 판정은 들어 있지 않다**(§5.6). 그 외 어떤 Edge Function도 만들지 않는다 |
+| **Realtime** | `leaderboard_entries`, `user_badges`, **`notifications`** 변경을 클라이언트에 push (`realtime_refetch.dart`) |
+| **pg_cron** | `refresh_all_leaderboards`(랭킹 캐시 5분), `transition_challenge_statuses`(10분), `reset_stale_seasons`(시즌 경계), **알림 배치 4종**(`notify_season_ending` 일 09:00 / `refresh_leaderboards_and_notify` 매시 08~22 / `notify_weekend_push` 토10·일18 / `dispatch_pending_pushes` 매분) — 전부 KST 기준, 상세는 [TRD §6-N.5](./TRD.md) |
 
 ### 5.2 기록 업로드 → 검증 → 집계 파이프라인
 
@@ -291,8 +304,76 @@ sequenceDiagram
 | `season_histories` / `tier_change_history` | 본인 행만 select, 쓰기는 서버 함수만 |
 | `badges` / `lunar_holidays` | 전체 select(공개 상수), 쓰기 없음 |
 | `user_badges` | 본인 전체 select, 타인은 `revoked=false and verified=true`만. insert는 서버(트리거)만, 클라이언트가 쓸 수 있는 컬럼은 `is_seen` 하나 |
+| `notifications` | 본인 행 select + update만. **insert 정책 없음**(서버 전용) — 클라이언트가 알림 행을 만들 수 있으면 티어·랭킹 판정을 흉내내는 경로가 열린다. 쓸 수 있는 컬럼은 `read_at` 하나(가드 트리거가 강제) |
+| `notification_settings` / `push_tokens` | 본인 행 전권. 토큰 등록만 RPC `register_push_token`(SECURITY DEFINER) 경유 — 기기 이양 시 이전 소유자의 행을 지워야 하는데 RLS로는 불가능하다 |
 
 세부 DDL·RLS 현황은 마이그레이션 `07_rls.sql` + 이후 각 기능 마이그레이션, 요약은 [`docs/TRD.md`](./TRD.md) §5 참조.
+
+### 5.6 알림 모듈 백엔드 (NT-01~08) — 2026-08-28 구현 완료
+
+§7.3의 "티어=동기 / 랭킹=배치" 분리가 알림에도 그대로 적용된다. 티어·성취
+계열(NT-01/02/06)은 `runs`·`tier_change_history`·`profiles` **트리거**, 랭킹·시즌
+계열(NT-03/04/05)은 **pg_cron 배치**다. 조건 판정과 문구 작성은 **전부 서버**이며,
+`NotificationRepository`에는 알림을 만드는 메서드가 없다 — 클라이언트가 "지금이 승급
+알림 시점인가"를 계산하면 서버 확정값과 어긋난 알림이 생기고, 그 순간 티어·랭킹이라는
+이 앱의 화폐가 신뢰를 잃는다.
+
+**Edge Function 예외 1건**: FCM HTTP v1은 서비스 계정 JWT의 **RS256 서명**을 요구하는데
+Postgres에는 RSA 서명 수단이 없다(pgjwt는 HMAC 전용). 레거시 server-key API도 폐지됐다.
+그래서 `push-dispatch` Edge Function 하나를 둔다. **범위는 좁게 고정한다** — 누구에게
+무엇을 언제 보낼지는 SQL이 이미 `notifications` 행으로 확정한 뒤이고, 함수는 그 행을
+Google에 전달하고 응답을 되돌려 기록할 뿐이다. 새 알림 종류는 반드시 SQL 쪽에 추가한다.
+
+**알림함 insert와 푸시 발송은 분리한다.** insert는 러닝 저장 트랜잭션 안, 발송은 매분
+도는 워커가 트랜잭션 밖에서 한다. 발송을 트랜잭션에 넣으면 FCM 장애가 곧 **러닝 저장
+실패**가 된다 — 알림 하나 때문에 기록을 잃는 것은 정당화되지 않는다(§10 안정성).
+
+성취 알림의 3역할 분리(인앱 축하 / 푸시 / 알림함)는 §7.4를 따르며, **소비 지점은 여전히
+하나다** — 알림 모듈은 `user_badges` 큐를 건드리지 않는다. 상세는 [TRD §6-N](./TRD.md).
+
+#### 5.6.1 알림 딥링크 목적지 — 서버 발행값의 정본 (2026-08-28 확정)
+
+서버가 `notifications.payload.route`와 FCM `data.route`에 실어야 하는 **정확한 문자열**이다.
+클라이언트는 이 표에 없는 경로를 받으면 종류별 폴백으로 떨어뜨린다
+(`lib/core/notifications/notification_deep_link.dart`).
+
+| 알림 | 목적지 화면 | **route (서버 발행값)** |
+|---|---|---|
+| NT-01 티어 승급 | 홈 — 티어 카드 | `/home` |
+| NT-02 다음 티어 근접 | 홈 — 티어 카드 | `/home` |
+| NT-03 시즌 종료 D-14/D-3 (승급권 A · 플래티넘 C) | 홈 — 티어 카드 | `/home` |
+| NT-03 시즌 종료 (비승급권 B) | 마이페이지 | `/profile` |
+| NT-04 주간 순위 변동 | 홈 — 주간 랭킹 | `/home` |
+| NT-05 주말 막판 유도 | 홈 — 주간 랭킹 | `/home` |
+| NT-06 뱃지·레벨업 (레벨 단독) | 활동 — 뱃지 탭 | `/history?tab=badges` |
+| NT-06 뱃지·레벨업 (러닝 유래) | 기록 상세 | `/history/run/{run_id}` |
+| NT-07 포인트(Phase 4) · 종류 미상 | 알림함 | `/notifications` |
+
+**랭킹과 티어가 같은 `/home`인 이유**: 2026-08-21 4탭 개편에서 랭킹 독립 탭이 홈으로,
+뱃지 독립 탭이 활동 화면의 하위 탭으로 흡수됐다. **`/ranking`, `/profile/badges`,
+`/runs/{id}`는 이 앱에 존재한 적이 없는 경로다** — 2026-08-28 QA C-3에서 서버가 이
+3종을 발행 중이던 것이 발견됐고, 특히 `/profile/badges`는 클라이언트의 접두사
+화이트리스트(`/profile/`)를 통과한 뒤 go_router에서 `no routes for location`으로
+**크래시했다**(도달 경로: 러닝 없는 레벨업 알림 탭).
+
+수정 후 클라이언트는 **접두사가 아니라 라우터에 등록된 경로와의 완전 일치**로 검사하고
+(파라미터 라우트는 `/history/run/{한 세그먼트}` 패턴 하나), 통과하지 못하면 위 표의
+종류별 목적지로 폴백한다. **서버(마이그레이션 49·50)도 이 표대로 정정됐고**(원격에서
+발화시켜 20건 전수 확인), 이미 쌓여 있던 과거 행의 `payload.route`는 50-6에서
+백필됐다 — 그래서 클라이언트에 잠시 뒀던 과거 route 변환표는 걷어냈다. **route 매핑의
+정의는 서버 한 곳**이며, 클라이언트는 "라우터에 등록됐는가"만 판단한다(정의가 두 곳으로
+갈라진 것이 C-3의 원인이었다). `test/notifications/notification_deep_link_router_test.dart`가
+**해석 결과를 실제 `GoRouter.configuration.findMatch()`에 물려** 검증하므로, 라우트 추가
+시 이 표와 어긋나면 테스트가 먼저 깨진다 — 이 표의 부재가 C-3이 문서 검토에서 잡히지
+않은 원인이었다.
+
+> 뱃지 갤러리를 `/history/badges` **라우트**로 만들지 않은 이유: 그러면 활동 화면 위에
+> 활동 화면이 한 장 더 쌓인다. 탭은 화면이 아니라 같은 화면의 상태이므로 쿼리로 지정한다.
+
+**FCM `data.type`은 서버가 반드시 실어야 한다.** 없으면 클라이언트가 성취 계열
+(`isAchievement`)을 판별하지 못해 §7.4의 포그라운드 배너 억제가 동작하지 않는다(같은
+사건을 배너와 축하 풀페이지가 두 번 알린다). 값이 없거나 규격을 벗어나도 **크래시하지는
+않고** 알림함 폴백으로 착지한다(2026-08-28 QA C-2).
 
 ---
 
@@ -510,17 +591,17 @@ flowchart LR
 | ~~3~~ | ~~공유 카드(HI-08) 이미지 생성 방식~~ | **해소(2026-08-26) — 클라이언트 위젯 캡처 확정.** 디자인 시스템(뱃지 SVG·Pretendard·티어 색 토큰)이 전부 Flutter 자산이라 서버 렌더링은 두 번째 구현을 요구한다. TRD §3.9.2 / §14 #3 | — |
 | ~~4~~ | ~~`run_samples` 저장 방식 (jsonb vs 별도 테이블)~~ | **해소 — `runs.samples jsonb` 확정**(마이그레이션 01). 별도 테이블은 만들지 않았다. 대규모에서 분리 검토는 TRD §14 #2로 유지. | — |
 | 5 | P2(크루)·Phase 4(포인트) 스키마 확장 여지 | 테이블은 안 만들되 `runs.user_id`·`profiles.crew_id`·`ranking_scope='crew'`·`challenges` 등 확장 지점은 이미 자리 잡음. Phase 4 포인트는 `total_xp`와 이름을 분리해 충돌 방지(TRD §3.8.1). | 해당 Phase 착수 시 |
-| 6 | 푸시(FCM) / Apple·Google 로그인 | **미구현.** Phase 2 알림 모듈(NT-01~08) + 계정 모듈(AC-01)에서 도입. `firebase_messaging` 의존성 아직 없음. | Phase 2 |
+| 6 | 푸시(FCM) / Apple·Google 로그인 | **백엔드·클라이언트 모두 완료(2026-08-28, 마이그레이션 44~48 + `core/notifications/`·`features/notifications/`).** 알림 판정·발행·배치·발송 큐가 동작하고, 앱은 토큰 등록·포그라운드 수신·딥링크·알림함·설정 화면을 갖췄다. **남은 것은 운영 설정** — FCM 프로젝트·서비스 계정, `google-services.json`/`GoogleService-Info.plist`, Android `google-services` Gradle 플러그인(주석 해제), iOS Push Notifications capability + APNs 키, Vault 시크릿 2개(`push_dispatch_url`/`push_dispatch_token`), `push-dispatch` 배포. 그때까지 `dispatch_pending_pushes()`는 조용히 no-op 하고 알림함 적재만 정상 동작한다. Apple/Google 로그인(AC-01)은 여전히 미착수. | 운영 설정 대기 |
 
 ---
 
 ## 13. 현재 진행 상황 (Phase 1~2)
 
-**완료(구현·테스트 존재)**: 데이터 모델(`lib/models/`), Supabase 스키마·트리거(마이그레이션 00~43), GPS 트래킹 코어(스무딩·백그라운드·집계), 오프라인 저장(drift)+동기화, 히스토리 목록·월간 차트, **기록 상세 화면(HI-02 — 경로 지도·1km 랩 테이블·페이스 그래프, `run_detail_page.dart` + `history/domain/lap_splits.dart`)**, 주간 랭킹 + 티어 + Realtime, 뱃지 판정(39 condition_type 전량)·갤러리·레벨·주간 스트릭·XP, 공유 카드(PB)·풀페이지 성취 축하, 카카오 OAuth 로그인.
+**완료(구현·테스트 존재)**: 데이터 모델(`lib/models/`), Supabase 스키마·트리거(마이그레이션 00~48 — **알림 백엔드 44~48 포함**), GPS 트래킹 코어(스무딩·백그라운드·집계), 오프라인 저장(drift)+동기화, 히스토리 목록·월간 차트, **기록 상세 화면(HI-02 — 경로 지도·1km 랩 테이블·페이스 그래프, `run_detail_page.dart` + `history/domain/lap_splits.dart`)**, 주간 랭킹 + 티어 + Realtime, 뱃지 판정(39 condition_type 전량)·갤러리·레벨·주간 스트릭·XP, 공유 카드(PB)·풀페이지 성취 축하, 카카오 OAuth 로그인.
 
 **남은 P0(요약 — 상세는 사용자에게 별도 정리)**:
 1. 기록 **수정(제목·메모)**(HI-07) — 리포지토리에 수정 경로 없음, 상세 화면에 붙을 예정. **삭제는 스펙에서 제거됨**(PRD v1.6 — 러닝·뱃지 사용자 삭제 불가)
-2. 푸시 알림 전체(NT-01~06, 08) — FCM 미도입
+2. 푸시 알림 — **서버·클라이언트 모두 완료(마이그레이션 44~48 + 2026-08-28 클라이언트).** 남은 것은 **운영 설정**뿐이다 — FCM 프로젝트·서비스 계정, 네이티브 설정 파일 2개, Android `google-services` Gradle 플러그인 주석 해제, iOS Push Notifications capability + APNs 키, Vault 시크릿 2개, `push-dispatch` 배포
 3. 계정 삭제/데이터 완전 삭제(AC-04, 심사 필수), 프로필 편집(AC-02), 타 사용자 프로필(AC-03), 공개 범위(AC-05), Apple/Google 로그인(AC-01)
 4. 과거 시즌 전체 랭킹, 역대 시즌 기록 화면(HI-06) UI 연결
 5. Phase 3: 성능·배터리·GPS 실기기 검증, 접근성, 스토어 심사, 클로즈드 베타

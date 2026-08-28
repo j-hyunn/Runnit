@@ -6,6 +6,8 @@ import '../../features/auth/presentation/login_page.dart';
 import '../../features/history/presentation/history_page.dart';
 import '../../features/history/presentation/run_detail_page.dart';
 import '../../features/home/presentation/home_page.dart';
+import '../../features/notifications/presentation/notification_inbox_page.dart';
+import '../../features/notifications/presentation/notification_settings_page.dart';
 import '../../features/profile/presentation/profile_page.dart';
 import '../../features/tracking/presentation/tracking_page.dart';
 import '../auth/auth_config.dart';
@@ -28,6 +30,23 @@ class Routes {
   static const runDetail = 'run/:runId'; // history 하위 (전체: /history/run/:id)
   static const profile = '/profile';
 
+  /// 뱃지 갤러리 = 활동 화면의 **하위 탭**이다(2026-08-21 4탭 개편). 독립 라우트가
+  /// 아니므로 딥링크는 쿼리로 탭을 지정한다. 서버 알림 payload의 `route`가 이
+  /// 문자열을 그대로 쓴다 — 정본은 여기 하나다.
+  static const badgeGallery = '$history?tab=${HistoryPage.badgesTab}';
+
+  /// 기록 상세의 **완성된** 경로(`/history/run/{runId}`). [runDetail]은 go_router
+  /// 등록용 상대 패턴이라 딥링크 문자열로 쓸 수 없다.
+  static String runDetailOf(String runId) => '$history/run/$runId';
+
+  /// 알림함(PRD §5.10). **셸 안**(바텀 네비 유지) · 게스트 차단.
+  /// 마이 탭 브랜치에 매단다 — 진입점이 마이페이지의 종 아이콘·메뉴이고,
+  /// 알림에서 이동한 뒤 뒤로 가면 원래 있던 탭 스택으로 돌아와야 한다.
+  static const notifications = '/notifications';
+
+  /// NT-08 항목별 on/off.
+  static const notificationSettings = '/notifications/settings';
+
   /// 카카오 로그인 화면. 셸(바텀 네비) **바깥**의 최상위 라우트다 —
   /// 로그인 벽에서 탭 바가 보이면 "탭은 있는데 눌러도 안 되는" 상태가 된다.
   static const login = '/login';
@@ -46,6 +65,7 @@ class Routes {
 /// | `/history` (+ 상세) | 허용 | **뱃지 탭만 공개**(카탈로그). 기록 탭은 위젯이 로그인 유도 |
 /// | `/tracking` | 차단 | 러닝 시작에 userId 필요 |
 /// | `/profile` | 차단 | 내 프로필 |
+/// | `/notifications` (+ `/settings`) | 차단 | 알림은 계정 단위 데이터다 |
 /// | `/login` | 항상 허용 | 로그인 완료 시 `from` 또는 `/tracking`으로 자동 이탈 |
 ///
 /// 차단 라우트에 게스트가 진입하면 `/login?from=<원래경로>`로 리다이렉트한다.
@@ -108,7 +128,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: Routes.history,
-                builder: (_, __) => const HistoryPage(),
+                // `?tab=badges`로 뱃지 하위 탭을 열 수 있다 — 뱃지 획득 알림의
+                // 딥링크 목적지(`Routes.badgeGallery`). 하위 라우트로 만들면
+                // 활동 화면 위에 활동 화면이 한 장 더 쌓인다.
+                builder: (_, state) => HistoryPage(
+                  initialTab: state.uri.queryParameters['tab'],
+                ),
                 routes: [
                   GoRoute(
                     path: Routes.runDetail,
@@ -126,6 +151,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: Routes.profile,
                 builder: (_, __) => const ProfilePage(),
+              ),
+              // 알림함/알림 설정은 경로만 최상위(`/notifications`)이고 스택은
+              // 마이 탭 브랜치에 쌓인다 — 셸(바텀 네비)이 유지된다.
+              GoRoute(
+                path: Routes.notifications,
+                builder: (_, __) => const NotificationInboxPage(),
+                routes: [
+                  GoRoute(
+                    path: 'settings',
+                    builder: (_, __) => const NotificationSettingsPage(),
+                  ),
+                ],
               ),
             ],
           ),

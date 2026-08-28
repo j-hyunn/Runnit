@@ -9,6 +9,7 @@ import '../../../core/providers/repository_providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../models/models.dart';
+import '../../notifications/presentation/widgets/notification_permission_primer.dart';
 import '../data/tracking_providers.dart';
 import 'tracking_format.dart';
 import 'tracking_ui_providers.dart';
@@ -1593,6 +1594,10 @@ class _SummaryViewState extends ConsumerState<_SummaryView> {
               // 축하와 공유 버튼이 뜨고, 아직이면 상태만 정직하게 말한다.
               SummaryAchievements(record: record),
               const SizedBox(height: AppTokens.s16),
+              // OS 알림 권한 프라이밍(PRD §5.10). 첫 실행이 아니라 **러닝 완료
+              // 직후**에만 뜨고, 이미 묻거나 "나중에"를 누른 뒤에는 스스로
+              // 사라진다 — 위젯이 자기 조건을 판단한다.
+              const NotificationPermissionPrimer(),
               // 러닝 자체를 공유하는 경로(HI-08). 대부분의 러닝은 뱃지를
               // 터뜨리지 않으므로, 성취가 없어도 자랑할 수 있어야 한다.
               RunShareButton(record: record),

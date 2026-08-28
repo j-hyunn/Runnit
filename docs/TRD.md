@@ -54,12 +54,12 @@ PRD §7의 확정 스택을 실제 패키지 단위로 구체화한다.
 | 차트 | `fl_chart` | 월간 통계 막대(`monthly_chart.dart`). HI-02 페이스 그래프는 미구현 |
 | SVG | `flutter_svg` | 뱃지 아트·아이콘 |
 | 공유 | `share_plus` | 공유 시트(HI-08) |
-| 백엔드 클라이언트 | `supabase_flutter` | Auth/Postgres(PostgREST)/Realtime. **Edge Function 호출 없음** |
-| 푸시 | Firebase Cloud Messaging | *(미도입)* | NT-01~08 — Phase 2. `firebase_messaging` 의존성 아직 없음 |
+| 백엔드 클라이언트 | `supabase_flutter` | Auth/Postgres(PostgREST)/Realtime. **앱은 Edge Function을 호출하지 않는다**(`push-dispatch`는 pg_cron이 부른다) |
+| 푸시 | Firebase Cloud Messaging | `firebase_core`, `firebase_messaging` | 서버는 마이그레이션 44~48(§6-N), 클라이언트는 `core/notifications/`(초기화·권한·토큰 동기화·딥링크) + `features/notifications/`(알림함·설정). **FCM 프로젝트·서비스 계정과 네이티브 설정 파일은 운영이 넣어야 한다** — 없으면 초기화가 실패해도 앱은 뜨고 푸시만 꺼진다 |
 | 로컬 영속 저장소 | **drift** | `drift`, `sqlite3_flutter_libs`, `path`, `path_provider` | `tracking/data/local_run_database.dart`. §14-#1 해소 |
 | 로컬 KV | `shared_preferences` | 경량 설정·플래그 |
 | 유틸 | `intl`(날짜/페이스 포맷), `collection`, `uuid`(클라이언트 RunRecord id), `logger` | |
-| 백엔드 인프라 | Supabase | Postgres + Auth + Realtime + **pg_cron** (Deno Edge Function 미사용) | 서버 로직은 전부 마이그레이션 SQL(트리거·함수) |
+| 백엔드 인프라 | Supabase | Postgres + Auth + Realtime + **pg_cron** + `pg_net`/Vault, **Edge Function은 `push-dispatch` 하나뿐** | 제품 로직은 전부 마이그레이션 SQL(트리거·함수). Edge Function 예외의 근거는 §6-N.6 |
 
 ---
 
@@ -654,6 +654,72 @@ ARCHITECTURE §7.4.1의 "두 소비 지점" 구조는 폐기됐다 — `summary_
 
 ---
 
+### 3.10 알림 모델 (PRD §5.10 NT-01~08) — 2026-08-28 확정
+
+정본은 `lib/models/app_notification.dart` · `notification_settings.dart` ·
+`push_device_token.dart`, enum은 `lib/models/enums.dart`의 `NotificationType` ·
+`DevicePlatform`이다.
+
+| 모델 | 테이블 | 키 | 클라이언트 쓰기 권한 |
+|---|---|---|---|
+| `AppNotification` | `notifications` | `id uuid` | **`read_at` 한 컬럼뿐** (`user_badges.is_seen`과 동일 규약) |
+| `NotificationSettings` | `notification_settings` | `user_id` (유저당 1행) | 종류별 bool + `push_enabled` |
+| `PushDeviceToken` | `push_tokens` | `token` (유저당 N행) | 본인 행 upsert/delete |
+
+**`NotificationType` 값 = PRD 요구사항 ID 1:1** (`tier_promotion` NT-01 /
+`tier_proximity` NT-02 / `season_ending` NT-03 / `rank_change` NT-04 /
+`weekend_push` NT-05 / `badge_level` NT-06 / `points` NT-07 **Phase 4·미발행**).
+NT-08의 "항목"이 이 값 단위이므로 요구사항보다 잘게 쪼개지 않는다 — 추월함/추월당함,
+D-14/D-3 같은 뉘앙스는 전부 `notifications.payload` jsonb에 담는다
+(`direction` / `days_left` / `remaining_m` / `rank` / `season_id` / `tier` /
+`user_badge_id`, 그리고 딥링크용 `route`).
+
+`points`는 enum에만 있고 `notification_settings`에는 **컬럼이 없다.** enum 값을 미리
+둔 이유는 Phase 4에 서버가 그 타입을 발행했을 때 구버전 앱의 `fromJson`이 예외를 던져
+알림함 전체가 깨지는 것을 막기 위해서다.
+
+**문구(`title`/`body`)는 서버가 완성해서 저장한다.** 클라이언트가 payload로 문구를
+조립하면 푸시 트레이 문구(서버 조립)와 알림함 문구(클라이언트 조립)가 갈라져 같은
+사건이 두 가지로 보인다.
+
+### 4.1-N 알림 테이블 camelCase ↔ snake_case 매핑
+
+| Dart 필드 | Postgres 컬럼 | 타입 | 비고 |
+|---|---|---|---|
+| `AppNotification.id` | `notifications.id` | uuid | 서버 생성 |
+| `AppNotification.userId` | `notifications.user_id` | uuid FK → `profiles.id` | |
+| `AppNotification.type` | `notifications.type` | `public.notification_type` | 라벨은 `NotificationTypeWire.wire`와 동일 |
+| `AppNotification.title` / `body` | `notifications.title` / `body` | text | 서버 전용 쓰기 |
+| `AppNotification.payload` | `notifications.payload` | jsonb not null default `'{}'` | 미지 키 무시 규약 |
+| `AppNotification.createdAt` | `notifications.created_at` | timestamptz | 정렬 인덱스 `(user_id, created_at desc)` |
+| `AppNotification.readAt` | `notifications.read_at` | timestamptz nullable | **클라이언트가 쓸 수 있는 유일한 컬럼.** 부분 인덱스 `where read_at is null` |
+| *(대응 필드 없음)* | `notifications.dedupe_key` | text | **서버 전용 멱등 키.** `unique (user_id, dedupe_key)`. 예: `season_ending:2026-Q3:d3`, **`rank_change:2026-W35:down:2`**(NT-04는 키 끝에 순번 `n`이 붙어 주당 상한을 unique 제약이 강제한다 — §6-N.3). 배치 재실행·트리거 중복 발화로 같은 알림이 두 번 가는 것을 DB가 막는다 |
+| *(대응 필드 없음)* | `notifications.sent_at` / `send_error` | timestamptz / text | 발송 결과 로그. 알림함 표시와 무관해 모델에 없다 |
+| `NotificationSettings.userId` | `notification_settings.user_id` | uuid PK FK | |
+| `NotificationSettings.pushEnabled` | `notification_settings.push_enabled` | boolean default true | 마스터 스위치 |
+| `NotificationSettings.tierPromotion` | `notification_settings.tier_promotion` | boolean default true | NT-01 |
+| `NotificationSettings.tierProximity` | `notification_settings.tier_proximity` | boolean default true | NT-02 |
+| `NotificationSettings.seasonEnding` | `notification_settings.season_ending` | boolean default true | NT-03 |
+| `NotificationSettings.rankChange` | `notification_settings.rank_change` | boolean default true | NT-04 |
+| `NotificationSettings.weekendPush` | `notification_settings.weekend_push` | boolean default true | NT-05 |
+| `NotificationSettings.badgeLevel` | `notification_settings.badge_level` | boolean default true | NT-06 |
+| `NotificationSettings.updatedAt` | `notification_settings.updated_at` | timestamptz | 트리거 갱신 |
+| `PushDeviceToken.token` | `push_tokens.token` | text PK | FCM 등록 토큰 |
+| `PushDeviceToken.userId` | `push_tokens.user_id` | uuid FK | 유저당 N행(기기 여러 대)이 정상 |
+| `PushDeviceToken.platform` | `push_tokens.platform` | `public.device_platform` | `ios` / `android` |
+| `PushDeviceToken.deviceId` | `push_tokens.device_id` | text nullable | 설치 단위 식별자. 같은 기기의 옛 토큰 정리 근거 |
+| `PushDeviceToken.appVersion` | `push_tokens.app_version` | text nullable | 진단용 |
+| `PushDeviceToken.updatedAt` | `push_tokens.updated_at` | timestamptz | 장기 미갱신 토큰 정리 기준 |
+
+> ⚠️ **종류별 on/off를 jsonb 한 컬럼으로 접지 않는다.** 발송 주체가 pg_cron 배치라
+> `join notification_settings s ... where s.weekend_push` 처럼 SQL 한 번으로 수신
+> 거부자를 걸러내야 한다. jsonb면 매 행 키 추출이 붙고 인덱스도 걸기 어렵다.
+>
+> **행이 없는 사용자는 전 종류 on으로 간주한다** (서버·클라이언트 공통). 가입 직후
+> 행 생성 실패로 알림이 조용히 끊기는 쪽이, 기본값을 한 번 더 보내는 것보다 나쁘다.
+
+---
+
 ## 4. Supabase 스키마 사양 (DDL)
 
 > 🛑 **아래 초안 DDL은 실제로 생성되지 않았다.** 라이브 스키마는 `supabase/migrations/00~42`이며, 주요 차이:
@@ -1010,6 +1076,204 @@ create table public.lunar_holidays (
 
 ---
 
+## 6-N. 알림 서버 구현 사양 (NT-01~08) — 2026-08-28 실구현
+
+> 정본 마이그레이션: `44_notifications_core` · `45_notifications_triggers` ·
+> `46_notifications_batches` · `47_push_dispatch` · `48_notifications_fixes`.
+> 모델·필드 매핑은 §3.10 · §4.1-N, 판정 규칙의 근거는
+> `_workspace/20260828_181500_gamification_notification-rules.md`.
+
+### 6-N.1 발화 주체 — §7.3의 "티어=동기 / 랭킹=배치"가 알림에도 그대로 적용된다
+
+| ID | 발화 | 위치 |
+|---|---|---|
+| NT-01 티어 승급 | 트리거 (동기) | `tier_change_history` AFTER INSERT → `trg_tier_promotion_notify` |
+| NT-02 티어 근접 | 트리거 (동기) | `runs_04_notifications` |
+| NT-03 시즌 D-14/D-3 | pg_cron | `notify_season_ending()` |
+| NT-04 순위 변동 | pg_cron | `notify_rank_changes()` — 랭킹 갱신과 **같은 함수 안에서 체이닝** |
+| NT-05 주말 유도 | pg_cron | `notify_weekend_push()` |
+| NT-06 뱃지·레벨 | 트리거 (동기) | `runs_04_notifications` + `profiles_02_level_notify` |
+| NT-07 포인트 | — | Phase 4. enum 라벨만 있고 발행 경로 없음 |
+
+**NT-01을 `profiles.current_tier` 감시가 아니라 `tier_change_history` INSERT에 건 이유**:
+그 테이블은 마이그레이션 34 이후 **상승만** 기록한다. 시즌 하드 리셋(전원 브론즈)과
+부정 기록 무효화는 행을 만들지 않으므로, INSERT 되는 것이 곧 "승급"이다. `profiles`를
+감시하면 시즌 경계 리셋을 승급과 구분하는 분기를 따로 써야 하고, 그 분기가 틀리면
+**분기 첫날 전 사용자에게 "브론즈 승급!"이 나간다.**
+
+`runs` 트리거 순서는 접두 번호로 고정된다 —
+`runs_01_recompute_stats` → `_02_challenge_progress` → `_03_evaluate_badges` →
+**`_04_notifications`**(신설). 04는 앞 셋의 **결과를 읽으므로** 반드시 마지막이다.
+
+### 6-N.2 한 러닝 = 성취 푸시 최대 2건
+
+`tier_promotion` 1건 + `badge_level` 1건. 뱃지 3개와 레벨업이 동시에 터져도
+`badge_level`은 1건으로 묶인다. 묶음 판정에는 트랜잭션 로컬 설정 두 개를 쓴다:
+
+- `runnit.notify_run_id` — `runs_01`이 심고 `runs_04`가 지운다
+- `runnit.notify_level` — `profiles_02_level_notify`가 심는다. 이 값이 있으면
+  레벨업 알림을 **따로 보내지 않고** `runs_04`가 뱃지와 합쳐 1건으로 낸다
+
+`category='season_tier'` 뱃지(`stier_*`)는 `badge_level` 개수에서 **제외**한다 —
+NT-01이 같은 사건을 이미 알렸고, "골드 승급!" + "뱃지 1개 획득(골드 뱃지)"는 같은 것을
+두 번 세는 것이다.
+
+> ⚠️ 레벨업은 `user_badges`에 합성 행을 만들지 않는다(gamification §5.1). 만들면
+> `XP_badge`가 행마다 XP를 주므로 **레벨업 → XP → 레벨업 순환**이 생기고, 집계 쿼리
+> 3곳에 예외 분기를 심어야 한다. ARCHITECTURE §7.4.1의 "소비 지점은 하나"도 유지된다.
+
+### 6-N.3 상한은 count가 아니라 `dedupe_key` unique 제약이 강제한다
+
+`unique (user_id, dedupe_key)`. 애플리케이션 레벨 count 체크는 pg_cron 재실행 경합에서
+새어 나간다.
+
+| 알림 | 키 | 상한 |
+|---|---|---|
+| NT-01 | `tier_promotion:{season}:{tier}` | 시즌 3 |
+| NT-02 | `tier_proximity:{season}:{next_tier}` | 시즌 3 |
+| NT-03 | `season_ending:{season}:d{14\|3}` | 시즌 2 |
+| NT-04 | `rank_change:{week}:{up\|down}:{n}` | 주 down 3 / up 2 / 합계 4 |
+| NT-05 | `weekend_push:{week}:{sat\|sun}` | 주 2 |
+| NT-06 | `badge_level:run:{run_id}` / `:level:{level}` | 러닝 1 |
+
+`week_id`는 KST ISO 주(`2026-W35`, `week_id_at()`), `season_id`는 `2026-Q3`.
+
+### 6-N.4 임계치 상수 (계산식 아님 — 부동소수 경계 사고 차단)
+
+`tier_proximity_threshold_m(next_tier)`: 실버 **5,000** / 골드 **10,000** /
+플래티넘 **15,000**. 전 구간 5km 안을 쓰지 않은 이유는 골드→플래티넘 구간(150km)에서
+5km가 3.3%라 **밴드를 통과하는 사람이 거의 없기** 때문이다(플래티넘 페이스 러너의 주
+평균은 19km). 레벨 임계값(§3.8.3)과 같은 원칙이다.
+
+NT-03 승급 가능권: D-14 **40,000m** / D-3 **10,000m**(남은 일수 × 페르소나 주간 거리).
+NT-05 격차 상한 **5,000m**. NT-04 순위권 밴드 `greatest(30, ceil(pc × 0.3))`.
+
+### 6-N.5 배치 스케줄 (pg_cron, 서버는 UTC / KST가 정본)
+
+| job | KST | cron(UTC) |
+|---|---|---|
+| `runnit-notify-season-ending` | 매일 09:00 | `0 0 * * *` |
+| `runnit-rank-notify` | 매시 정각, 08~22시 | `0 23,0-13 * * *` |
+| `runnit-weekend-push-sat` | 토 10:00 | `0 1 * * 6` |
+| `runnit-weekend-push-sun` | 일 18:00 | `0 9 * * 0` |
+| `runnit-push-dispatch` | 매분 | `* * * * *` |
+
+`runnit-rank-notify`는 `refresh_leaderboards_and_notify()`를 부른다 — 랭킹 갱신과 평가가
+**같은 트랜잭션**이라야 rank 스냅샷이 어긋나지 않는다. 기존 5분 주기
+`runnit-leaderboard`(화면 신선도용)는 그대로 둔다.
+
+**방해 금지**: 배치 계열(NT-03/04/05)만 KST 08:00~22:00으로 제한한다(`_batch_hours_ok`).
+트리거 계열은 사용자가 **방금 러닝을 끝낸 순간**이므로 심야에도 보낸다 — 새벽 5시에 뛴
+사람에게 "방금 골드로 승급했어요"를 08:00까지 미루면 러닝의 문맥이 사라진 뒤 도착한다.
+
+**NT-04 기준선**: `leaderboard_entries.notified_rank` / `notified_at`(마이그레이션 44).
+`rank_delta`는 직전 5분 배치 대비 변동이라 알림 기준으로 쓸 수 없다 — 진동하는 사용자에게
+하루 수십 건이 나가고, 3계단 내려갔다 올라온 사용자는 순 변동 0인데 알림 2건이다.
+`rank_delta`는 UI의 "↑3" 표시용으로 그대로 둔다. **발송을 건너뛴 경우에도 기준선은
+갱신한다** — 갱신하지 않으면 같은 변동이 매 주기 조건을 만족해 계속 재시도한다.
+
+### 6-N.6 FCM 발송 경로 — Edge Function 예외 1건 (결정 근거)
+
+ARCHITECTURE §5의 "Deno Edge Function을 쓰지 않는다"에 대한 **명시적 예외**를 둔다.
+
+| 안 | 판정 |
+|---|---|
+| (a) `pg_net`으로 pg_cron 함수에서 FCM REST 직접 호출 | ❌ **구현 불가.** FCM HTTP v1은 서비스 계정 JWT를 **RS256**으로 서명해 액세스 토큰으로 교환해야 하는데, Postgres에 RSA 서명 수단이 없다(pgjwt = HMAC 전용, pgcrypto는 raw RSA sign 미노출). 토큰은 1시간마다 만료돼 "미리 발급해 Vault에 둔다"도 성립하지 않는다. 레거시 server-key API는 2024-06 폐지. 또한 pg_net은 fire-and-forget이라 토큰별 응답으로 무효 토큰을 지우려면 `net._http_response` 폴링 워커를 결국 따로 만들어야 한다 |
+| **(b) 최소 Edge Function 1개** | ✅ **채택.** Deno WebCrypto의 RSASSA-PKCS1-v1_5로 서명·55분 캐시가 가능하다. 응답을 동기로 받으므로 무효 토큰 정리와 재시도 판정을 한 자리에서 한다 |
+
+**예외의 범위를 좁게 고정한다 — `supabase/functions/push-dispatch/index.ts`에는 제품
+판정이 없다.** 누구에게 무엇을 언제 보낼지는 44~46의 SQL이 이미 `notifications` 행으로
+확정한 뒤다. 함수가 하는 일은 `claim_push_batch()` → FCM 전달 →
+`mark_push_result()` / `prune_push_token()` 셋뿐이다. **새 알림 종류는 반드시 SQL 쪽에
+추가할 것** — 판정이 두 곳으로 갈라지면 "알림함에는 있는데 푸시는 안 온다"의 원인을 두
+곳에서 찾아야 한다.
+
+**insert와 발송의 분리(필수)**: `enqueue_notification()`은 러닝 저장 트랜잭션 **안**에서
+알림함 행만 만든다. 푸시 발송은 `dispatch_pending_pushes()`(pg_cron 매분 → pg_net →
+Edge Function)가 **트랜잭션 밖에서** 훑는다. 발송을 트랜잭션에 넣으면 FCM이 느리거나
+죽었을 때 **사용자의 러닝 저장이 실패한다.**
+
+큐 상태 전이는 전부 SQL이 소유한다(`claim_push_batch`): `push_enabled = false` →
+`send_error='push_disabled'`, 토큰 없음 → `'no_token'`, 24시간 경과 또는 3회 실패 →
+`'expired'`. 성공하면 `sent_at`, 실패면 `sent_at`을 비워 둔 채 오류만 남겨 재시도한다.
+
+> ⚠️ **`notifications`에 쓰는 서버 함수는 반드시 `_server_write_enter()`/`_server_write_exit()`
+> 구간 안에서 써야 한다**(마이그레이션 49). 44-5의 `notifications_guard`는 UPDATE 시
+> `is_server_write()`가 아니면 `sent_at`·`send_error`·`send_attempts`를 **전부 old 값으로
+> 되돌린다.** 47번이 이걸 빠뜨려서, 발송 상태가 저장되지 않아 ① 같은 푸시가 매분 무한
+> 재발송되고 ② 3회 실패 만료 경로가 죽고 ③ `push_enabled=false` 큐 배출이 무효라
+> **마스터 스위치를 끈 사용자에게도 푸시가 나가는**(NT-08 위반) 상태였다.
+> `is_server_write()`는 세션 GUC만 보므로 SECURITY DEFINER나 service_role 여부와 무관하다.
+>
+> `_server_write_enter()`는 **이전 값을 돌려주고 exit이 그 값을 복원한다.** 무조건
+> `'off'`로 되돌리는 옛 관례는 중첩 호출에서 바깥 구간을 조기 종료시킨다.
+
+**FCM `data` 페이로드**: `notification_id` + `type`(= `notifications.type` 컬럼) +
+`payload` 전개. **`type`은 payload에서 오지 않는다** — `claim_push_batch()`가 전용
+컬럼으로 돌려주고 Edge Function이 `data.type`에 싣는다. 클라이언트는 이 값으로 성취
+계열을 판정해 인앱 배너를 생략하므로, 없으면 배너 + 풀페이지 축하가 **같은 사건을 두 번**
+알린다(§7.4.1 위반). payload에 중복해 넣지 않는 이유는 종류가 이미
+`notifications.type` 컬럼이자 `AppNotification.type` 필드이기 때문이다 — 같은 사실을 두
+곳에 적으면 어긋났을 때 어느 쪽이 진짜인지 판단할 근거가 사라진다.
+
+**운영 준비 항목(미완료)**: Vault 시크릿 `push_dispatch_url` / `push_dispatch_token`,
+Edge Function 시크릿 `FCM_SERVICE_ACCOUNT`, 그리고 함수 배포. 셋이 없으면
+`dispatch_pending_pushes()`는 **조용히 no-op** 한다 — FCM 연결 전에도 알림함 적재는
+정상 동작해야 하고, cron이 매분 에러 로그를 쌓으면 안 된다.
+
+### 6-N.7 종류별 딥링크 목적지 — 서버 발행값의 정본
+
+> 이 표가 없어서 QA C-3이 문서 검토로 잡히지 않았다. **route를 바꾸거나 라우트를
+> 개편할 때 이 표와 `lib/core/notifications/notification_deep_link.dart`의 목적지 표,
+> `docs/ARCHITECTURE.md` §5.6.1을 함께 고칠 것.**
+
+| 종류 | 발행처 | `payload.route` | 실제 go_router 경로 |
+|---|---|---|---|
+| NT-01 tier_promotion | `trg_tier_promotion_notify` | `/home` | `Routes.home` |
+| NT-02 tier_proximity | `trg_runs_notifications` | `/home` | `Routes.home` |
+| NT-03 season_ending 변형 A(승급권) | `notify_season_ending` | `/home` | `Routes.home` |
+| NT-03 season_ending 변형 B(비승급권) | `notify_season_ending` | `/profile` | `Routes.profile` |
+| NT-03 season_ending 변형 C(플래티넘) | `notify_season_ending` | `/home` | `Routes.home` |
+| NT-04 rank_change | `notify_rank_changes` | `/home` | `Routes.home` |
+| NT-05 weekend_push (A·B·C) | `notify_weekend_push` | `/home` | `Routes.home` |
+| NT-06 badge_level (러닝 유래) | `trg_runs_notifications` | `/history/run/{run_id}` | `Routes.runDetailOf(runId)` |
+| NT-06 badge_level (레벨 단독) | `trg_level_up_notify` | `/history?tab=badges` | `Routes.badgeGallery` |
+| NT-07 points / 종류 미상 | — | — | 클라이언트 폴백 `Routes.notifications` |
+
+**랭킹과 티어가 둘 다 `/home`인 이유**: 2026-08-21 4탭 개편에서 주간 랭킹은 홈 화면
+안(티어 카드 아래)으로, 뱃지 갤러리는 활동 화면의 **하위 탭**으로 흡수됐다. `/ranking`,
+`/profile/badges`, `/runs/{id}`는 **이 앱에 존재한 적이 없다** — 45~48이 개편 이전의 화면
+구성을 가정하고 지어낸 값이었고, 마이그레이션 50이 정정했다.
+
+⚠️ `/history?tab=badges`는 **쿼리까지 정확히** 보내야 한다. `/history`만 보내면 기록
+탭으로 열린다(크래시는 아니다). 클라이언트는 화이트리스트 판정에서만 쿼리를 떼고,
+이동에는 원문을 그대로 쓴다.
+
+### 6-N.8 클라이언트 계약
+
+| 목적 | 경로 |
+|---|---|
+| 알림함 조회 | `notifications` 직접 select (`user_id` = 본인, `created_at desc` 커서) |
+| 미읽음 수 | `notifications` head count, `read_at is null` (부분 인덱스) |
+| 실시간 | `notifications`가 `supabase_realtime` publication에 등록됨 — INSERT를 **재조회 신호로만** 쓴다 |
+| 읽음 처리 | RPC `mark_notifications_read(p_ids uuid[])` — `p_ids`가 null이면 전체 읽음. 서버 시각으로 확정하고 이미 읽은 행은 건드리지 않는다 |
+| 설정 | `notification_settings` 직접 select/upsert (컬럼 하나만 부분 갱신) |
+| 토큰 등록 | RPC `register_push_token(p_token, p_platform, p_device_id, p_app_version)` |
+| 토큰 해제 | `push_tokens` delete (본인 행) |
+
+> ⚠️ **알림함 목록을 `NotificationSettings.isEnabled`로 필터하지 말 것.** 그 메서드는
+> `pushEnabled`가 꺼져 있으면 false를 돌려주는 **설정 화면용** 판정이다. 서버는 종류별
+> 토글이 꺼진 알림은 애초에 행을 만들지 않고, 마스터 스위치는 **푸시만** 막고 알림함
+> 기록은 남긴다(§6-N.6). 클라이언트가 한 번 더 거르면 마스터를 끈 사용자의 알림함이
+> 통째로 비어 보인다.
+
+> ⚠️ `register_push_token`이 단순 upsert가 아닌 이유: 같은 기기를 다른 계정이 쓰면 FCM
+> 토큰은 그대로인 채 `user_id`만 바뀌는데, update 정책의 USING이 `user_id = auth.uid()`를
+> 요구해 이전 소유자의 행에 매칭되지 않아 실패한다. 그 상태로 두면 **기기를 넘겨받은
+> 사용자에게 이전 사용자의 순위·티어 알림이 간다.**
+
+---
+
 ## 7. 서버 검증 규칙 (PRD §8.4 기술 스펙화)
 
 | 검사 | 기준값 | 구현 |
@@ -1236,7 +1500,10 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | ~~9~~ | ~~`device_source_diversity_gte`의 OR 표현식 파싱 규약~~ → **해소(2026-08-26)**. 문법·매칭 시맨틱 모두 §3.1.2에 정본화 | — |
 | ~~10~~ | ~~`runs.device_vendors` 마이그레이션(§4.0) 미적용~~ → **해소(2026-08-26, 마이그레이션 36)**. 컬럼·GIN 인덱스·백필·판정 로직 전부 적용됐다. 뱃지 5종은 이제 판정 가능하며, 실제 지급은 P1 웨어러블 연동으로 `device_vendors` 에 값이 실리기 시작한 뒤부터다 | — |
 | 11 | **`season_weekly_rank_lte` 최소 모집단(top1 N≥10 / 나머지 N≥20)이 현재 시드 규모에서 절대 충족되지 않는다.** 티어별 모집단이 1~4명이라 이 뱃지 12종은 실사용자가 붙기 전까지 아무도 못 받는다. 판정 로직은 정확하지만 **아직 실데이터로 검증되지 않았다** | 베타 사용자 20명 이상 확보 시 |
-| 12 | **주간 랭킹 확정 배치가 아직 `pg_cron` 에 없다.** 정본(§2.2)은 "매주 월요일 KST 00:10(`10 15 * * 0` UTC)"이고, 현재는 마이그레이션 16의 기존 `refresh_all_leaderboards` 주기 스케줄에 의존한다. 주 경계 직후 확정 시점이 스펙과 다르다 | Phase 2 랭킹 모듈 |
+| 12 | **주간 랭킹 확정 배치가 아직 `pg_cron` 에 없다.** 정본(§2.2)은 "매주 월요일 KST 00:10(`10 15 * * 0` UTC)"이고, 현재는 마이그레이션 16의 기존 `refresh_all_leaderboards` 주기 스케줄 + 46번의 `runnit-rank-notify`(매시)에 의존한다. 주 경계 직후 확정 시점이 스펙과 다르다. **이 배치가 없어서 딸려 있는 미구현 2건**: (a) RK-06 주간 상위권 뱃지가 "주간 확정 직후"가 아니라 다음 러닝 때 발급된다, (b) NT-06의 `badge_level:weekly:{week_id}` 키(주간 유래 뱃지 알림)를 쓰는 발화점이 아직 없다 | Phase 2 랭킹 모듈 |
+| 23 | **`season_weekly_rank_lte` 판정에 최소 모집단 게이트와 "확정된 지난 주" 필터가 없다**(gamification 문서 §6.2 결함 #1·#2, 마이그레이션 32). 참가자 3명인 티어에서 1위 뱃지가 나가고, 진행 중인 주간의 일시적 1위로도 발급된다 — 뱃지는 영구 자산이라 정상 경로로 회수할 수 없다. 현재 시드 규모(티어당 1~4명)에서는 아무도 못 받아 실피해가 없으나, **베타 사용자가 10명을 넘는 순간부터 되돌릴 수 없다.** 수정 SQL은 그 문서 §6.2에 그대로 이식 가능 | 🔴 **베타 오픈 전 필수** |
+| 25 | **알림 시스템(NT-01~08) 검증이 자동 테스트(208개) 수준에서 멈춰 있다.** ① 서버 알림 생성 + 인앱 알림함 검증 — FCM 없이 가능. 동기 트리거(NT-01/02/06)는 테스트 계정 러닝 업로드로, 배치(NT-03/04/05)는 `select notify_season_ending()` / `refresh_leaderboards_and_notify()` / `notify_weekend_push()` 수동 호출로 `notifications` 적재를 확인하고, 앱 알림함(마이페이지→종)에서 렌더·딥링크·읽음·미읽음 배지·종류별 토글을 눈으로 검증. NT-04는 `participant_count >= 10` 게이트로 현재 시드에선 안 뜸(#11·#12와 동일 제약). ② 실기기 푸시 검증 8항목 — FCM 운영 설정(프로젝트·서비스계정·네이티브 설정 파일·Vault 시크릿 2개·`push-dispatch` 배포) 완료 후. 절차·트리아지 표는 `_workspace/20260828_174224_ui_notifications.md` §5. 레벨 단독 알림(§5 항목 6, C-3 크래시하던 경로)은 러닝으로 발화 안 함 — 테스트 계정에 XP 경로를 별도로 태워야 함 | ① 지금 가능(테스트 계정 uid 확보 시) / ② FCM 운영 설정 후 |
+| 24 | **알림 문구에 `display_name`을 그대로 쓰는데 공개 범위(AC-05) 컬럼이 스키마에 없다.** NT-04 "OOO님에게 추월당했어요"와 NT-05 변형 C "2위 OOO님"이 해당한다. 비공개 설정이 생기면 알림이 그 설정을 우회하게 된다. 현재는 이름이 비면 `"순위가 128위 → 131위로 내려갔어요"` / `"2위가 …"` 로 폴백한다 | AC-05(공개 범위) 구현 시 함께 |
 | ~~13~~ | ~~`season_first_long_distance` 의 거리 허용오차가 PB 조건과 다르다~~ → **해소(2026-08-26, 마이그레이션 42)**. `목표 − min(목표×2%, 300m)` 으로 통일(§10.2 표) — 같은 "목표 거리 완주" 판정이므로 별도 기준을 둘 이유가 없다 | — |
 | ~~15~~ | ~~`session_distance_gte` 5종은 허용오차 없이 정확히 `≥ 목표×1000m`~~ → **해소(2026-08-26, 마이그레이션 42)**. 동일 허용오차 `목표 − min(목표×2%, 300m)`로 통일(완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 채움) | — |
 | 14 | **`tier_change_history` 가 0행이라 XP-4(티어 도달 XP)가 아무에게도 적립되지 않고 있다.** 마이그레이션 34가 "상승 이벤트만 기록"으로 정정하면서 백필을 취소했고(소급 복원 불가는 의도된 결정), 기존 유저는 이번 시즌에 강등 없이는 다시 상승할 기회가 없다. 다음 시즌부터 정상 적립된다 — 그때까지 `total_xp` 는 XP-4 만큼 과소 집계된 상태다 | 2026-Q4 시즌 시작 시 자연 해소 |
