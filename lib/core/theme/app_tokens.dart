@@ -52,4 +52,10 @@ class AppTokens {
   /// Figma 확인 안 된 임시값 — 실제 디자인 확정 시 교체 필요.
   static const Color tierDiamond = Color(0xFF8E7CE0);
   static const Color tierSpecial = Color(0xFFE0648E);
+
+  // ── 레벨/경험치 진행률 색 ──────────────────────────────
+  /// 홈·프로필의 XP 진행률 바 색. 시즌 티어 진행률 바(#00F35A, 네온 그린)와
+  /// 시각적으로 구분되도록 앰버로 잡았다 — 두 진행 축(시즌 리셋 vs 영구 누적)이
+  /// 한 카드에 나란히 있을 때 사용자가 헷갈리지 않게 한다. Figma 미확정 임시값.
+  static const Color levelXp = Color(0xFFFFB020);
 }
