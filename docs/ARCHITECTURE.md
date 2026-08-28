@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.4 |
+| 문서 버전 | v0.5 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** Phase 0 산출물로 출발했으나 현재는 실제 코드(`lib/`, `supabase/migrations/`)를 따라간다. 구현이 발전하면 이 문서를 갱신한다(CLAUDE.md 규칙 3) |
@@ -16,6 +16,7 @@
 | v0.2 | **성취 축하 구조를 "두 소비 지점 + 억제 카운터"에서 "전역 풀페이지 단일 지점"으로 갱신**(§7.4.1, PRD v1.4·TRD §3.9.3). 요약 화면 인라인 축하와 `achievementCelebrationSuppressors`를 제거하고 `AchievementCelebrationHost` 하나가 항상 풀페이지(`rootNavigator` + `fullscreenDialog`)로 축하한다. 공유 카드(§3.1 파일 트리)도 같은 날 9:16 투명 오버레이로 최종 확정된 상태를 반영 |
 | v0.3 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** Phase 1~2 구현이 진행되면서 확정된 사실을 반영: (1) **백엔드는 Deno Edge Function을 쓰지 않는다** — 업로드는 `supabase_flutter`의 PostgREST 직접 upsert이고, 서버 검증·티어/랭킹/뱃지 판정·XP는 전부 **Postgres 트리거·함수**(마이그레이션 00~42)다(§2, §5, §8). (2) ~~지도는 `flutter_map`(OSM 타일)~~ — **v0.4에서 `flutter_naver_map`으로 교체돼 해소됨**(§12-#2). (3) **로컬 저장소 = drift 확정**(§9, §12-#1). (4) `run_samples`는 별도 테이블이 아니라 `runs.samples jsonb`로 확정(§12-#4). (5) 시즌은 `seasons` 테이블 대신 순수 계산 함수(`Season.idAt` / SQL `season_id_at`). 데이터 모델 필드 상세는 TRD §3 대신 `lib/models/*.dart`가 정본 |
 | v0.4 | **지도 SDK를 `flutter_map`(OSM 타일) → `flutter_naver_map`으로 교체**(2026-08-28, 사용자 결정). PRD §7과의 불일치(§12-#2)가 해소됐다. 앱 내부 표준 좌표 모델은 `latlong2`의 `LatLng`를 그대로 유지하고 (`share_card_builder`·`polyline_codec`·집계·히스토리 provider가 전부 이 타입에 묶여 있다), **지도 위젯 경계에서만** `NLatLng`로 변환한다(`lib/core/map/map_geo.dart`). 글로벌 확장 시 재교체 여지를 위해 지도 표면 생성을 `mapSurfaceBuilderProvider` 하나(`lib/core/map/map_surface.dart`)로 모아 격리했다 — 위젯 테스트도 이 주입점을 스텁으로 override한다(구 `mapTileProviderOverride` 제거). OSM 전용 `core/widgets/osm_attribution.dart`는 삭제 — 네이버 SDK가 로고·저작권을 자체 렌더하므로 일시정지 딤도 전면 오버레이 대신 지도 `lightness`로 처리해 로고를 가리지 않는다 |
+| v0.5 | **러닝·뱃지 삭제 불가 + 시즌 중 티어 강등 없음**(PRD v1.6, 2026-08-28, 마이그레이션 43). §7.3 표의 "강등" 행을 "시즌 내 절대 없음 — `current_tier` 단조 증가"로 강화. 부정 기록 무효화(`is_flagged`)로 `season_distance_meters`가 줄어도 `recompute_season_tier`가 같은 시즌이면 `greatest(신규, 직전)`로 티어를 유지한다. §13의 HI-07을 "수정만, 삭제 스펙 제거"로 갱신. §5 §7.4의 "before/after 비교는 시즌 롤오버를 강등으로 오인" 서술은 그대로 유효(시즌 경계 하드 리셋은 남아 있음) |
 
 > 📌 **원천 우선순위**: 이 문서와 `docs/PRD.md`가 충돌하면 **PRD가 우선**한다. 이 문서는 PRD의 제품 사양을 구현 구조로 번역한 것이며, 사양 자체를 새로 정의하지 않는다.
 
@@ -376,7 +377,7 @@ PRD §6 "1시간 러닝 시 배터리 소모 10% 이하" 요구는 **표준 모�
 |---|---|---|
 | 평가 방식 | 절대평가 (기준선 돌파) | 상대평가 (티어 내 순위) |
 | 집계 주기 | 시즌(3개월) 누적, **판정은 즉시** | 주(1주), **집계는 배치 허용** |
-| 강등 | 시즌 중 없음 | 매주 리셋(그 자체가 리셋) |
+| 강등 | 시즌 중 **절대 없음** — `current_tier`는 시즌 내 단조 증가(부정 기록 무효화로 누적 거리가 줄어도 유지, PRD v1.6·마이그레이션 43) | 매주 리셋(그 자체가 리셋) |
 | 데이터 소유 모델 | `profiles.current_tier` 등 컬럼 | `leaderboard_entries` (`RankingEntry`) |
 | 인원 불균형 대응 | 해당 없음(개인 단위 절대 판정) | 매칭 로직 미도입 — "격차 우선, 상위% 병기"로 표시만 완화 (PRD §5.4.1) |
 
@@ -515,10 +516,10 @@ flowchart LR
 
 ## 13. 현재 진행 상황 (Phase 1~2)
 
-**완료(구현·테스트 존재)**: 데이터 모델(`lib/models/`), Supabase 스키마·트리거(마이그레이션 00~42), GPS 트래킹 코어(스무딩·백그라운드·집계), 오프라인 저장(drift)+동기화, 히스토리 목록·월간 차트, **기록 상세 화면(HI-02 — 경로 지도·1km 랩 테이블·페이스 그래프, `run_detail_page.dart` + `history/domain/lap_splits.dart`)**, 주간 랭킹 + 티어 + Realtime, 뱃지 판정(39 condition_type 전량)·갤러리·레벨·주간 스트릭·XP, 공유 카드(PB)·풀페이지 성취 축하, 카카오 OAuth 로그인.
+**완료(구현·테스트 존재)**: 데이터 모델(`lib/models/`), Supabase 스키마·트리거(마이그레이션 00~43), GPS 트래킹 코어(스무딩·백그라운드·집계), 오프라인 저장(drift)+동기화, 히스토리 목록·월간 차트, **기록 상세 화면(HI-02 — 경로 지도·1km 랩 테이블·페이스 그래프, `run_detail_page.dart` + `history/domain/lap_splits.dart`)**, 주간 랭킹 + 티어 + Realtime, 뱃지 판정(39 condition_type 전량)·갤러리·레벨·주간 스트릭·XP, 공유 카드(PB)·풀페이지 성취 축하, 카카오 OAuth 로그인.
 
 **남은 P0(요약 — 상세는 사용자에게 별도 정리)**:
-1. 기록 수정·삭제(HI-07) — 리포지토리에 수정 경로 없음. 상세 화면에 붙을 예정
+1. 기록 **수정(제목·메모)**(HI-07) — 리포지토리에 수정 경로 없음, 상세 화면에 붙을 예정. **삭제는 스펙에서 제거됨**(PRD v1.6 — 러닝·뱃지 사용자 삭제 불가)
 2. 푸시 알림 전체(NT-01~06, 08) — FCM 미도입
 3. 계정 삭제/데이터 완전 삭제(AC-04, 심사 필수), 프로필 편집(AC-02), 타 사용자 프로필(AC-03), 공개 범위(AC-05), Apple/Google 로그인(AC-01)
 4. 과거 시즌 전체 랭킹, 역대 시즌 기록 화면(HI-06) UI 연결

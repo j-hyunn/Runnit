@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.11 |
+| 문서 버전 | v0.12 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~42`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
@@ -21,6 +21,7 @@
 | v0.8 | **공유 카드 규격 확정 — 9:16 투명 오버레이 스티커**(§3.9.2). 같은 날 16:9 가로 밴드로 바꿨다가, 사용자가 준 정확한 레퍼런스 이미지(9:16 세로, 투명 배경 + 흰색 콘텐츠, 그림자 없음)를 확인하고 되돌렸다 — 최종 확정은 **9:16, 배경/그림자/모서리 전부 없음, 세로 1열 중앙 정렬**(워드마크 → 시각 → 아트 → [성취 3종만 헤드라인] → 수치 스택), 기록 카드 수치 라벨은 레퍼런스 그대로 영문(`Distance`/`Pace`/`Time`). 규격 변경 히스토리 표는 §3.9.2 참조 |
 | v0.10 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** (1) §2 확정 스택을 실제 `pubspec.yaml`에 맞춤 — 지도 `flutter_naver_map` → **`flutter_map`+`latlong2`**(PRD §7과 불일치, ARCHITECTURE §12-#2), 로컬 저장소 `🔴 미정` → **drift 확정**, `riverpod_generator` 제거(수동 Provider), FCM `NT-01~08` → **미도입(Phase 2)**, 누락 패키지(`flutter_svg`/`share_plus`/`shared_preferences`/`intl`/`collection`/`uuid`/`logger`) 추가. (2) §3 상단에 "Dart 코드는 설계 스냅샷, 정본은 `lib/models/`" 노트 추가 — 실제 enum은 `RunRecordType`이 아니라 `ActivityType`+`RunStatus`+`SyncStatus`, 랭킹은 `RankingPeriod`/`RankingMetric`/`RankingScope` 4축. (3) **§6 "API / Edge Function 사양"은 폐기** — Deno Edge Function은 구현되지 않았고, 업로드는 PostgREST upsert + `runs` 트리거 체인이다(§6.0 노트). (4) §13 Phase 0 DoD를 실제 완료 상태로 갱신 |
 | v0.9 | **성취 축하 연출을 다이얼로그→풀페이지로 전환, 공유 버튼을 PB 전용으로 축소**(§3.9.3, PRD v1.4·HI-10). `AchievementCelebrationHost`가 `showDialog` 대신 `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute(fullscreenDialog: true)`로 진짜 풀페이지를 띄운다(하단 네비바 우회, §7 구조와 동일 패턴). 글로우 링·컨페티·엘라스틱 팝인으로 구성된 `_AchievementBurst` 애니메이션 신설. **일반 뱃지·티어 승급은 공유 버튼을 받지 않는다** — PB만 받는다(사용자 확정, 2026-08-27). `summary_achievements.dart`의 인라인 축하·억제 카운터(`achievementCelebrationSuppressors`)를 전부 제거 — 전역 호스트 하나가 유일한 소비 지점이 되면서 §14 #20(프레임 경합)이 원인 자체가 사라져 해소됨 |
+| v0.12 | **러닝·뱃지 삭제 불가 + 시즌 중 티어 강등 없음**(PRD v1.6, 마이그레이션 43, Supabase `xwtbwexcofcgmbvktwdo`). §9의 "기록 삭제 시 재계산" 항목을 재작성 — 사용자 삭제 경로가 없으므로 티어 하향 시나리오는 부정 판정(`is_flagged`)뿐이고, 그 경우에도 `recompute_season_tier`가 같은 시즌이면 `current_tier := greatest(tier_for_distance(dist), 직전)`로 등급을 유지한다(`season_distance_meters`만 실제값으로 하락). §3.5의 `tier_change_history` 서술에서 "강등" 시나리오 표현 정리. 스테일 데이터 1건(`stier_silver@2026-Q3`, 테스트 계정) 삭제 |
 | v0.11 | **지도 SDK를 `flutter_map`(OSM 타일) → `flutter_naver_map`으로 교체**(2026-08-28, 사용자 결정, ARCHITECTURE v0.4 §12-#2 해소). §2 확정 스택의 지도 행 갱신. `latlong2`는 **앱 내부 표준 좌표 모델로 유지**하고 `NLatLng` 변환은 지도 위젯 경계(`lib/core/map/map_geo.dart`)에 가둔다. 지도 표면 생성은 `mapSurfaceBuilderProvider`(`lib/core/map/map_surface.dart`) 하나로 격리 — 글로벌 확장 시 SDK 교체 지점이자 위젯 테스트 스텁 주입점이다(`flutter_map`의 `TileProvider`에 묶여 있던 `mapTileProviderOverride`는 제거). OSM 전용 `core/widgets/osm_attribution.dart` 삭제(네이버 SDK가 로고·저작권 자체 렌더). NCP 클라이언트 ID는 플레이스홀더 상태 — 배포 전 교체 필요 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
@@ -314,14 +315,15 @@ class RankingEntry with _$RankingEntry {
 >   reached_at)`를 추가했다 — `recompute_season_tier`(마이그레이션 22)가 티어 판정 후
 >   **직전보다 실제로 상승했을 때만**(enum 비교, 하드코딩 없음) 이 테이블에 최초 1행을
 >   기록한다(UNIQUE(user_id, season_id, tier) + ON CONFLICT DO NOTHING이 동시성 안전망).
->   같은 시즌에 유지·강등 시에는 기록하지 않는다. `season_max_tier_reached_before_pct`는
+>   같은 시즌에 유지 시에는 기록하지 않는다(마이그레이션 43 이후로는 시즌 중 강등
+>   자체가 없다 — PRD v1.6 TI-08). `season_max_tier_reached_before_pct`는
 >   `enum_range(null::public.tier)`에서 유도한 "최고 티어"(하드코딩 금지) 도달 시각을
 >   `season_start + (season_end - season_start) * pct/100.0`과 비교한다.
 >   ⚠️ **소급 불가**: 이 테이블은 2026-08-25(마이그레이션 33/34) 이후의 상승분만 담는다.
 >   그 이전에 이미 어떤 티어에 도달해 있던 기존 유저는 도달 "시각"을 역산할 근거가
 >   없어(season_histories는 마감 스냅샷뿐) 이력이 소급 생성되지 않는다 — 근사치도 만들지
 >   않았다(false negative만 발생, 오지급 없음). 이후 실제로 다시 그 티어로 오르는 순간부터
->   (예: 다음 시즌, 또는 강등 후 재상승) 정확하게 기록된다.
+>   (다음 시즌) 정확하게 기록된다.
 
 ### 3.6 `Badge` / `UserBadge`
 
@@ -1095,7 +1097,7 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 - **주간 랭킹 집계**: `pg_cron` 5분 주기 배치(`refresh_all_leaderboards`). 조회는 PostgREST 직접 select.
 - **시즌/주간 경계**: 시즌은 `season_id_at()`/`season_start()`/`season_end()` 계산 함수(역년 분기 KST). 주 경계는 KST 월요일 00:00 ~ 일요일 23:59, `leaderboard_entries.period_start`. 러닝 **시작 시각** 기준으로 귀속(PRD §8.5).
 - **주중 승급 시 랭킹 이관**: `leaderboard_entries`의 `tier` 파티션만 갱신, 주간 거리는 `runs` 재집계로 자연 유지 — row 재생성 안 함(PRD §8.6).
-- **기록 삭제 시 재계산**: `runs` DELETE/UPDATE 트리거로 `profiles.season_distance_meters` 재계산 → 기준선 미달 시 `current_tier` 하향. 자발적 삭제 시 이미 지급된 뱃지는 **회수 안 함**(PRD §8.1). 부정 기록 무효화는 `is_flagged` + 뱃지 `revoked=true`로 구분.
+- **누적 거리 재계산 시 티어 (PRD v1.6, 마이그레이션 43)**: 사용자는 러닝을 삭제할 수 없다(HI-07은 제목·메모 수정만). 누적 거리가 줄어드는 유일한 경로는 서버의 부정 판정(`is_flagged=true`)이며, 이 경우 `recompute_season_tier`가 `season_distance_meters`는 실제값으로 낮추되 **같은 시즌이면 `current_tier`는 내리지 않는다** — `v_new_tier := greatest(tier_for_distance(dist), 직전_티어)`. 시즌 경계를 넘은 첫 recompute만 하드 리셋(다음 시즌 bronze부터). 부정으로 획득된 뱃지는 행을 남기고 `user_badges.revoked=true`. 정상 러닝은 삭제 자체가 없으므로 티어 하향 시나리오가 존재하지 않는다.
 
 ---
 
