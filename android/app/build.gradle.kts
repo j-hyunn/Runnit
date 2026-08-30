@@ -2,6 +2,9 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // FCM(PRD §5.10): `google-services.json`을 이 디렉터리에 넣은 뒤
+    // settings.gradle.kts의 짝이 되는 줄과 **함께** 주석을 해제한다.
+    // id("com.google.gms.google-services")
 }
 
 android {

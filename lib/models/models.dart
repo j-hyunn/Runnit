@@ -2,10 +2,13 @@
 /// 다른 feature에서는 개별 파일 대신 `package:runnit/models/models.dart`를 임포트한다.
 library;
 
+export 'app_notification.dart';
 export 'app_user.dart';
 export 'badge.dart';
 export 'challenge.dart';
 export 'enums.dart';
+export 'notification_settings.dart';
+export 'push_device_token.dart';
 export 'ranking_entry.dart';
 export 'run_record.dart';
 export 'run_sample.dart';

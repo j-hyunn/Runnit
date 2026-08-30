@@ -63,6 +63,41 @@ extension GenderWire on Gender {
       };
 }
 
+/// 알림 종류(`public.notification_type`). 알림함 필터
+/// (`.eq('type', ...)`)와 미읽음 카운트 쿼리에 쓴다.
+extension NotificationTypeWire on NotificationType {
+  String get wire => switch (this) {
+        NotificationType.tierPromotion => 'tier_promotion',
+        NotificationType.tierProximity => 'tier_proximity',
+        NotificationType.seasonEnding => 'season_ending',
+        NotificationType.rankChange => 'rank_change',
+        NotificationType.weekendPush => 'weekend_push',
+        NotificationType.badgeLevel => 'badge_level',
+        NotificationType.points => 'points', // Phase 4 — 발행되지 않음
+      };
+}
+
+/// FCM data payload의 `type` 문자열 → [NotificationType].
+///
+/// 푸시 메시지는 `AppNotification.fromJson`을 거치지 않는다(행 전체가 아니라
+/// data 맵 몇 개만 온다). 모르는 라벨은 **null** — 구버전 앱이 새 종류를 받아도
+/// 예외로 죽지 않고 "종류 미상 알림"으로 다룬다.
+NotificationType? notificationTypeFromWire(String? wire) {
+  if (wire == null) return null;
+  for (final type in NotificationType.values) {
+    if (type.wire == wire) return type;
+  }
+  return null;
+}
+
+/// 푸시 토큰 플랫폼(`public.device_platform`).
+extension DevicePlatformWire on DevicePlatform {
+  String get wire => switch (this) {
+        DevicePlatform.ios => 'ios',
+        DevicePlatform.android => 'android',
+      };
+}
+
 extension DistanceUnitWire on DistanceUnit {
   String get wire => switch (this) {
         DistanceUnit.metric => 'metric',

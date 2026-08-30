@@ -35,14 +35,24 @@ import 'widgets/run_tile.dart';
 ///    서버에 대응 캐시가 없어 로컬 기록에서 직접 집계(`history_providers.dart`).
 /// 4. "최근 기록"(최신 3건) + "전체 보기" → [RunHistoryListPage].
 class HistoryPage extends StatefulWidget {
-  const HistoryPage({super.key});
+  const HistoryPage({this.initialTab, super.key});
+
+  /// 진입 시 선택할 하위 탭. `'badges'`면 뱃지 탭으로 연다
+  /// (`/history?tab=badges` — 뱃지 획득 알림의 딥링크 목적지).
+  ///
+  /// 하위 **라우트**(`/history/badges`)로 만들지 않은 이유: 그러면 활동 화면 위에
+  /// 활동 화면이 한 장 더 쌓인다. 탭은 화면이 아니라 같은 화면의 상태다.
+  final String? initialTab;
+
+  /// 뱃지 탭을 가리키는 쿼리 값. 서버 발행 route와 문자열을 공유한다.
+  static const badgesTab = 'badges';
 
   @override
   State<HistoryPage> createState() => _HistoryPageState();
 }
 
 class _HistoryPageState extends State<HistoryPage> {
-  int _tab = 0;
+  late int _tab = widget.initialTab == HistoryPage.badgesTab ? 1 : 0;
 
   @override
   Widget build(BuildContext context) {

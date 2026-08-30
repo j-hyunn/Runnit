@@ -1,11 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/gamification/data/supabase_gamification_repository.dart';
+import '../../features/notifications/data/supabase_notification_repository.dart';
 import '../../features/profile/data/supabase_user_repository.dart';
 import '../../features/ranking/data/supabase_ranking_repository.dart';
 import '../../features/tracking/data/tracking_providers.dart';
 import '../api/supabase_client.dart';
 import '../repositories/gamification_repository.dart';
+import '../repositories/notification_repository.dart';
 import '../repositories/ranking_repository.dart';
 import '../repositories/run_repository.dart';
 import '../repositories/user_repository.dart';
@@ -35,4 +37,10 @@ final gamificationRepositoryProvider = Provider<GamificationRepository>((ref) {
 
 final userRepositoryProvider = Provider<UserRepository>((ref) {
   return SupabaseUserRepository(ref.watch(supabaseClientProvider));
+});
+
+/// 알림함·알림 설정·푸시 토큰(PRD §5.10). 발행 경로는 없다 — 조건 판정은 전부
+/// 서버(트리거·pg_cron)의 몫이다(ARCHITECTURE §7.5.1).
+final notificationRepositoryProvider = Provider<NotificationRepository>((ref) {
+  return SupabaseNotificationRepository(ref.watch(supabaseClientProvider));
 });

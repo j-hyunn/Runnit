@@ -43,9 +43,13 @@
 	     AppleSettings.allowBackgroundLocationUpdates = true 는 이 선언이
 	     없으면 런타임에 예외를 던진다. "항상 허용"을 못 받은 사용자는
 	     서비스가 이 플래그를 false로 두므로 이 선언이 있어도 무해하다. -->
+	<!-- remote-notification: FCM data 메시지를 백그라운드에서 받기 위한 선언
+	     (PRD §5.10). 표시 전용 알림에는 필수가 아니지만, 서버가 나중에
+	     data-only 메시지를 섞어 보낼 때 이 선언이 없으면 조용히 버려진다. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
+		<string>remote-notification</string>
 	</array>
 	<!-- ── HealthKit (Apple Watch 심박 / Garmin Connect 동기화분) ──────
 	     HealthWearableMetricsSource가 READ 전용으로 요청한다. 쓰기는 하지 않으므로

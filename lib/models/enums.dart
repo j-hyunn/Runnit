@@ -297,3 +297,82 @@ enum Gender {
   @JsonValue('undisclosed')
   undisclosed,
 }
+
+/// 푸시/인앱 알림의 종류 (PRD §5.10 NT-01~07).
+///
+/// ## 값 하나 = PRD 요구사항 ID 하나
+/// NT-08(항목별 on/off)이 "항목"이라고 부르는 단위가 바로 이 enum 값이다.
+/// 그래서 값을 요구사항보다 잘게 쪼개지 않는다 — 예컨대 NT-04를
+/// `rankOvertook` / `rankOvertaken` 둘로 나누고 싶어지지만,
+/// ① 설정 화면 토글이 PRD 표와 1:1로 대응하지 않게 되고
+/// ② 딥링크 목적지가 같으며(주간 랭킹)
+/// ③ 문구는 **서버가 완성해서 내려주므로** 클라이언트가 방향을 알 필요가 없다.
+/// 방향·잔여 거리·D-day 같은 뉘앙스는 전부 `AppNotification.payload`에 담긴다.
+///
+/// ## 판정은 전부 서버다
+/// 이 enum은 **수신한 알림을 분류·표시·설정**하기 위한 것이지, 클라이언트가
+/// "지금 승급 알림을 보낼 때인가"를 판단하기 위한 것이 아니다. 티어/랭킹 판정을
+/// 클라이언트가 흉내내면 서버 확정값과 어긋난 알림이 생긴다(ARCHITECTURE §7.3).
+enum NotificationType {
+  /// NT-01 티어 승급. 서버 `user_badges`(`stier_*`) INSERT와 같은 순간에 발행된다.
+  @JsonValue('tier_promotion')
+  tierPromotion,
+
+  /// NT-02 다음 티어 근접 — "5km 더 뛰면 골드".
+  @JsonValue('tier_proximity')
+  tierProximity,
+
+  /// NT-03 시즌 종료 D-14 / D-3. 둘의 구분은 `payload['days_left']`.
+  @JsonValue('season_ending')
+  seasonEnding,
+
+  /// NT-04 주간 순위 변동(추월함 / 추월당함). 방향은 `payload['direction']`
+  /// (`up` / `down`).
+  @JsonValue('rank_change')
+  rankChange,
+
+  /// NT-05 주말 막판 유도 — "10위까지 2.1km".
+  @JsonValue('weekend_push')
+  weekendPush,
+
+  /// NT-06 뱃지 획득 / 레벨업.
+  @JsonValue('badge_level')
+  badgeLevel,
+
+  /// NT-07 포인트 적립·소멸 예정 — **Phase 4. MVP에서 사용하지 않는다.**
+  /// 값만 미리 두는 이유: 서버가 나중에 이 타입을 발행했을 때 구버전 앱이
+  /// `fromJson`에서 예외를 던지고 알림함 전체가 깨지는 일을 막기 위해서다.
+  /// 설정 화면에도 노출하지 않는다([NotificationTypeX.isMvp] 참조).
+  @JsonValue('points')
+  points,
+}
+
+extension NotificationTypeX on NotificationType {
+  /// MVP 범위 여부. false면 설정 화면 토글에서 제외한다(NT-07은 Phase 4).
+  bool get isMvp => this != NotificationType.points;
+
+  /// 성취 계열 여부 — 인앱 축하(`AchievementCelebrationHost`)와 **역할이 겹치는**
+  /// 종류들이다. 앱이 포그라운드일 때 이 종류의 푸시는 배너를 띄우지 않는다.
+  /// 축하는 `user_badges` 큐를 소비하는 호스트 한 곳이 담당한다
+  /// (ARCHITECTURE §7.4.1 — 소비 지점은 끝까지 하나여야 한다).
+  bool get isAchievement => switch (this) {
+        NotificationType.tierPromotion ||
+        NotificationType.badgeLevel =>
+          true,
+        NotificationType.tierProximity ||
+        NotificationType.seasonEnding ||
+        NotificationType.rankChange ||
+        NotificationType.weekendPush ||
+        NotificationType.points =>
+          false,
+      };
+}
+
+/// 푸시 토큰이 등록된 플랫폼. FCM 토큰만으로는 구분되지 않아 별도로 저장한다
+/// (발송 페이로드의 `apns` / `android` 블록이 달라진다).
+enum DevicePlatform {
+  @JsonValue('ios')
+  ios,
+  @JsonValue('android')
+  android,
+}

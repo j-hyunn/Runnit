@@ -11,5 +11,15 @@
 	<true/>
 	<key>com.apple.developer.healthkit.access</key>
 	<array/>
+	<!-- ── 푸시 알림(APNs / FCM, PRD §5.10) ────────────────────────────
+	     ⚠️ 이 파일만으로는 적용되지 않는다. HealthKit과 같은 절차다 —
+	     Xcode에서 Runner 타겟 → Signing & Capabilities → "+ Capability" →
+	     Push Notifications 를 추가해야 프로비저닝 프로파일에 APNs가 포함된다.
+	     값은 개발 빌드 `development`, TestFlight/App Store 빌드 `production`.
+	     Xcode가 빌드 구성에 맞춰 이 값을 덮어쓰므로 여기서는 개발 기본값을 둔다.
+	     추가로 Apple Developer 콘솔에서 **APNs 인증 키(.p8)를 발급해 Firebase
+	     콘솔에 업로드**해야 한다. 이것이 없으면 iOS에는 푸시가 전혀 가지 않는다. -->
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>

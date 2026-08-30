@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/auth/auth_providers.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/widgets/app_shell.dart';
 import '../../../models/models.dart';
 import '../../home/presentation/widgets/ranking_widgets.dart';
+import '../../notifications/presentation/widgets/unread_badge.dart';
 import '../../tracking/presentation/wearable_connect_page.dart';
 
 /// 마이페이지 — **로그인 필수 라우트**(라우터 가드가 게스트를 `/login`으로 보낸다).
@@ -64,9 +67,12 @@ class ProfilePage extends ConsumerWidget {
                               ),
                             ),
                           ),
-                          const _MenuItemData(
+                          _MenuItemData(
                             asset: 'assets/icons/bell.svg',
                             label: '알림 설정',
+                            // NT-08 항목별 on/off (PRD §5.10).
+                            onTap: () =>
+                                context.push(Routes.notificationSettings),
                           ),
                           const _MenuItemData(
                             asset: 'assets/icons/headset.svg',
@@ -150,6 +156,8 @@ class _ProfileHeader extends StatelessWidget {
     return const Padding(
       // 홈 헤더(Figma `55:1179`, px-24 py-15)와 통일 — 2026-08-25.
       padding: EdgeInsets.fromLTRB(24, 15, 24, 15),
+      // 종 아이콘은 더 이상 자리표시자가 아니다 — 알림함(`/notifications`)으로
+      // 가고 미읽음 배지를 단다(PRD §5.10).
       // 34로 고정 — 다른 헤더와 같은 이유(`_ActivityHeader` 참고, 24로 두면
       // 24px 타이틀 텍스트 줄높이가 넘쳐서 잘렸다).
       child: SizedBox(
@@ -165,7 +173,7 @@ class _ProfileHeader extends StatelessWidget {
               children: [
                 _HeaderIconButton(asset: 'assets/icons/search.svg', label: '검색'),
                 SizedBox(width: AppTokens.s12),
-                _HeaderIconButton(asset: 'assets/icons/bell.svg', label: '알림'),
+                NotificationBellButton(),
               ],
             ),
           ],

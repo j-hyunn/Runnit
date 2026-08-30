@@ -77,6 +77,18 @@ dependencies:
   #   (`features/sharing/data/share_card_renderer.dart` 참조)
   share_plus: ^10.1.4
 
+  # ── 푸시 알림 (PRD §5.10 NT-01~08) ────────────────────────
+  # firebase_core: FCM SDK의 전제. `Firebase.initializeApp()`이 네이티브 설정
+  #   파일(`google-services.json` / `GoogleService-Info.plist`)을 읽는다.
+  #   ⚠️ 설정 파일이 없는 개발 환경에서도 앱이 떠야 하므로 초기화는
+  #   `lib/core/notifications/firebase_bootstrap.dart`에서 try/catch로 감싼다
+  #   (지도 초기화와 같은 규약 — `main.dart` 참조).
+  # firebase_messaging: FCM 토큰 획득/갱신 + 포그라운드/백그라운드 메시지 수신.
+  #   발송은 전적으로 서버(Edge Function `push-dispatch`)의 몫이고, 클라이언트는
+  #   토큰 등록과 수신·딥링크만 담당한다.
+  firebase_core: ^4.14.0
+  firebase_messaging: ^16.6.0
+
   # ── 유틸 ─────────────────────────────────────────────────
   intl: ^0.19.0          # 날짜/숫자 로케일 포맷 (페이스 표시)
   collection: ^1.18.0

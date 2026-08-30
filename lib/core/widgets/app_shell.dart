@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/notifications/presentation/widgets/notification_banner_host.dart';
 import '../../features/sharing/presentation/widgets/achievement_celebration.dart';
 import '../auth/auth_providers.dart';
 
@@ -86,7 +87,11 @@ class _AppShellState extends ConsumerState<AppShell> {
     // 비동기라 사용자가 이미 다른 탭으로 옮긴 뒤에 뱃지가 도착할 수 있고,
     // 오프라인 러닝은 며칠 뒤 동기화 시점에 도착한다. 요약 화면 하나에만
     // 연출을 달면 그 경우들이 조용히 사라진다.
-    return AchievementCelebrationHost(
+    // 포그라운드 푸시 배너(NT-02·03·04·05). 성취 계열은 여기까지 오지 않는다 —
+    // `AchievementCelebrationHost`의 풀페이지와 역할이 겹치기 때문이다
+    // (ARCHITECTURE §7.5.2). 두 호스트는 큐를 공유하지 않고 공존만 한다.
+    return NotificationBannerHost(
+      child: AchievementCelebrationHost(
       child: Scaffold(
         body: widget.shell,
         extendBody: true,
@@ -135,6 +140,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

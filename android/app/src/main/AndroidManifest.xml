@@ -26,7 +26,10 @@
          Android 14(API 34)부터는 서비스 타입별 권한을 따로 선언해야 한다. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
-    <!-- geolocator의 ForegroundNotificationConfig가 띄우는 상시 알림용(API 33+). -->
+    <!-- geolocator의 ForegroundNotificationConfig가 띄우는 상시 알림용(API 33+).
+         FCM 푸시(PRD §5.10)도 같은 권한을 쓴다 — 요청 시점은 **첫 러닝 완료
+         직후**이며(`notification_permission_primer.dart`), 위치 권한 흐름과
+         분리돼 있다. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
