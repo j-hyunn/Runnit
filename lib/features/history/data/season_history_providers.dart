@@ -20,20 +20,12 @@ final mySeasonHistoriesProvider =
   return ref.watch(seasonHistoryRepositoryProvider).fetchByUser(userId);
 });
 
-/// TI-09(역대 최고 티어, P1) 표시용 — **끝난 시즌만** 본다.
+/// TI-09(역대 최고 티어, P1) 표시용 — **본인** 버전.
 ///
-/// 진행 중인 시즌의 티어(`AppUser.currentTier`)는 포함하지 않는다. 이 값의
-/// 의미는 "확정된 명예"이고, 아직 안 끝난 시즌은 확정이 아니기 때문이다.
-/// 무효 처리된 시즌(`isVoided`)도 제외한다 — 부정 판정된 시즌이 최고 기록으로
-/// 남으면 §8.1의 회수 정책이 무의미해진다.
+/// 판정 규칙 자체는 `SeasonHistory.bestTierOf`에 있다. 타인 프로필(AC-03)의
+/// `bestTierOfProvider`가 같은 규칙을 써야 하므로 모델로 올렸다.
 final bestEverTierProvider = Provider<Tier?>((ref) {
-  final histories =
-      ref.watch(mySeasonHistoriesProvider).valueOrNull ?? const <SeasonHistory>[];
-
-  Tier? best;
-  for (final h in histories) {
-    if (h.isVoided) continue;
-    if (best == null || h.finalTier.order > best.order) best = h.finalTier;
-  }
-  return best;
+  return SeasonHistory.bestTierOf(
+    ref.watch(mySeasonHistoriesProvider).valueOrNull ?? const <SeasonHistory>[],
+  );
 });

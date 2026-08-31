@@ -242,7 +242,8 @@ class _ProfileCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const ProfileCircle(size: 64),
+              // AC-02로 아바타를 편집할 수 있게 되면서 여기도 실제 사진을 그린다.
+              ProfileCircle(size: 64, imageUrl: profile?.avatarUrl),
               const SizedBox(width: AppTokens.s12),
               Expanded(
                 child: Column(
@@ -268,9 +269,9 @@ class _ProfileCard extends StatelessWidget {
               ),
               InkWell(
                 borderRadius: BorderRadius.circular(AppTokens.rPill),
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('설정 화면은 준비 중이에요')),
-                ),
+                // AC-02 프로필 편집. 이 화면은 마이 탭 브랜치이므로 go_router
+                // push가 그대로 이 탭 스택 위에 쌓인다.
+                onTap: () => context.push(Routes.editProfile),
                 child: Padding(
                   padding: const EdgeInsets.all(AppTokens.s4),
                   child: SvgPicture.asset(

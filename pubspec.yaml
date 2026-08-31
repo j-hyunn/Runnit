@@ -68,6 +68,17 @@ dependencies:
   # 그대로 렌더링 — 손으로 다시 그리지 않고 원본 SVG를 쓴다.
   flutter_svg: ^2.0.10+1
 
+  # ── 이미지 (AC-02 프로필 사진) ────────────────────────────
+  # image_picker: 갤러리/카메라에서 아바타 원본을 고른다. `maxWidth`/`maxHeight`/
+  #   `imageQuality`로 **네이티브 단에서** 리사이즈·재인코딩되므로 별도 이미지
+  #   처리 패키지(`image`, `flutter_image_compress`)를 더하지 않는다 —
+  #   Storage 버킷이 2 MiB 상한을 걸고 있어(마이그레이션 54) 업로드 전에 크기를
+  #   줄이는 것만이 목적이고, 그 일을 이 패키지가 이미 한다.
+  #   ⚠️ 자유 크롭 UI(`image_cropper`)는 채택하지 않았다 — iOS/Android 양쪽에
+  #   네이티브 설정이 추가로 필요한데, 아바타는 어차피 원형으로 클리핑돼 표시되고
+  #   `maxWidth == maxHeight`로 장변 512px에 맞추면 육안상 차이가 없다.
+  image_picker: ^1.1.2
+
   # ── 공유 (HI-08 / HI-10) ──────────────────────────────────
   # share_plus: OS 공유 시트(iOS UIActivityViewController / Android ACTION_SEND).
   #   인스타 스토리로 카드 PNG를 넘기는 유일한 경로다.
