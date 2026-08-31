@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.8 |
+| 문서 버전 | v0.12 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** Phase 0 산출물로 출발했으나 현재는 실제 코드(`lib/`, `supabase/migrations/`)를 따라간다. 구현이 발전하면 이 문서를 갱신한다(CLAUDE.md 규칙 3) |
@@ -19,6 +19,10 @@
 | v0.5 | **러닝·뱃지 삭제 불가 + 시즌 중 티어 강등 없음**(PRD v1.6, 2026-08-28, 마이그레이션 43). §7.3 표의 "강등" 행을 "시즌 내 절대 없음 — `current_tier` 단조 증가"로 강화. 부정 기록 무효화(`is_flagged`)로 `season_distance_meters`가 줄어도 `recompute_season_tier`가 같은 시즌이면 `greatest(신규, 직전)`로 티어를 유지한다. §13의 HI-07을 "수정만, 삭제 스펙 제거"로 갱신. §5 §7.4의 "before/after 비교는 시즌 롤오버를 강등으로 오인" 서술은 그대로 유효(시즌 경계 하드 리셋은 남아 있음) |
 | v0.6 | **HI-07 서버 강제 — 저장된 러닝은 제목·메모만 수정 가능**(마이그레이션 51, 2026-08-31, 미적용·사용자 검토 대기). v1.6은 *삭제*만 막았을 뿐 멱등 upsert가 열어 둔 **UPDATE 경로**가 남아 있었다 — 3km를 저장한 뒤 42km로 UPDATE하면 파생값이 재계산되면서 티어·랭킹·뱃지가 그대로 따라 올라갔다. `runs_guard`의 UPDATE 분기가 터미널 상태 행을 `new := old` 후 `title`/`note`만 재적용하도록 바뀌면서 이 경로가 닫혔다(§5.2). 예외 대신 "되돌리기"를 택한 이유는 오프라인 큐의 멱등 재 upsert를 깨지 않기 위함. RLS `runs_delete_own` 정책 삭제 — 테이블 GRANT는 유지한다(회수하면 미완결 세션 "버리기"가 42501로 실패). §5.5 표 `runs` 행·§13-1 갱신. 상세 스펙은 TRD §4.4 |
 | v0.8 | **HI-06 QA 후속**(2026-08-31) — (1) §5.5 RLS 표의 `season_histories` 서술 정정: "본인 행만 select"가 아니라 `is_voided=false`면 타인 행도 `authenticated` 공개(`season_histories_select_visible`, 마이그레이션 21) — TI-09/AC-03이 이 공개 범위를 재사용한다. `tier_change_history`와 분리. (2) 마이그레이션 52 — `recompute_season_tier`의 `best_weekly_rank` 서브쿼리에 `and le.tier is not null`(통합 보드 제외), 상세는 TRD §9·§14. **원격 적용 완료**(2026-08-31) |
+| v0.9 | **AC-02/AC-03 백엔드**(마이그레이션 53~55, 2026-08-31, **미적용 — 사용자 승인 대기**). §5.5 RLS 표에 세 행 추가: (1) `profiles` 편집 컬럼 — `weekly_goal_km` 신설, 그리고 `trg_profiles_guard`가 `runs` 가드와 달리 **블랙리스트**라 신설 컬럼의 기본값이 "사용자 편집 가능"이라는 함정 명시. (2) `storage.objects`/`avatars` 버킷 — 읽기 공개, 쓰기는 `{uid}/` 폴더 한정, 용량·MIME은 버킷 설정. (3) `user_badges` 공개 select 정책의 **스키마 드리프트 정정** — 표가 서술하던 "타인은 `verified and not revoked`"는 원격 DB에 정책으로 살아 있었지만 마이그레이션 파일에는 없었다(적용 이력은 52에서 끝난다). 원격만 맞고 새 환경은 틀린 상태여서, 라이브와 동일한 술어로 파일화했다 — 원격 적용은 no-op. 부수효과로 Realtime 구독 필터가 유일한 방어선이 된다. `runs` RLS는 손대지 않았다 — AC-03은 타인의 러닝 목록을 노출하지 않는다. 상세는 TRD §4.5·§5 |
+| v0.12 | **마이그레이션 53~56 원격 적용 완료**(2026-08-31). 54 의 `storage.objects` 정책 4종은 owner 권한 문제로 `execute_sql` 경로로 적용(이력 밖, 파일엔 있음). advisor 신규 경보 없음 |
+| v0.11 | **AC-02/03 QA 수정**(2026-08-31, 마이그레이션 56). F-2 `username` 서버 강제 고정: `trg_profiles_guard`가 UPDATE 시 `new.username := old.username`(PK와 동급). 블랙리스트 가드라 클라만 막던 핸들이 REST 직접 호출로 변조 가능했던 것. §5.5 `profiles` 행 갱신 |
+| v0.10 | **AC-05(공개 범위) 삭제**(PRD v1.7, 2026-08-31). §13-3에서 AC-02/03을 "백엔드 완료·클라 진행"으로, AC-05를 "삭제"로 갱신. `profiles`는 예전부터 전체 공개였고 비공개 분기를 새로 만들지 않는다 |
 | v0.7 | **역대 시즌 기록 화면(HI-06) 프런트 연결 완료**(2026-08-31). 백엔드(마이그레이션 21·22)는 이미 있었고 소비하는 화면만 없었다 — `SeasonHistoryRepository`(읽기 전용, `season_id desc`) + `mySeasonHistoriesProvider` + `SeasonHistoryPage`. 리포지토리에 write 경로를 두지 않은 이유: `season_histories`는 시즌 경계에서 서버만 쓰고 마감 후엔 서버도 고치지 않는다. 무효 시즌(`is_voided`)은 목록에서 **감추지 않고** 흐리게+라벨로 표시(§8.1 이의 제기 근거 보존). TI-09(역대 최고 티어)는 무효·진행 중 시즌을 제외한 파생값으로 목록 상단에 노출. 라우트 `/seasons`는 알림함과 같이 **마이 탭 브랜치** 소속이라 다른 탭에서는 `push` 대신 `MaterialPageRoute`로 띄운다. §13-4 갱신 |
 
 > 📌 **원천 우선순위**: 이 문서와 `docs/PRD.md`가 충돌하면 **PRD가 우선**한다. 이 문서는 PRD의 제품 사양을 구현 구조로 번역한 것이며, 사양 자체를 새로 정의하지 않는다.
@@ -309,7 +313,9 @@ sequenceDiagram
 | `season_histories` | `is_voided=false` 행은 `authenticated`에게 타인 것도 공개, `is_voided=true`는 본인만, `anon` 차단(`season_histories_select_visible`, 마이그레이션 21). 쓰기는 `recompute_season_tier`(SECURITY DEFINER)만. TI-09(역대 최고 티어 프로필) / AC-03(타인 프로필 역대 시즌)이 이 공개 범위를 재사용 |
 | `tier_change_history` | 본인 행만 select, 쓰기는 서버 함수만 |
 | `badges` / `lunar_holidays` | 전체 select(공개 상수), 쓰기 없음 |
-| `user_badges` | 본인 전체 select, 타인은 `revoked=false and verified=true`만. insert는 서버(트리거)만, 클라이언트가 쓸 수 있는 컬럼은 `is_seen` 하나 |
+| `user_badges` | 본인 전체 select(`user_badges_select_own` — 회수된 뱃지도 본인은 봐야 한다), 타인은 `verified and not revoked`만(`user_badges_select_public`, **마이그레이션 55** — AC-03 뱃지 갤러리). insert는 서버(트리거)만, 클라이언트가 쓸 수 있는 컬럼은 `is_seen` 하나. ⚠️ 타인 행이 열리면서 **Realtime 이벤트도 타인 것까지 도달**한다 — `user_badges` 구독에는 반드시 `user_id=eq.{내 uuid}` 필터를 건다(`watchUnseenBadges()`는 이미 걸려 있음) |
+| `profiles` (편집 컬럼) | 사용자가 쓸 수 있는 것은 `display_name`·`avatar_url`·`weight_kg`·`weekly_goal_km`(**마이그레이션 53**) 넷. `username`은 고정 — **가드가 UPDATE 시 `old` 값으로 되돌린다(마이그레이션 56)**, 클라도 패치에서 뺐다. ⚠️ `trg_profiles_guard`는 `runs`와 달리 **블랙리스트**(서버 전용 컬럼만 `old`로 되돌림)라 **신설 컬럼의 기본값이 "사용자 편집 가능"** 이다 — 서버 전용 컬럼을 추가할 때 가드 등록을 잊으면 그대로 뚫린다(TRD §4.5) |
+| `storage.objects` (`avatars`) | 읽기 전체 공개(`anon` 포함 — 게스트 랭킹도 아바타를 그린다), 쓰기(insert/update/delete)는 `avatars/{auth.uid()}/…` 본인 폴더만. 용량 2MiB·MIME 3종은 RLS가 아니라 **버킷 설정**으로 강제(마이그레이션 54, AC-02) |
 | `notifications` | 본인 행 select + update만. **insert 정책 없음**(서버 전용) — 클라이언트가 알림 행을 만들 수 있으면 티어·랭킹 판정을 흉내내는 경로가 열린다. 쓸 수 있는 컬럼은 `read_at` 하나(가드 트리거가 강제) |
 | `notification_settings` / `push_tokens` | 본인 행 전권. 토큰 등록만 RPC `register_push_token`(SECURITY DEFINER) 경유 — 기기 이양 시 이전 소유자의 행을 지워야 하는데 RLS로는 불가능하다 |
 
@@ -608,7 +614,7 @@ flowchart LR
 **남은 P0(요약 — 상세는 사용자에게 별도 정리)**:
 1. 기록 **수정(제목·메모)**(HI-07) — **서버·클라이언트 모두 완료.** 서버는 마이그레이션 51(`runs_guard`가 터미널 상태 행의 UPDATE를 `title`/`note`로 한정, `runs_delete_own` 정책 제거, 길이 CHECK), 클라이언트는 `RunRepository.updateMeta()` + 상세 화면 편집 바텀시트(`run_meta_edit_sheet.dart`, 2026-08-31). 남은 것은 **마이그레이션 51 원격 적용**뿐이다 — 적용 전에는 클라이언트가 보내는 `title`/`note` 부분 UPDATE만 반영되고 길이 절단·정규화가 서버에서 일어나지 않는다. **삭제는 스펙에서 제거됨**(PRD v1.6 — 러닝·뱃지 사용자 삭제 불가). `RunRepository.delete()`는 미완결 세션 폐기 전용으로 의미가 좁혀졌고 서버 DELETE를 더 이상 호출하지 않는다
 2. 푸시 알림 — **서버·클라이언트 모두 완료(마이그레이션 44~48 + 2026-08-28 클라이언트).** 남은 것은 **운영 설정**뿐이다 — FCM 프로젝트·서비스 계정, 네이티브 설정 파일 2개, Android `google-services` Gradle 플러그인 주석 해제, iOS Push Notifications capability + APNs 키, Vault 시크릿 2개, `push-dispatch` 배포
-3. 계정 삭제/데이터 완전 삭제(AC-04, 심사 필수), 프로필 편집(AC-02), 타 사용자 프로필(AC-03), 공개 범위(AC-05), Apple/Google 로그인(AC-01)
+3. 계정 삭제/데이터 완전 삭제(AC-04, 심사 필수), Apple/Google 로그인(AC-01). ~~프로필 편집(AC-02)·타 사용자 프로필(AC-03)~~ — 백엔드·클라이언트 완료, 마이그레이션 53~56 원격 적용 완료(2026-08-31). QA F-1~3 수정 반영. ~~공개 범위(AC-05)~~ — **삭제**(PRD v1.7)
 4. ~~역대 시즌 기록 화면(HI-06)~~ — **완료**(2026-08-31). `season_histories` 읽기 전용 리포지토리(`SeasonHistoryRepository` + Supabase 구현, `season_id desc`)·`mySeasonHistoriesProvider`·`SeasonHistoryPage`(`features/history/presentation/`). 진입점은 마이페이지 "역대 시즌"(`/seasons`, 게스트 차단)과 활동 탭 시즌 필. 무효 시즌(`is_voided`)은 숨기지 않고 흐리게+"무효 처리됨" 표시, TI-09(역대 최고 티어)는 목록 상단 요약으로 노출(무효·진행 중 시즌 제외). **남은 것**: 과거 시즌 **전체 랭킹**(그 시즌 리더보드 스냅샷 테이블이 없어 백엔드 작업 선행), 타 사용자 프로필의 역대 시즌(AC-03과 함께)
 5. Phase 3: 성능·배터리·GPS 실기기 검증, 접근성, 스토어 심사, 클로즈드 베타
 

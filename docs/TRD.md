@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.14 |
+| 문서 버전 | v0.18 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~42`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
@@ -24,6 +24,10 @@
 | v0.12 | **러닝·뱃지 삭제 불가 + 시즌 중 티어 강등 없음**(PRD v1.6, 마이그레이션 43, Supabase `xwtbwexcofcgmbvktwdo`). §9의 "기록 삭제 시 재계산" 항목을 재작성 — 사용자 삭제 경로가 없으므로 티어 하향 시나리오는 부정 판정(`is_flagged`)뿐이고, 그 경우에도 `recompute_season_tier`가 같은 시즌이면 `current_tier := greatest(tier_for_distance(dist), 직전)`로 등급을 유지한다(`season_distance_meters`만 실제값으로 하락). §3.5의 `tier_change_history` 서술에서 "강등" 시나리오 표현 정리. 스테일 데이터 1건(`stier_silver@2026-Q3`, 테스트 계정) 삭제 |
 | v0.13 | **HI-07 서버 강제 — 저장된 러닝은 제목·메모만 수정 가능**(마이그레이션 51, **원격 적용 완료** 2026-08-31 — over-limit 행 0건이라 51-1 정리 UPDATE는 no-op, 조작 UPDATE 되돌리기 스모크 테스트 통과, advisor 신규 경보 없음). §4.4 신설: `trg_runs_guard`의 UPDATE 분기가 터미널 상태(`completed`/`discarded`) 행에 대해 `new := old` 후 `title`/`note`만 재적용한다 — 화이트리스트라 앞으로 추가되는 컬럼도 자동 보호되고, 되돌리기가 파생값 재계산보다 앞서므로 편집이 페이스·XP·티어·랭킹·뱃지를 흔들지 않는다. 예외를 던지지 않는 이유는 오프라인 멱등 재 upsert(`syncPending`)를 깨뜨리지 않기 위함. `runs_title_len`(60자)·`runs_note_len`(500자) CHECK 백스톱 + 가드의 `btrim`→절단→`NULL` 정규화. PRD v1.6에서 이미 제거된 사용자 삭제 경로의 잔재인 RLS `runs_delete_own` 정책 삭제(테이블 GRANT는 유지 — 회수하면 미완결 세션 "버리기"가 42501로 실패한다). §5 RLS 표 `runs` 행·§9 갱신. QA 지적 반영 — 51-1 정리 UPDATE를 `set_config('runnit.server_write','on')`로 감싸 AFTER 트리거 4종의 대량 재집계를 차단(C-5), 51-2에 체크포인트 업로드 도입 시 우회 경로 경고 주석 추가(L-3) |
 | v0.14 | **HI-06 후속 (2026-08-31)** — (1) `season_histories` RLS 서술 정정: §5 표가 "본인 행만 select"라고 적었으나 실제 `season_histories_select_visible`(마이그레이션 21)은 `is_voided=false or user_id=auth.uid()` — 무효 아닌 타인 행도 `authenticated`에게 공개다(TI-09/AC-03 전제). `tier_change_history`와 한 셀에 묶여 있던 것을 분리. (2) **마이그레이션 52** — `recompute_season_tier`의 `season_histories.best_weekly_rank` 서브쿼리에 `and le.tier is not null` 추가. 마이그레이션 23 이후 `leaderboard_entries`에 통합 보드(`tier IS NULL`)와 티어별 보드가 공존해 `min(rank)`가 두 스코프를 섞을 수 있었다(마감 후 수정 불가 컬럼). 43 함수 본문에서 이 한 줄 외 변경 없음. §9 갱신. **원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`) |
+| v0.15 | **AC-02 프로필 편집 / AC-03 타인 프로필 백엔드**(마이그레이션 53~55, 2026-08-31, 원격 적용 완료 — v0.18 참조). §4.5 신설. (1) `profiles.weekly_goal_km double precision` + CHECK `> 0 and <= 500`, `NULL`=미설정 — **단위가 km**인 프로젝트 유일한 거리 컬럼이고 서버 판정에 쓰이지 않는 표시 전용이다. `trg_profiles_guard`는 **블랙리스트**(서버 전용 컬럼만 되돌림)라 가드 변경 없이 편집이 열린다 — `runs`의 화이트리스트 가드(§4.4)와 기본값이 정반대라는 점을 §4.5 표로 대비시켜 기록. (2) `avatars` Storage 버킷 신설 + `storage.objects` RLS — 읽기 전체 공개(게스트 랭킹이 남의 아바타를 그린다), 쓰기는 `(storage.foldername(name))[1] = auth.uid()::text`로 본인 폴더만, 용량/MIME 제한은 버킷 설정(2MiB·jpeg/png/webp). (3) `user_badges_select_public` — 타인의 `verified and not revoked` 행 공개. **스키마 드리프트 정정**: 이 정책은 원격 DB에 **이미 살아 있었으나 마이그레이션 파일 어디에도 없었다**(적용 이력은 52에서 끝난다 — 대시보드/임시 SQL로 만들어진 것). 원격에는 있고 파일에는 없으니 `db reset`·스테이징·브랜치 DB에서만 AC-03이 조용히 깨지는 상태였다. 술어를 라이브와 한 글자도 다르지 않게(`user_id <> auth.uid() and revoked = false and verified = true`) 맞추고 drop-then-create로 감싸 **원격 적용이 진짜 no-op**이 되도록 했다. 인덱스는 마이그레이션 25의 `user_badges_public_idx`가 동일 술어로 이미 존재. ⚠️ 부수효과: Realtime 구독에 타인 행 이벤트가 도달하므로 `user_id` 필터가 유일한 방어선이 된다. **`runs` RLS는 손대지 않았다** — AC-03은 타인의 러닝 목록을 노출하지 않는다 |
+| v0.18 | **마이그레이션 53~56 원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`). 53/55/56 은 `apply_migration`. 54 는 버킷만 `apply_migration`, `storage.objects` 정책 4종은 `apply_migration`이 `42501 must be owner of table objects`로 거부돼 `execute_sql`(대시보드 SQL 에디터 동등)로 적용 — 원격 반영됐으나 `supabase_migrations` 이력엔 정책 부분이 빠졌다(파일엔 있음, `db reset`/브랜치 DB 정상). `get_advisors(security)` 신규 경보 없음 |
+| v0.17 | **AC-02/03 QA 수정**(2026-08-31, 마이그레이션 56 추가). F-1 랭킹에서 본인 행 탭 시 홈 탭이 스피너에 갇히던 것 — 진입점(`home_page`·`full_ranking_page`)에서 본인 행을 `/users/:me` push 대신 마이 탭 전환으로 갈라내고, `user_profile_page` 방어 분기는 `pop()` 우선으로. F-2 `username` 서버 강제 고정(마이그레이션 56 — `trg_profiles_guard`가 UPDATE 시 되돌림) + 클라 `_editablePatch`에서 키 제거. F-3 리포지토리 주석의 "화이트리스트" 오기 정정. §4.5 갱신 |
+| v0.16 | **AC-05(기록 공개 범위) 삭제**(PRD v1.7, 2026-08-31 사용자 확정). `profiles.visibility` 컬럼·`ProfileVisibility` enum 설계(§3.3 레거시 블록, §4 보존 DDL)를 폐기. §5 RLS 표 `profiles` 행에서 "AC-03/AC-05" → "전체 공개(`profiles_select_all`), 공개 범위 분기 없음"으로 정정. §14 이슈 #24(알림 문구 `display_name`이 비공개 설정을 우회) 비쟁점화 — 우회할 설정이 사라졌다 |
 | v0.11 | **지도 SDK를 `flutter_map`(OSM 타일) → `flutter_naver_map`으로 교체**(2026-08-28, 사용자 결정, ARCHITECTURE v0.4 §12-#2 해소). §2 확정 스택의 지도 행 갱신. `latlong2`는 **앱 내부 표준 좌표 모델로 유지**하고 `NLatLng` 변환은 지도 위젯 경계(`lib/core/map/map_geo.dart`)에 가둔다. 지도 표면 생성은 `mapSurfaceBuilderProvider`(`lib/core/map/map_surface.dart`) 하나로 격리 — 글로벌 확장 시 SDK 교체 지점이자 위젯 테스트 스텁 주입점이다(`flutter_map`의 `TileProvider`에 묶여 있던 `mapTileProviderOverride`는 제거). OSM 전용 `core/widgets/osm_attribution.dart` 삭제(네이버 SDK가 로고·저작권 자체 렌더). NCP 클라이언트 ID는 플레이스홀더 상태 — 배포 전 교체 필요 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
@@ -72,7 +76,7 @@ PRD §7의 확정 스택을 실제 패키지 단위로 구체화한다.
 > ⚠️ **이 절의 Dart 코드 블록은 Phase 0 설계 스냅샷이다. 필드 단위 정본은 [`lib/models/*.dart`](../lib/models)** — 구현이 발전하면서 아래와 어긋난 곳이 있다:
 > - 모든 enum은 `lib/models/enums.dart`에 집약. `RunSampleSource` = `phone`/`watch`/`external`(§3.1.1), `DeviceVendor` = `phone`/`watchApple`/`watchGarmin`/`watchOther`/`unknown`.
 > - `RunRecord`는 `RunRecordType` 대신 **`ActivityType`(outdoor_run/indoor_run/trail_run/walk) × `RunStatus`(recording/paused/completed/discarded)** 를 쓰고, `SyncStatus`(local/pending/synced/failed)·`deviceVendors`·서버 확정 `isFlagged`/`flagReason`/`awardedXp`를 포함한다. 시간은 `elapsedSeconds`/`movingSeconds` 두 종류.
-> - `UserProfile`이 아니라 **`AppUser`**(테이블 `profiles`) — `username`/`displayName`/`heightCm`/`weightKg`/`birthDate`/`gender`/`preferredUnit` + 통계 캐시(`totalDistanceMeters`/`totalMovingSeconds`/`totalRunCount`/`totalXp`/`level`) + 티어(`currentTier`/`seasonDistanceMeters`/`tierSeasonId`) + 주간 스트릭.
+> - `UserProfile`이 아니라 **`AppUser`**(테이블 `profiles`) — `username`/`displayName`/`heightCm`/`weightKg`/`birthDate`/`gender`/`preferredUnit`/`weeklyGoalKm`(AC-02, 2026-08-31 추가) + 통계 캐시(`totalDistanceMeters`/`totalMovingSeconds`/`totalRunCount`/`totalXp`/`level`) + 티어(`currentTier`/`seasonDistanceMeters`/`tierSeasonId`) + 주간 스트릭.
 > - `Season`은 클래스가 아니라 **경계 계산 유틸**(`Season.idAt`/`startOf`/`endOf`). `UserSeasonTier` 모델은 없다(→ `AppUser`/`profiles` 컬럼).
 > - `RankingEntry`는 `period`(daily/weekly/monthly/all_time) × `metric`(distance/duration/run_count) × `scope`(global/crew/friends) × `tier` 4축 + `ownerTier`·`rankDelta`·표시 스냅샷(`username`/`avatarUrl`).
 > - `SeasonHistory`(테이블 `season_histories`), `ChallengeParticipation`이 추가로 존재.
@@ -220,14 +224,13 @@ class UserProfile with _$UserProfile {
     required double totalDistanceMeters,   // 캐시 필드, 서버 트리거로 갱신
     required int totalRunCount,
     required DateTime createdAt,
-    @Default(ProfileVisibility.public) ProfileVisibility visibility,  // AC-05
   }) = _UserProfile;
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => _$UserProfileFromJson(json);
 }
-
-enum ProfileVisibility { public, private }
 ```
+
+> ⚠️ 위 블록은 Phase 0 설계 잔재다. 실제 모델은 `lib/models/app_user.dart`의 `AppUser`이며 `weeklyGoalKm`(2026-08-31 추가)를 포함한다. **`visibility` / `ProfileVisibility`는 AC-05 삭제로 폐기**(v1.7, 2026-08-31) — 만들지 않는다.
 
 ### 3.4 `Season` / `UserSeasonTier`
 
@@ -752,7 +755,7 @@ create table public.profiles (
   weekly_goal_km numeric,
   total_distance_m numeric not null default 0,   -- 캐시, 트리거로 갱신
   total_run_count integer not null default 0,    -- 캐시, 트리거로 갱신
-  visibility text not null default 'public' check (visibility in ('public','private')),
+  -- (visibility 컬럼은 AC-05 삭제로 폐기 — v1.7, 2026-08-31)
   created_at timestamptz not null default now()
 );
 
@@ -961,8 +964,10 @@ create table public.lunar_holidays (
 | `RankingEntry.score` | `leaderboard_entries.score` | numeric | 단위는 `metric`에 종속(distance→미터). ⚠️ 정본 테이블명은 `leaderboard_entries`다 — `weekly_ranking_cache`는 초기 설계 문서에만 있던 이름이고 실제로 생성된 적이 없다(§4.3) |
 | `RankingEntry.participantCount` | `leaderboard_entries.participant_count` | integer nullable | |
 | `UserProfile.totalDistanceMeters` | `profiles.total_distance_m` | numeric | 트리거 갱신 캐시 |
+| `AppUser.weeklyGoalKm` | `profiles.weekly_goal_km` | double precision nullable | **AC-02, 마이그레이션 53.** ⚠️ 단위가 **km**다 — 프로젝트의 다른 거리 컬럼은 전부 m이고 이것만 다르다(컬럼명 `_km`가 그 표식). 사용자가 "주 30km"로 입력·인지하는 값이라 저장 단위를 입력 단위에 맞췄다. 달성률은 클라이언트가 계산(`total_distance_meters / 1000` 대비). **서버는 이 값으로 아무 판정도 하지 않는다** — 랭킹·티어·뱃지와 무관한 표시 전용. `NULL` = 미설정(0이 아니다). CHECK `> 0 and <= 500`. 타입을 `numeric`(폐기된 §4 DDL 초안)이 아니라 `double precision`으로 잡은 것은 같은 화면에서 함께 편집되는 `weight_kg`·`height_cm`와 맞추기 위함 |
 | `AppUser.totalXp` | `profiles.total_xp` | integer | ⚠️ 구 `totalPoints`/`total_points` 개명(2026-08-26). **PRD §5.6 Phase 4 포인트와 다른 개념** |
 | `AppUser.level` | `profiles.level` | integer | CHECK `between 1 and 60` |
+| `AppUser.weeklyGoalKm` | `profiles.weekly_goal_km` | double precision nullable | AC-02 사용자 편집 컬럼(마이그레이션 53, 2026-08-31). **단위가 km다** — 다른 거리 컬럼이 미터인 것과 의도적으로 다르며, 사용자가 직접 입력·확인하는 표시값이라 표시 단위와 맞췄다. `NULL` = 미설정(`0`이 아니다), CHECK `> 0 and <= 500`. 티어·랭킹·뱃지 판정 입력이 **아니다**. `trg_profiles_guard`는 화이트리스트가 아니라 **블랙리스트**라(서버 전용 컬럼만 old 값으로 되돌린다) 컬럼 추가만으로 사용자 편집이 열린다 — 역으로 새 **서버 전용** 컬럼은 반드시 가드에 등록해야 한다 |
 | `RunRecord.awardedXp` | `runs.awarded_xp` | integer nullable | ⚠️ 구 `awardedPoints`/`awarded_points` 개명. 서버 전용 쓰기(`_serverOwnedKeys`) |
 | `RunRecord.isFlagged` | `runs.is_flagged` | boolean nullable | 2026-08-26 읽기 전용 노출(공유 게이트). **`@Default(false)`가 아니라 nullable** — `null`(아직 모름) / `false`(서버가 정상 확정) / `true`(플래그) 세 상태를 구분해야 미검증 기록을 축하·공유해 버리는 사고를 막는다. 업로드 payload에서 제거(`_serverOwnedKeys`), 로컬 `summaryJson`에는 보존. **채워지는 유일한 경로는 업로드 응답**(`_push()`의 `.upsert(payload).select(...).single()`) — `trg_runs_guard`가 BEFORE 트리거에서 동기 확정하므로 재조회·realtime 없이 그 응답에 이미 들어 있다 |
 | `RunRecord.flagReason` | `runs.flag_reason` | text nullable | 위와 동일 규칙. 내부 코드성 문구라 사용자에게 그대로 노출하지 않는다 |
@@ -1028,6 +1033,38 @@ create table public.lunar_holidays (
 
 **클라이언트 계약**: 편집은 별도 RPC 없이 기존 upsert 경로 그대로다. `title`/`note`만 담은 부분 UPDATE(`update().eq('id', …)`)를 권장하며, 전체 행 upsert를 보내도 나머지는 조용히 무시된다. 서버가 정규화한 최종값이 필요하면 `.select('id,title,note,updated_at').single()`로 되받는다.
 
+### 4.5 프로필 편집·타인 프로필 (PRD AC-02 / AC-03) — 2026-08-31 · 마이그레이션 53~56
+
+**편집 가능 항목은 넷뿐이다**: `display_name` · `avatar_url` · `weight_kg` · `weekly_goal_km`. `username`(고유 핸들)은 고정이다.
+
+⚠️ **`username` 고정은 서버가 강제한다 (마이그레이션 56).** 블랙리스트 가드라 `username`은 원래 클라이언트 UPDATE로 통과됐고, `profiles_update_self` RLS는 본인 행 전권을 준다 — REST 직접 호출로 핸들 변경이 가능했다(QA F-2). `trg_profiles_guard`의 UPDATE 분기가 `new.username := old.username`을 PK(`new.id`)와 같은 취급으로 되돌린다. 클라이언트도 `_editablePatch`에서 `username` 키를 뺐다(이중 방어). 훗날 관리자 개명이 필요하면 별도 SECURITY DEFINER 경로로 연다.
+
+⚠️ **`profiles`의 가드 트리거는 화이트리스트가 아니라 블랙리스트다.** `trg_profiles_guard`(05 → 19 → 39에서 갱신)는 서버 전용 컬럼(`total_*`/`level`/`current_tier`/`season_distance_meters`/`streak_*`/`crew_id`)을 `old` 값으로 **되돌리는** 방식이고, 열거되지 않은 컬럼은 그대로 통과한다. `runs`(§4.4, `new := old` 화이트리스트)와 정반대의 기본값이다.
+
+| | `runs` | `profiles` |
+|---|---|---|
+| 가드 방식 | 화이트리스트(`new := old` 후 2개 컬럼만 재적용) | 블랙리스트(서버 전용 컬럼만 되돌림) |
+| 신설 컬럼의 기본값 | **자동으로 보호됨** | **자동으로 사용자 편집 가능** |
+| 그래서 할 일 | 사용자 편집 컬럼을 늘리려면 가드를 고친다 | 서버 전용 컬럼을 만들면 **반드시 가드에 등록** |
+
+`weekly_goal_km`(53)은 사용자 편집 컬럼이므로 가드 변경이 **필요 없었다** — `weight_kg`가 지금까지 편집 가능했던 것과 같은 이유다.
+
+**아바타 Storage (54)**
+
+| 항목 | 값 |
+|---|---|
+| 버킷 | `avatars`, `public = true` |
+| 경로 규약 | `avatars/{auth.uid()}/{filename}` — 첫 폴더 세그먼트가 곧 쓰기 권한 술어 |
+| 제한 | 2 MiB, `image/jpeg`·`image/png`·`image/webp` (**버킷 설정**. RLS 술어에서는 업로드 바이트를 알 수 없다) |
+| 읽기 | 전체 공개(`anon` 포함) — 게스트 모드 global 랭킹도 아바타를 그린다(마이그레이션 17) |
+| 쓰기 | 본인 폴더만. update는 `using`/`with check` 양쪽에 걸어 남의 파일을 내 폴더로 rename 하는 경로까지 막는다 |
+| 권장 업로드 방식 | 같은 경로 덮어쓰기가 아니라 **타임스탬프 파일명으로 새 경로 업로드 → `avatar_url` 갱신 → 이전 파일 delete**. 덮어쓰기는 CDN/이미지 캐시 때문에 앱에 옛 사진이 남는다. 업로드 전 장변 512px 리사이즈 권장 |
+| 미해결 | AC-04(계정 삭제) 시 `auth.users` 삭제가 `storage.objects`를 cascade 하지 않는다 → 고아 파일 정리 경로 필요(§14) |
+
+**타인 프로필에 보이는 것 (AC-03)** — 티어·시즌 진행률·누적 요약·레벨(전부 `profiles` 공개 컬럼, `profiles_select_all`), 획득 뱃지(마이그레이션 55), 역대 시즌(`season_histories_select_visible`, 마이그레이션 21). **최근 러닝 목록은 노출하지 않는다** — `runs`는 `runs_select_own` 그대로이고 이번 작업에서 손대지 않았다. `user_badges.source_run_id`가 타인에게 보이지만 그 uuid로 `runs`를 조회할 수는 없다.
+
+> **AC-05(기록 공개 범위)는 삭제됐다**(2026-08-31 사용자 확정). `profiles.visibility` 컬럼도 `ProfileVisibility` enum도 만들지 않는다 — 모든 프로필은 공개다.
+
 ---
 
 ## 5. RLS 정책 사양
@@ -1036,13 +1073,14 @@ create table public.lunar_holidays (
 
 | 테이블 | select | insert/update | 근거 |
 |---|---|---|---|
-| `profiles` | 본인 전체, 타인은 공개 필드만 (AC-03/AC-05) | 본인만 (`id = auth.uid()`), 서버 관리 컬럼은 `profiles_guard`가 되돌림 | |
+| `profiles` | 전체 공개 (`profiles_select_all`, `authenticated`) — AC-03이 이를 그대로 쓴다. 타인 화면에 체중·신장·생년월일·주간목표를 렌더링하지 않는 것은 표현 계층 책임 | 본인만 (`id = auth.uid()`). 서버 관리 컬럼 + `username`(마이그레이션 56)은 `profiles_guard`가 `old` 값으로 되돌림. 편집 가능: `display_name`·`avatar_url`·`weight_kg`·`weekly_goal_km` | AC-05(비공개) 삭제로 공개 범위 분기 없음 (v1.7) |
 | `runs` | 본인 것만 | 본인만, `user_id = auth.uid()`. `is_flagged`/`awarded_xp` 등은 `runs_guard`가 확정. **터미널 상태 행의 UPDATE는 `title`/`note`만 반영**(§4.4, 마이그레이션 51). **delete 정책 없음**(PRD v1.6 — 사용자 삭제 불가) | 랭킹 공개는 `leaderboard_entries` 경유. 컬럼 단위 화이트리스트는 RLS로 표현할 수 없어 가드 트리거가 강제한다 |
 | `leaderboard_entries` | 전체 공개 | `refresh_all_leaderboards()`(SECURITY DEFINER)만 | 절대/상대평가 신뢰성 |
 | `season_histories` | `is_voided=false`면 타인 행도 공개(`authenticated`), `is_voided=true`는 본인만, `anon` 차단 (`season_histories_select_visible`, 마이그레이션 21) | 서버 함수만 (`recompute_season_tier`) | TI-09 "역대 최고 티어 프로필 표시" / AC-03 타인 프로필의 역대 시즌이 이 공개 범위를 그대로 재사용한다 |
 | `tier_change_history` | 본인 행만 | 서버 함수만 | 시즌 중 티어 도달 시각은 본인만 필요 |
 | `badges` / `lunar_holidays` | 전체 공개 | 시드/운영만 (write 권한 revoke) | 카탈로그·상수는 정적 |
-| `user_badges` | 본인 전체, 타인은 `revoked=false and verified=true`만 | insert는 트리거(`evaluate_badges`)만, 클라이언트는 `is_seen`만 update | 클라이언트가 직접 뱃지를 확정할 수 없음(PRD §8.4) |
+| `user_badges` | 본인 전체(`user_badges_select_own` — 회수된 뱃지도 본인은 봐야 한다), 타인은 `verified and not revoked`만 (`user_badges_select_public`, **마이그레이션 55**). `anon` 차단 | insert는 트리거(`evaluate_badges`)만, 클라이언트는 `is_seen`만 update | 클라이언트가 직접 뱃지를 확정할 수 없음(PRD §8.4). 공개 select는 AC-03(타인 프로필 뱃지 갤러리)이 유일한 소비자. ⚠️ 이 정책 이후 **Realtime 구독에도 타인 행 이벤트가 도달**한다 — `user_badges`를 구독하는 코드는 반드시 `user_id=eq.{내 uuid}` 필터를 건다(현재 `watchUnseenBadges()`는 이미 걸려 있다) |
+| `storage.objects` (`avatars` 버킷) | 전체 공개(`anon` 포함) — 랭킹·타인 프로필이 남의 아바타를 그린다 | insert/update/delete 모두 `(storage.foldername(name))[1] = auth.uid()::text`, 즉 **본인 uuid 폴더 안에서만** (마이그레이션 54) | AC-02 프로필 사진. 경로 규약 `avatars/{uid}/{filename}`이 곧 권한 술어다. 용량(2MiB)·MIME(jpeg/png/webp) 제한은 RLS로 표현할 수 없어 **버킷 설정**으로 건다 |
 | `challenges` / `challenge_participations` | 공개/본인 | 참가는 본인, 진척은 트리거 | |
 
 ---
@@ -1536,7 +1574,7 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 12 | **주간 랭킹 확정 배치가 아직 `pg_cron` 에 없다.** 정본(§2.2)은 "매주 월요일 KST 00:10(`10 15 * * 0` UTC)"이고, 현재는 마이그레이션 16의 기존 `refresh_all_leaderboards` 주기 스케줄 + 46번의 `runnit-rank-notify`(매시)에 의존한다. 주 경계 직후 확정 시점이 스펙과 다르다. **이 배치가 없어서 딸려 있는 미구현 2건**: (a) RK-06 주간 상위권 뱃지가 "주간 확정 직후"가 아니라 다음 러닝 때 발급된다, (b) NT-06의 `badge_level:weekly:{week_id}` 키(주간 유래 뱃지 알림)를 쓰는 발화점이 아직 없다 | Phase 2 랭킹 모듈 |
 | 23 | **`season_weekly_rank_lte` 판정에 최소 모집단 게이트와 "확정된 지난 주" 필터가 없다**(gamification 문서 §6.2 결함 #1·#2, 마이그레이션 32). 참가자 3명인 티어에서 1위 뱃지가 나가고, 진행 중인 주간의 일시적 1위로도 발급된다 — 뱃지는 영구 자산이라 정상 경로로 회수할 수 없다. 현재 시드 규모(티어당 1~4명)에서는 아무도 못 받아 실피해가 없으나, **베타 사용자가 10명을 넘는 순간부터 되돌릴 수 없다.** 수정 SQL은 그 문서 §6.2에 그대로 이식 가능 | 🔴 **베타 오픈 전 필수** |
 | 25 | **알림 시스템(NT-01~08) 검증이 자동 테스트(208개) 수준에서 멈춰 있다.** ① 서버 알림 생성 + 인앱 알림함 검증 — FCM 없이 가능. 동기 트리거(NT-01/02/06)는 테스트 계정 러닝 업로드로, 배치(NT-03/04/05)는 `select notify_season_ending()` / `refresh_leaderboards_and_notify()` / `notify_weekend_push()` 수동 호출로 `notifications` 적재를 확인하고, 앱 알림함(마이페이지→종)에서 렌더·딥링크·읽음·미읽음 배지·종류별 토글을 눈으로 검증. NT-04는 `participant_count >= 10` 게이트로 현재 시드에선 안 뜸(#11·#12와 동일 제약). ② 실기기 푸시 검증 8항목 — FCM 운영 설정(프로젝트·서비스계정·네이티브 설정 파일·Vault 시크릿 2개·`push-dispatch` 배포) 완료 후. 절차·트리아지 표는 `_workspace/20260828_174224_ui_notifications.md` §5. 레벨 단독 알림(§5 항목 6, C-3 크래시하던 경로)은 러닝으로 발화 안 함 — 테스트 계정에 XP 경로를 별도로 태워야 함 | ① 지금 가능(테스트 계정 uid 확보 시) / ② FCM 운영 설정 후 |
-| 24 | **알림 문구에 `display_name`을 그대로 쓰는데 공개 범위(AC-05) 컬럼이 스키마에 없다.** NT-04 "OOO님에게 추월당했어요"와 NT-05 변형 C "2위 OOO님"이 해당한다. 비공개 설정이 생기면 알림이 그 설정을 우회하게 된다. 현재는 이름이 비면 `"순위가 128위 → 131위로 내려갔어요"` / `"2위가 …"` 로 폴백한다 | AC-05(공개 범위) 구현 시 함께 |
+| ~~24~~ | ~~알림 문구의 `display_name`이 공개 범위(AC-05)를 우회한다~~ → **비쟁점화(2026-08-31, v1.7)**. AC-05(비공개)를 삭제해 모든 프로필이 공개이므로 알림에 이름을 그대로 써도 우회할 설정이 없다. 이름이 비면 `"순위가 128위 → 131위로 내려갔어요"` / `"2위가 …"` 폴백은 그대로 유지 | — |
 | ~~13~~ | ~~`season_first_long_distance` 의 거리 허용오차가 PB 조건과 다르다~~ → **해소(2026-08-26, 마이그레이션 42)**. `목표 − min(목표×2%, 300m)` 으로 통일(§10.2 표) — 같은 "목표 거리 완주" 판정이므로 별도 기준을 둘 이유가 없다 | — |
 | ~~15~~ | ~~`session_distance_gte` 5종은 허용오차 없이 정확히 `≥ 목표×1000m`~~ → **해소(2026-08-26, 마이그레이션 42)**. 동일 허용오차 `목표 − min(목표×2%, 300m)`로 통일(완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 채움) | — |
 | 14 | **`tier_change_history` 가 0행이라 XP-4(티어 도달 XP)가 아무에게도 적립되지 않고 있다.** 마이그레이션 34가 "상승 이벤트만 기록"으로 정정하면서 백필을 취소했고(소급 복원 불가는 의도된 결정), 기존 유저는 이번 시즌에 강등 없이는 다시 상승할 기회가 없다. 다음 시즌부터 정상 적립된다 — 그때까지 `total_xp` 는 XP-4 만큼 과소 집계된 상태다 | 2026-Q4 시즌 시작 시 자연 해소 |
