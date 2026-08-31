@@ -7,18 +7,24 @@ import '../../../models/models.dart';
 import '../../tracking/presentation/tracking_format.dart';
 import '../../tracking/presentation/widgets/run_map_view.dart'
     show RunMapUnavailable;
+import '../data/gpx_export_service.dart';
 import '../data/run_detail_providers.dart';
+import '../domain/gpx_encoder.dart';
 import '../domain/lap_splits.dart';
 import 'widgets/history_header.dart';
 import 'widgets/lap_table.dart';
 import 'widgets/pace_chart.dart';
+import 'widgets/run_meta_edit_sheet.dart';
 import 'widgets/run_route_map.dart';
 
 /// 러닝 상세 화면 (PRD HI-02) — 경로 지도 + 요약 통계 + 1km 랩 테이블 +
 /// 페이스 그래프. `Routes.runDetail`과 활동 탭 목록 양쪽에서 진입한다.
 ///
-/// HI-07(삭제·제목/메모 수정)은 이 화면에 붙을 예정이지만 아직 미구현이다 —
-/// 리포지토리에 삭제·수정 경로가 없고, 삭제는 티어·랭킹 재계산까지 걸린다.
+/// HI-07(제목·메모 수정)의 진입점이 여기다 — 헤더의 편집 버튼과 비어 있는 메모
+/// 자리의 "메모 추가하기"가 같은 [showRunMetaEditSheet]를 연다. **삭제 UI는 없다**:
+/// PRD v1.6 §8.1이 러닝 삭제를 금지했고 서버에도 삭제 정책이 없다(마이그레이션 51).
+/// 수정 가능한 것은 `title`·`note` 둘뿐이며, 나머지 컬럼은 UPDATE를 보내도 서버
+/// 가드가 조용히 되돌린다(TRD §4.4).
 class RunDetailPage extends ConsumerWidget {
   const RunDetailPage({super.key, required this.runId});
 
@@ -39,6 +45,9 @@ class RunDetailPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(runDetailProvider(runId));
+    // 편집 버튼은 조회가 끝난 뒤에만 준다 — 로딩/에러 국면에는 시트에 채울
+    // 현재 제목·메모가 없다.
+    final record = async.valueOrNull;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -46,7 +55,17 @@ class RunDetailPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const HistoryHeader(title: '러닝 상세'),
+            HistoryHeader(
+              title: '러닝 상세',
+              trailing: record == null
+                  ? null
+                  : _DetailActions(
+                      onEdit: () => editRunMeta(context, ref, record),
+                      onExportGpx: hasExportableRoute(record)
+                          ? () => exportRunAsGpx(context, ref, record)
+                          : null,
+                    ),
+            ),
             Expanded(
               child: Align(
                 alignment: Alignment.topCenter,
@@ -71,6 +90,154 @@ class RunDetailPage extends ConsumerWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 편집 시트를 열고, 저장됐으면 상세 조회를 무효화해 화면을 새로 그린다.
+///
+/// 시트가 서버 확정값을 로컬 drift 행에 이미 반영했으므로 무효화만 하면 같은 값이
+/// 로컬에서 다시 읽힌다 — 재조회 왕복이 없다. 목록(`myRunsProvider`)은 drift
+/// `watch()`라 별도 무효화 없이 스스로 갱신된다.
+@visibleForTesting
+Future<void> editRunMeta(
+  BuildContext context,
+  WidgetRef ref,
+  RunRecord record,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final saved = await showRunMetaEditSheet(
+    context,
+    runId: record.id,
+    initialTitle: record.title,
+    initialNote: record.note,
+  );
+  if (saved == null) return;
+
+  ref.invalidate(runDetailProvider(record.id));
+  messenger.showSnackBar(const SnackBar(content: Text('기록을 수정했어요')));
+}
+
+/// GPX 파일을 만들어 OS 공유 시트로 넘긴다 (HI-09).
+///
+/// 준비 스낵바를 먼저 띄우고(직렬화·파일 쓰기가 큰 기록에선 수백 ms), 실패했을
+/// 때만 별도 안내로 덮는다. 성공(시트 표시)은 OS 시트 자체가 피드백이라 조용히
+/// 지나간다.
+@visibleForTesting
+Future<void> exportRunAsGpx(
+  BuildContext context,
+  WidgetRef ref,
+  RunRecord record,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.showSnackBar(
+    const SnackBar(
+      content: Text('GPX 파일을 준비하고 있어요'),
+      duration: Duration(seconds: 1),
+    ),
+  );
+
+  final box = context.findRenderObject() as RenderBox?;
+  final origin = (box != null && box.hasSize)
+      ? box.localToGlobal(Offset.zero) & box.size
+      : null;
+
+  final outcome =
+      await ref.read(gpxExportServiceProvider).exportAndShare(record, origin: origin);
+
+  if (outcome == GpxExportOutcome.failed || outcome == GpxExportOutcome.noRoute) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('GPX 파일을 만들지 못했어요')),
+      );
+  }
+}
+
+/// 헤더 오른쪽 액션 묶음 — 편집 버튼 + (경로가 있을 때만) 오버플로 메뉴.
+class _DetailActions extends StatelessWidget {
+  const _DetailActions({required this.onEdit, this.onExportGpx});
+
+  final VoidCallback onEdit;
+  final VoidCallback? onExportGpx;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _EditButton(onTap: onEdit),
+        if (onExportGpx != null) ...[
+          const SizedBox(width: AppTokens.s4),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, size: 22, color: Colors.black),
+            tooltip: '더보기',
+            onSelected: (_) => onExportGpx!(),
+            itemBuilder: (_) => const [
+              PopupMenuItem<String>(
+                value: 'gpx',
+                child: Text('GPX 내보내기'),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AddNoteHint extends StatelessWidget {
+  const _AddNoteHint({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTokens.rMd),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: AppTokens.minTapTarget),
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTokens.s12,
+            vertical: AppTokens.s12,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTokens.rMd),
+            border: Border.all(color: const Color(0xFFE0E0E0)),
+          ),
+          child: const Text(
+            '메모 추가하기',
+            style: TextStyle(fontSize: 14, color: RunDetailPage._mutedText),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EditButton extends StatelessWidget {
+  const _EditButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '기록 수정',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTokens.rPill),
+        child: const Padding(
+          padding: EdgeInsets.all(AppTokens.s4),
+          child: Icon(Icons.edit_outlined, size: 22, color: Colors.black),
         ),
       ),
     );
@@ -144,16 +311,18 @@ class _DetailBody extends ConsumerWidget {
         ),
         const SizedBox(height: AppTokens.s24),
         _SummaryGrid(record: record),
-        if ((record.note ?? '').isNotEmpty) ...[
-          const SizedBox(height: AppTokens.s24),
-          _Section(
-            title: '메모',
-            child: Text(
-              record.note!,
-              style: const TextStyle(fontSize: 14, color: Colors.black),
-            ),
-          ),
-        ],
+        const SizedBox(height: AppTokens.s24),
+        _Section(
+          title: '메모',
+          child: (record.note ?? '').isEmpty
+              // 빈 메모는 "없음"을 알리는 대신 바로 쓸 수 있게 한다 — 헤더 아이콘을
+              // 못 찾은 사용자를 위한 두 번째 진입점이기도 하다.
+              ? _AddNoteHint(onTap: () => editRunMeta(context, ref, record))
+              : Text(
+                  record.note!,
+                  style: const TextStyle(fontSize: 14, color: Colors.black),
+                ),
+        ),
         ..._lapSections(
           splits,
           hasRoute: hasRoute,
