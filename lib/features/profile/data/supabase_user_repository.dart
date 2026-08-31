@@ -80,8 +80,12 @@ class SupabaseUserRepository implements UserRepository {
 
   /// 인터페이스가 허용한 편집 가능 필드만 추린다.
   /// `user.toJson()`을 통째로 보내면 서버 전용 통계까지 실려간다.
+  ///
+  /// `username`(고유 핸들)은 편집 대상이 아니므로 싣지 않는다 — 랭킹·공유
+  /// 카드의 사람 식별자라 변경 경로를 두지 않는다. 서버도 마이그레이션 56
+  /// (`trg_profiles_guard`가 UPDATE 시 `new.username := old.username`)으로
+  /// 백스톱하지만, 클라이언트가 애초에 보내지 않는 것이 계약이다.
   static Map<String, dynamic> _editablePatch(AppUser user) => <String, dynamic>{
-        'username': user.username,
         'display_name': user.displayName,
         'avatar_url': user.avatarUrl,
         'bio': user.bio,
@@ -91,5 +95,8 @@ class SupabaseUserRepository implements UserRepository {
         'birth_date': user.birthDate?.toUtc().toIso8601String(),
         'gender': user.gender?.wire,
         'preferred_unit': user.preferredUnit.wire,
+        // AC-02 신규. `trg_profiles_guard`는 블랙리스트(서버 전용 컬럼만 되돌림)라
+        // 컬럼 추가(마이그레이션 53)만으로 편집이 열린다 — 가드 등록 불필요.
+        'weekly_goal_km': user.weeklyGoalKm,
       };
 }

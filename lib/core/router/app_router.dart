@@ -9,7 +9,9 @@ import '../../features/history/presentation/season_history_page.dart';
 import '../../features/home/presentation/home_page.dart';
 import '../../features/notifications/presentation/notification_inbox_page.dart';
 import '../../features/notifications/presentation/notification_settings_page.dart';
+import '../../features/profile/presentation/edit_profile_page.dart';
 import '../../features/profile/presentation/profile_page.dart';
+import '../../features/profile/presentation/user_profile_page.dart';
 import '../../features/tracking/presentation/tracking_page.dart';
 import '../auth/auth_config.dart';
 import '../auth/auth_providers.dart';
@@ -30,6 +32,23 @@ class Routes {
   static const history = '/history';
   static const runDetail = 'run/:runId'; // history 하위 (전체: /history/run/:id)
   static const profile = '/profile';
+
+  /// AC-02 프로필 편집. 마이 탭 브랜치의 `/profile` **하위 라우트**다
+  /// (전체 경로 `/profile/edit`) — 진입점이 마이페이지의 설정 아이콘 하나뿐이고,
+  /// 저장 후 뒤로 가면 마이페이지로 돌아와야 한다. 게스트 차단(내 계정 데이터).
+  static const editProfile = '$profile/edit';
+
+  /// AC-03 타인 프로필. **홈 탭 브랜치**에 매단다 — 진입점이 홈의 랭킹
+  /// 미리보기와 거기서 push된 전체 랭킹 화면뿐이기 때문이다.
+  ///
+  /// ⚠️ `/seasons`와 같은 함정이 있다: 다른 탭에서 이 경로로 `push`하면 화면
+  /// 위에 뜨지 않고 보이지 않는 홈 브랜치에 쌓인다. 랭킹 외의 곳(예: 뱃지
+  /// 상세, 알림)에서 타인 프로필로 보내야 할 일이 생기면 그때 `MaterialPageRoute`로
+  /// [UserProfilePage]를 직접 띄우거나 브랜치 배치를 다시 판단할 것.
+  static const userProfile = '/users/:userId';
+
+  /// [userProfile]의 **완성된** 경로. 패턴 문자열을 딥링크로 쓸 수 없다.
+  static String userProfileOf(String userId) => '/users/$userId';
 
   /// 뱃지 갤러리 = 활동 화면의 **하위 탭**이다(2026-08-21 4탭 개편). 독립 라우트가
   /// 아니므로 딥링크는 쿼리로 탭을 지정한다. 서버 알림 payload의 `route`가 이
@@ -75,7 +94,8 @@ class Routes {
 /// | `/home` | 허용 | 티어 카드는 로그인 유도로 대체, 랭킹은 그대로 공개 |
 /// | `/history` (+ 상세) | 허용 | **뱃지 탭만 공개**(카탈로그). 기록 탭은 위젯이 로그인 유도 |
 /// | `/tracking` | 차단 | 러닝 시작에 userId 필요 |
-/// | `/profile` | 차단 | 내 프로필 |
+/// | `/profile` (+ `/edit`) | 차단 | 내 프로필 · 프로필 편집(AC-02) |
+/// | `/users/:userId` | 차단 | 타인 프로필(AC-03). `profiles`/`user_badges`가 authenticated 전용이라 게스트는 애초에 빈 화면만 본다 |
 /// | `/notifications` (+ `/settings`) | 차단 | 알림은 계정 단위 데이터다 |
 /// | `/seasons` | 차단 | 역대 시즌은 내 계정 데이터다(HI-06) |
 /// | `/login` | 항상 허용 | 로그인 완료 시 `from` 또는 `/tracking`으로 자동 이탈 |
@@ -124,6 +144,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: Routes.home,
                 builder: (_, __) => const HomePage(),
               ),
+              // AC-03. 경로만 최상위(`/users/:userId`)이고 스택은 홈 브랜치에
+              // 쌓인다 — 진입점이 랭킹(홈)이라서다. `Routes.userProfile` doc의
+              // 브랜치 주의사항 참고.
+              GoRoute(
+                path: Routes.userProfile,
+                builder: (_, state) => UserProfilePage(
+                  userId: state.pathParameters['userId'] ?? '',
+                ),
+              ),
             ],
           ),
           StatefulShellBranch(
@@ -163,6 +192,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: Routes.profile,
                 builder: (_, __) => const ProfilePage(),
+                routes: [
+                  // AC-02. 상대 경로 'edit' = `/profile/edit`.
+                  GoRoute(
+                    path: 'edit',
+                    builder: (_, __) => const EditProfilePage(),
+                  ),
+                ],
               ),
               // 알림함/알림 설정은 경로만 최상위(`/notifications`)이고 스택은
               // 마이 탭 브랜치에 쌓인다 — 셸(바텀 네비)이 유지된다.
