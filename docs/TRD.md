@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.12 |
+| 문서 버전 | v0.14 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~42`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
@@ -22,6 +22,8 @@
 | v0.10 | **"Phase 0 초안"에서 "구현 반영 살아있는 문서"로 승격.** (1) §2 확정 스택을 실제 `pubspec.yaml`에 맞춤 — 지도 `flutter_naver_map` → **`flutter_map`+`latlong2`**(PRD §7과 불일치, ARCHITECTURE §12-#2), 로컬 저장소 `🔴 미정` → **drift 확정**, `riverpod_generator` 제거(수동 Provider), FCM `NT-01~08` → **미도입(Phase 2)**, 누락 패키지(`flutter_svg`/`share_plus`/`shared_preferences`/`intl`/`collection`/`uuid`/`logger`) 추가. (2) §3 상단에 "Dart 코드는 설계 스냅샷, 정본은 `lib/models/`" 노트 추가 — 실제 enum은 `RunRecordType`이 아니라 `ActivityType`+`RunStatus`+`SyncStatus`, 랭킹은 `RankingPeriod`/`RankingMetric`/`RankingScope` 4축. (3) **§6 "API / Edge Function 사양"은 폐기** — Deno Edge Function은 구현되지 않았고, 업로드는 PostgREST upsert + `runs` 트리거 체인이다(§6.0 노트). (4) §13 Phase 0 DoD를 실제 완료 상태로 갱신 |
 | v0.9 | **성취 축하 연출을 다이얼로그→풀페이지로 전환, 공유 버튼을 PB 전용으로 축소**(§3.9.3, PRD v1.4·HI-10). `AchievementCelebrationHost`가 `showDialog` 대신 `Navigator.of(context, rootNavigator: true)` + `MaterialPageRoute(fullscreenDialog: true)`로 진짜 풀페이지를 띄운다(하단 네비바 우회, §7 구조와 동일 패턴). 글로우 링·컨페티·엘라스틱 팝인으로 구성된 `_AchievementBurst` 애니메이션 신설. **일반 뱃지·티어 승급은 공유 버튼을 받지 않는다** — PB만 받는다(사용자 확정, 2026-08-27). `summary_achievements.dart`의 인라인 축하·억제 카운터(`achievementCelebrationSuppressors`)를 전부 제거 — 전역 호스트 하나가 유일한 소비 지점이 되면서 §14 #20(프레임 경합)이 원인 자체가 사라져 해소됨 |
 | v0.12 | **러닝·뱃지 삭제 불가 + 시즌 중 티어 강등 없음**(PRD v1.6, 마이그레이션 43, Supabase `xwtbwexcofcgmbvktwdo`). §9의 "기록 삭제 시 재계산" 항목을 재작성 — 사용자 삭제 경로가 없으므로 티어 하향 시나리오는 부정 판정(`is_flagged`)뿐이고, 그 경우에도 `recompute_season_tier`가 같은 시즌이면 `current_tier := greatest(tier_for_distance(dist), 직전)`로 등급을 유지한다(`season_distance_meters`만 실제값으로 하락). §3.5의 `tier_change_history` 서술에서 "강등" 시나리오 표현 정리. 스테일 데이터 1건(`stier_silver@2026-Q3`, 테스트 계정) 삭제 |
+| v0.13 | **HI-07 서버 강제 — 저장된 러닝은 제목·메모만 수정 가능**(마이그레이션 51, **원격 적용 완료** 2026-08-31 — over-limit 행 0건이라 51-1 정리 UPDATE는 no-op, 조작 UPDATE 되돌리기 스모크 테스트 통과, advisor 신규 경보 없음). §4.4 신설: `trg_runs_guard`의 UPDATE 분기가 터미널 상태(`completed`/`discarded`) 행에 대해 `new := old` 후 `title`/`note`만 재적용한다 — 화이트리스트라 앞으로 추가되는 컬럼도 자동 보호되고, 되돌리기가 파생값 재계산보다 앞서므로 편집이 페이스·XP·티어·랭킹·뱃지를 흔들지 않는다. 예외를 던지지 않는 이유는 오프라인 멱등 재 upsert(`syncPending`)를 깨뜨리지 않기 위함. `runs_title_len`(60자)·`runs_note_len`(500자) CHECK 백스톱 + 가드의 `btrim`→절단→`NULL` 정규화. PRD v1.6에서 이미 제거된 사용자 삭제 경로의 잔재인 RLS `runs_delete_own` 정책 삭제(테이블 GRANT는 유지 — 회수하면 미완결 세션 "버리기"가 42501로 실패한다). §5 RLS 표 `runs` 행·§9 갱신. QA 지적 반영 — 51-1 정리 UPDATE를 `set_config('runnit.server_write','on')`로 감싸 AFTER 트리거 4종의 대량 재집계를 차단(C-5), 51-2에 체크포인트 업로드 도입 시 우회 경로 경고 주석 추가(L-3) |
+| v0.14 | **HI-06 후속 (2026-08-31)** — (1) `season_histories` RLS 서술 정정: §5 표가 "본인 행만 select"라고 적었으나 실제 `season_histories_select_visible`(마이그레이션 21)은 `is_voided=false or user_id=auth.uid()` — 무효 아닌 타인 행도 `authenticated`에게 공개다(TI-09/AC-03 전제). `tier_change_history`와 한 셀에 묶여 있던 것을 분리. (2) **마이그레이션 52** — `recompute_season_tier`의 `season_histories.best_weekly_rank` 서브쿼리에 `and le.tier is not null` 추가. 마이그레이션 23 이후 `leaderboard_entries`에 통합 보드(`tier IS NULL`)와 티어별 보드가 공존해 `min(rank)`가 두 스코프를 섞을 수 있었다(마감 후 수정 불가 컬럼). 43 함수 본문에서 이 한 줄 외 변경 없음. §9 갱신. **원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`) |
 | v0.11 | **지도 SDK를 `flutter_map`(OSM 타일) → `flutter_naver_map`으로 교체**(2026-08-28, 사용자 결정, ARCHITECTURE v0.4 §12-#2 해소). §2 확정 스택의 지도 행 갱신. `latlong2`는 **앱 내부 표준 좌표 모델로 유지**하고 `NLatLng` 변환은 지도 위젯 경계(`lib/core/map/map_geo.dart`)에 가둔다. 지도 표면 생성은 `mapSurfaceBuilderProvider`(`lib/core/map/map_surface.dart`) 하나로 격리 — 글로벌 확장 시 SDK 교체 지점이자 위젯 테스트 스텁 주입점이다(`flutter_map`의 `TileProvider`에 묶여 있던 `mapTileProviderOverride`는 제거). OSM 전용 `core/widgets/osm_attribution.dart` 삭제(네이버 SDK가 로고·저작권 자체 렌더). NCP 클라이언트 ID는 플레이스홀더 상태 — 배포 전 교체 필요 |
 
 > 📌 **원천 우선순위**: PRD > ARCHITECTURE.md > 이 문서. 요구사항 ID(TR-xx, HI-xx 등)는 `docs/PRD.md` §5 기준.
@@ -1000,6 +1002,34 @@ create table public.lunar_holidays (
 
 ---
 
+### 4.4 러닝 편집 정책 (PRD HI-07 / §8.1) — 2026-08-31 확정 · 마이그레이션 51
+
+**규칙 한 줄**: 서버에 저장된(터미널 상태) 러닝에서 사용자가 바꿀 수 있는 컬럼은 `title`·`note` **둘뿐**이고, 사용자 삭제 경로는 **없다**.
+
+| 항목 | 값 |
+|---|---|
+| 편집 가능 컬럼 | `runs.title` (≤ 60자), `runs.note` (≤ 500자) |
+| 터미널 상태 정의 | `runs.status in ('completed', 'discarded')` |
+| 강제 지점 | `trg_runs_guard` BEFORE UPDATE (마이그레이션 51-2) |
+| 위반 시 동작 | **예외가 아니라 무시** — `new := old` 후 `title`/`note`만 재적용 |
+| 삭제 | RLS 정책 `runs_delete_own` 제거(51-3). GRANT는 유지 |
+
+**왜 예외를 던지지 않는가.** 오프라인 동기화(`LocalRunRepository.syncPending`)가 같은 `id`로 **행 전체를 재 upsert**하는 것을 멱등성의 근거로 삼는다(`07_rls.sql`의 `runs_update_own` 주석). 여기서 422/403을 내면 재시도 큐가 영구히 실패한다. 값이 같은 재 upsert는 되돌려도 결과가 동일해 무해하고, 실제 편집 시도만 조용히 무시된다 — `05_server_guards.sql` 헤더가 세운 "서버 전용 컬럼은 되돌린다" 방침의 연장이다.
+
+**왜 화이트리스트(`new := old`)인가.** 블랙리스트로 컬럼을 열거하면 `runs`에 컬럼이 늘 때마다(36 `device_vendors`, 39 `awarded_xp` …) 이 파일을 고치는 것을 잊는 순간 구멍이 생긴다. 행 통째 대입은 신설 컬럼을 자동으로 보호하고, enum 배열·`jsonb`·`timestamptz`가 json을 경유하지 않아 왕복 변환 손실도 없다.
+
+**순서가 중요하다.** 되돌리기는 페이스·`validate_run`·`compute_run_xp` 재계산보다 **먼저** 수행한다. 그래야 파생값이 전부 `old`의 원본값 기준으로 계산되어 최초 업로드 때와 같은 결과로 수렴한다 — 즉 편집 UPDATE는 티어·랭킹·XP·뱃지를 흔들지 않는다.
+
+**`title`/`note` 정규화(가드가 수행).** `btrim` → 상한 절단(`left`) → 빈 문자열은 `NULL`. `runs_title_len`/`runs_note_len` CHECK는 **백스톱**일 뿐, 정상 경로에서는 절단이 먼저 일어나 클라이언트가 400을 받지 않는다. 상한값(60/500)은 이전 근거 문서가 없어 이번에 확정했다 — 60자는 목록/공유 카드에서 줄바꿈 없이 읽히는 한 줄 제목, 500자는 TOAST 임계에 한참 못 미치는 짧은 회고 메모.
+
+**기존 데이터 정리(51-1)는 `set_config('runnit.server_write','on', true)`로 감싼다.** `runs`의 AFTER 트리거 4종(`runs_01`~`_04`)에 `WHEN` 절이 없어, 플래그 없이 절단 UPDATE를 돌리면 매칭 행마다 티어·챌린지·뱃지 전량 재평가와 알림 인큐가 돌기 때문이다(QA C-5). 적용 전 대상 행 수를 세고(`char_length(title) > 60 or char_length(note) > 500`), 0이면 이 UPDATE는 no-op이다.
+
+**진행 중(`recording`/`paused`) 행은 이 잠금에서 제외**한다. 현재 클라이언트는 완료 기록만 업로드하므로(`LocalRunRepository.save`) 서버 행은 항상 이미 터미널이지만, 향후 체크포인트 업로드가 생기면 그 경로는 정상적으로 원본을 갱신해야 한다. `is_server_write()` 경로(부정 판정·재집계·백필)도 제외된다.
+
+**클라이언트 계약**: 편집은 별도 RPC 없이 기존 upsert 경로 그대로다. `title`/`note`만 담은 부분 UPDATE(`update().eq('id', …)`)를 권장하며, 전체 행 upsert를 보내도 나머지는 조용히 무시된다. 서버가 정규화한 최종값이 필요하면 `.select('id,title,note,updated_at').single()`로 되받는다.
+
+---
+
 ## 5. RLS 정책 사양
 
 > 정본은 `07_rls.sql` + 이후 각 기능 마이그레이션. 아래는 현재 원칙 요약 (Edge Function이 아니라 **SECURITY DEFINER 트리거·함수**가 서버 쓰기 주체다).
@@ -1007,9 +1037,10 @@ create table public.lunar_holidays (
 | 테이블 | select | insert/update | 근거 |
 |---|---|---|---|
 | `profiles` | 본인 전체, 타인은 공개 필드만 (AC-03/AC-05) | 본인만 (`id = auth.uid()`), 서버 관리 컬럼은 `profiles_guard`가 되돌림 | |
-| `runs` | 본인 것만 | 본인만, `user_id = auth.uid()`. `is_flagged`/`awarded_points` 등은 `runs_guard`가 확정 | 랭킹 공개는 `leaderboard_entries` 경유 |
+| `runs` | 본인 것만 | 본인만, `user_id = auth.uid()`. `is_flagged`/`awarded_xp` 등은 `runs_guard`가 확정. **터미널 상태 행의 UPDATE는 `title`/`note`만 반영**(§4.4, 마이그레이션 51). **delete 정책 없음**(PRD v1.6 — 사용자 삭제 불가) | 랭킹 공개는 `leaderboard_entries` 경유. 컬럼 단위 화이트리스트는 RLS로 표현할 수 없어 가드 트리거가 강제한다 |
 | `leaderboard_entries` | 전체 공개 | `refresh_all_leaderboards()`(SECURITY DEFINER)만 | 절대/상대평가 신뢰성 |
-| `season_histories` / `tier_change_history` | 본인 행만 | 서버 함수만 | |
+| `season_histories` | `is_voided=false`면 타인 행도 공개(`authenticated`), `is_voided=true`는 본인만, `anon` 차단 (`season_histories_select_visible`, 마이그레이션 21) | 서버 함수만 (`recompute_season_tier`) | TI-09 "역대 최고 티어 프로필 표시" / AC-03 타인 프로필의 역대 시즌이 이 공개 범위를 그대로 재사용한다 |
+| `tier_change_history` | 본인 행만 | 서버 함수만 | 시즌 중 티어 도달 시각은 본인만 필요 |
 | `badges` / `lunar_holidays` | 전체 공개 | 시드/운영만 (write 권한 revoke) | 카탈로그·상수는 정적 |
 | `user_badges` | 본인 전체, 타인은 `revoked=false and verified=true`만 | insert는 트리거(`evaluate_badges`)만, 클라이언트는 `is_seen`만 update | 클라이언트가 직접 뱃지를 확정할 수 없음(PRD §8.4) |
 | `challenges` / `challenge_participations` | 공개/본인 | 참가는 본인, 진척은 트리거 | |
@@ -1362,6 +1393,8 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 - **시즌/주간 경계**: 시즌은 `season_id_at()`/`season_start()`/`season_end()` 계산 함수(역년 분기 KST). 주 경계는 KST 월요일 00:00 ~ 일요일 23:59, `leaderboard_entries.period_start`. 러닝 **시작 시각** 기준으로 귀속(PRD §8.5).
 - **주중 승급 시 랭킹 이관**: `leaderboard_entries`의 `tier` 파티션만 갱신, 주간 거리는 `runs` 재집계로 자연 유지 — row 재생성 안 함(PRD §8.6).
 - **누적 거리 재계산 시 티어 (PRD v1.6, 마이그레이션 43)**: 사용자는 러닝을 삭제할 수 없다(HI-07은 제목·메모 수정만). 누적 거리가 줄어드는 유일한 경로는 서버의 부정 판정(`is_flagged=true`)이며, 이 경우 `recompute_season_tier`가 `season_distance_meters`는 실제값으로 낮추되 **같은 시즌이면 `current_tier`는 내리지 않는다** — `v_new_tier := greatest(tier_for_distance(dist), 직전_티어)`. 시즌 경계를 넘은 첫 recompute만 하드 리셋(다음 시즌 bronze부터). 부정으로 획득된 뱃지는 행을 남기고 `user_badges.revoked=true`. 정상 러닝은 삭제 자체가 없으므로 티어 하향 시나리오가 존재하지 않는다.
+- **시즌 마감 `best_weekly_rank`는 티어 스코프만 (마이그레이션 52)**: `recompute_season_tier`가 시즌 경계에서 `season_histories.best_weekly_rank`를 채울 때 `leaderboard_entries`에서 `min(rank)`를 뽑는데, 마이그레이션 23 이후 통합 보드(`tier IS NULL`)와 티어별 보드가 공존하므로 `and le.tier is not null`로 티어별 보드만 집계한다. 클라이언트가 노출하는 주간 랭킹도 항상 티어 스코프이므로 마감 스냅샷도 동일 기준이다. 마감 후 수정 불가한 컬럼이라 명시적으로 고정.
+- **사후 편집으로도 집계가 흔들리지 않는다 (마이그레이션 51, §4.4)**: v1.6 시점에는 삭제 경로만 막혀 있었고 `runs` UPDATE로 `distance_meters`·`samples`·`started_at`을 바꾸는 경로가 남아 있었다(파생값은 재계산되지만 그것은 *조작된 원본에 대한* 정합성이다 — 3km를 저장한 뒤 42km로 UPDATE하면 티어·랭킹·뱃지가 전부 따라 올라간다). 51-2가 터미널 상태 행의 UPDATE를 `title`/`note`로 한정하면서 이 경로가 닫혔다. 편집 UPDATE는 `old` 원본으로 재계산되므로 `recompute_season_tier`·`refresh_all_leaderboards`·`evaluate_badges`가 모두 최초 업로드와 같은 값으로 수렴한다.
 
 ---
 
@@ -1465,7 +1498,7 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 - **인증**: Supabase Auth. **현재 카카오 OAuth 웹 플로우만 구현**(`core/auth/`). Apple/Google 로그인은 Phase 2(AC-01) — iOS는 Apple 로그인 필수 제공(App Store 심사 요건).
 - **RLS**: §5 전 테이블 적용. 서버 쓰기는 SECURITY DEFINER 트리거·함수. service role 키는 클라이언트 번들에 절대 포함하지 않는다(현재 클라이언트는 anon 키만 사용, `AppConfig` — `--dart-define`).
 - **데이터 삭제(AC-04)**: *(미구현 — Phase 2)*. 설계상 계정 삭제 시 `profiles` cascade로 `runs`/`user_badges`/`season_histories`/`tier_change_history` 전량 삭제. 삭제 후 `leaderboard_entries`는 다음 배치 사이클에 자동 반영.
-- **GPX 내보내기(HI-09, P1)**: *(미구현)*. `runs.samples`(jsonb)를 클라이언트에서 GPX XML로 직렬화 — 서버 렌더링 불필요.
+- **GPX 내보내기(HI-09, P1)**: **구현 완료(클라이언트 전용, 2026-08-31).** `RunRecord.samples`를 `history/domain/gpx_encoder.dart`에서 GPX 1.1 XML로 직렬화(외부 패키지 없이 `StringBuffer` + 수동 이스케이프), 임시 파일로 써서 `share_plus` 공유 시트로 전달(`history/data/gpx_export_service.dart`). 좌표 있는 샘플 2개 미만이면 상세 화면 진입점(오버플로 메뉴)을 노출하지 않는다. 심박/케이던스는 Garmin `TrackPointExtension` 네임스페이스로 포함. 서버 렌더링 불필요.
 - **부정 기록 데이터 보존**: `flagged=true` 기록은 삭제하지 않고 보존(§7 원칙) — 이의 제기 대응 근거.
 
 ---

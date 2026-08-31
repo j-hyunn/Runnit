@@ -482,6 +482,10 @@ class FakeRunRepository implements RunRepository {
   final List<String> deleted = <String>[];
 
   @override
+  Future<RunMeta> updateMeta(String id, {String? title, String? note}) async =>
+      RunMeta.normalized(title: title, note: note);
+
+  @override
   Future<void> save(RunRecord record) async => saved.add(record);
 
   @override

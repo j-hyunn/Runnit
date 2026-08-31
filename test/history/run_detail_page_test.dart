@@ -194,8 +194,7 @@ void main() {
     );
   });
 
-  testWidgets('메모가 있으면 메모 섹션을, 없으면 아무것도 그리지 않는다',
-      (tester) async {
+  testWidgets('메모가 있으면 메모 섹션에 그대로 보여준다', (tester) async {
     await pump(
       tester,
       _FakeRunRepository.value(
@@ -206,6 +205,122 @@ void main() {
 
     expect(find.text('메모'), findsOneWidget);
     expect(find.text('한강 코스 컨디션 좋았음'), findsOneWidget);
+  });
+
+  testWidgets('메모가 없으면 메모 섹션 자리에서 바로 편집으로 들어갈 수 있다',
+      (tester) async {
+    await pump(
+      tester,
+      _FakeRunRepository.value(run(samples: threeKmSamples())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('메모'), findsOneWidget);
+    expect(find.text('메모 추가하기'), findsOneWidget);
+  });
+
+  testWidgets('편집 시트에서 저장하면 정규화된 값이 화면에 반영된다', (tester) async {
+    final repository = _FakeRunRepository.value(run(samples: threeKmSamples()));
+    await pump(tester, repository);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+
+    // 수정 가능한 것은 제목·메모뿐이다 — 삭제 버튼이 있으면 안 된다
+    // (PRD v1.6 §8.1: 러닝은 삭제할 수 없다).
+    expect(find.text('기록 수정'), findsOneWidget);
+    expect(find.text('삭제'), findsNothing);
+
+    final fields = find.byType(TextField);
+    expect(fields, findsNWidgets(2));
+    // 서버 CHECK(runs_title_len 60 / runs_note_len 500)와 같은 상한을
+    // 입력 단계에서 먼저 막는다.
+    expect(tester.widget<TextField>(fields.at(0)).maxLength, 60);
+    expect(tester.widget<TextField>(fields.at(1)).maxLength, 500);
+
+    await tester.enterText(fields.at(0), '  한강 저녁 러닝  ');
+    await tester.enterText(fields.at(1), '컨디션 좋았음');
+    await tester.tap(find.text('저장'));
+    await tester.pumpAndSettle();
+
+    // 시트는 닫히고, 리포지토리에는 사용자가 친 원문이 그대로 넘어간다
+    // (trim·절단은 서버가 확정한다).
+    expect(find.text('기록 수정'), findsNothing);
+    expect(repository.metaEdit, ('run-1', '  한강 저녁 러닝  ', '컨디션 좋았음'));
+    expect(find.text('기록을 수정했어요'), findsOneWidget);
+    // 화면은 보낸 값이 아니라 **확정값**(trim된 제목)을 그린다.
+    expect(find.text('한강 저녁 러닝'), findsOneWidget);
+    expect(find.text('컨디션 좋았음'), findsOneWidget);
+  });
+
+  testWidgets('경로가 있으면 오버플로 메뉴에 GPX 내보내기가 있다', (tester) async {
+    await pump(tester, _FakeRunRepository.value(run(samples: threeKmSamples())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+
+    expect(find.text('GPX 내보내기'), findsOneWidget);
+  });
+
+  testWidgets('경로가 없는 실내 러닝은 오버플로 메뉴 자체가 없다', (tester) async {
+    await pump(
+      tester,
+      _FakeRunRepository.value(
+        run(activityType: ActivityType.indoorRun, samples: const []),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.more_vert), findsNothing);
+  });
+
+  testWidgets('제목 입력은 grapheme이 아니라 룬(코드포인트) 기준으로 잘린다',
+      (tester) async {
+    final repository = _FakeRunRepository.value(run(samples: threeKmSamples()));
+    await pump(tester, repository);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+
+    // 👨‍👩‍👧‍👦 = 1 grapheme / 7 코드포인트. Flutter 기본 maxLength는 grapheme으로
+    // 세므로 10개(70 코드포인트)를 통과시키고, 서버가 60 코드포인트에서 잘라
+    // 이모지를 반토막 낸다(QA C-3). 룬 기준 포매터는 8개(56)까지만 받는다.
+    const family = '👨‍👩‍👧‍👦';
+    await tester.enterText(find.byType(TextField).at(0), family * 10);
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(find.byType(TextField).at(0));
+    final text = field.controller!.text;
+    expect(text.runes.length, lessThanOrEqualTo(60));
+    expect(text.characters.length, 8); // 56 코드포인트 — 9번째는 63이라 못 들어간다
+    // 카운터도 같은 단위여야 한다.
+    expect(find.text('56/60'), findsOneWidget);
+  });
+
+  testWidgets('저장에 실패하면 시트를 닫지 않고 입력을 남긴 채 안내한다',
+      (tester) async {
+    final repository = _FakeRunRepository.value(run(samples: threeKmSamples()))
+      ..failEdit = true;
+    await pump(tester, repository);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(1), '지하 주차장에서 종료');
+    await tester.tap(find.text('저장'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('저장하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.'),
+      findsOneWidget,
+    );
+    // 방금 쓴 메모가 사라지면 안 된다 — 그래서 스낵바가 아니라 인라인이다.
+    expect(find.text('기록 수정'), findsOneWidget);
+    expect(find.text('지하 주차장에서 종료'), findsOneWidget);
   });
 }
 
@@ -222,8 +337,25 @@ class _FakeRunRepository implements RunRepository {
   factory _FakeRunRepository.pending() =>
       _FakeRunRepository._(null, _Mode.pending);
 
-  final RunRecord? _record;
+  RunRecord? _record;
   final _Mode _mode;
+
+  /// 편집 시트가 넘긴 인자. 널 여부까지 보려고 튜플로 남긴다.
+  (String, String?, String?)? metaEdit;
+
+  /// true면 `updateMeta`가 던진다 — 저장 실패 국면 재현.
+  bool failEdit = false;
+
+  @override
+  Future<RunMeta> updateMeta(String id, {String? title, String? note}) async {
+    metaEdit = (id, title, note);
+    if (failEdit) throw Exception('offline');
+    // 서버 정규화(trim → 절단 → 빈 문자열은 null)를 그대로 흉내 낸다.
+    final meta = RunMeta.normalized(title: title, note: note);
+    // 실제 리포지토리가 로컬 행까지 갱신하므로, 재조회도 새 값을 봐야 한다.
+    _record = _record?.copyWith(title: meta.title, note: meta.note);
+    return meta;
+  }
 
   @override
   Future<RunRecord?> findById(String id, {bool includeSamples = false}) {
