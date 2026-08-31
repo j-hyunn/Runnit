@@ -12,6 +12,7 @@ import '../../gamification/presentation/badge_gallery_page.dart';
 import '../data/history_providers.dart';
 import 'run_detail_page.dart';
 import 'run_history_list_page.dart';
+import 'season_history_page.dart';
 import 'widgets/monthly_chart.dart';
 import 'widgets/run_tile.dart';
 
@@ -304,9 +305,17 @@ class _SummaryStat extends StatelessWidget {
   }
 }
 
-/// Figma `85:1093`("Pill 3") — 현재는 현재 시즌만 실제 데이터가 있어(지난
-/// 시즌 전체 스냅샷을 담는 백엔드가 없음, [FullRankingPage]와 동일 사유)
-/// 탭하면 안내만 준다.
+/// Figma `85:1093`("Pill 3") — 현재 시즌 라벨. 탭하면 **역대 시즌 기록**
+/// 화면(HI-06)으로 간다.
+///
+/// Figma의 원래 의도는 "이 화면의 통계를 다른 시즌으로 갈아 끼우는 필터"에
+/// 가깝지만, 활동 탭 통계는 로컬 러닝 기록을 재집계한 값(`myRunsProvider`)이고
+/// 시즌 결과는 **서버가 마감 시점에 확정한 스냅샷**이라 성격이 다르다. 두 값을
+/// 한 화면에서 필터로 전환하면 "재집계값"과 "확정값"이 같은 자리에서 번갈아
+/// 나오게 된다 — 그래서 필터가 아니라 **전용 화면으로 이동**시킨다.
+///
+/// `Routes.seasonHistory`로 `push`하지 않는 이유는 [Routes.seasonHistory]
+/// doc 참고(그 라우트는 마이 탭 브랜치 소속이다).
 class _SeasonPill extends StatelessWidget {
   const _SeasonPill();
 
@@ -316,8 +325,8 @@ class _SeasonPill extends StatelessWidget {
 
     return InkWell(
       borderRadius: BorderRadius.circular(AppTokens.rPill),
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('지난 시즌 통계는 아직 지원하지 않아요')),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const SeasonHistoryPage()),
       ),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: AppTokens.s12, vertical: AppTokens.s8),

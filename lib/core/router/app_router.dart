@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/history/presentation/history_page.dart';
 import '../../features/history/presentation/run_detail_page.dart';
+import '../../features/history/presentation/season_history_page.dart';
 import '../../features/home/presentation/home_page.dart';
 import '../../features/notifications/presentation/notification_inbox_page.dart';
 import '../../features/notifications/presentation/notification_settings_page.dart';
@@ -47,6 +48,16 @@ class Routes {
   /// NT-08 항목별 on/off.
   static const notificationSettings = '/notifications/settings';
 
+  /// 역대 시즌 기록(HI-06). **셸 안** · 게스트 차단 — 본인 계정 데이터다.
+  /// 알림함과 같은 이유로 마이 탭 브랜치에 매단다(진입점이 마이페이지 메뉴).
+  ///
+  /// ⚠️ **다른 탭에서는 이 경로로 `push`하지 않는다.** 라우트가 마이 탭
+  /// 브랜치의 Navigator에 속해 있어서, 활동/홈 탭에서 밀어 넣으면 화면 위에
+  /// 뜨지 않고 보이지 않는 브랜치에 쌓인다. 활동 탭의 시즌 필 등은
+  /// [SeasonHistoryPage]를 `MaterialPageRoute`로 직접 띄운다
+  /// (`RunHistoryListPage`가 쓰는 것과 같은 브랜치 내 이동 패턴).
+  static const seasonHistory = '/seasons';
+
   /// 카카오 로그인 화면. 셸(바텀 네비) **바깥**의 최상위 라우트다 —
   /// 로그인 벽에서 탭 바가 보이면 "탭은 있는데 눌러도 안 되는" 상태가 된다.
   static const login = '/login';
@@ -66,6 +77,7 @@ class Routes {
 /// | `/tracking` | 차단 | 러닝 시작에 userId 필요 |
 /// | `/profile` | 차단 | 내 프로필 |
 /// | `/notifications` (+ `/settings`) | 차단 | 알림은 계정 단위 데이터다 |
+/// | `/seasons` | 차단 | 역대 시즌은 내 계정 데이터다(HI-06) |
 /// | `/login` | 항상 허용 | 로그인 완료 시 `from` 또는 `/tracking`으로 자동 이탈 |
 ///
 /// 차단 라우트에 게스트가 진입하면 `/login?from=<원래경로>`로 리다이렉트한다.
@@ -163,6 +175,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                     builder: (_, __) => const NotificationSettingsPage(),
                   ),
                 ],
+              ),
+              GoRoute(
+                path: Routes.seasonHistory,
+                builder: (_, __) => const SeasonHistoryPage(),
               ),
             ],
           ),

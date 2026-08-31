@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../../../core/auth/auth_providers.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../models/models.dart';
+import '../../history/presentation/season_history_page.dart';
 import '../../ranking/data/ranking_providers.dart';
 import 'widgets/ranking_widgets.dart';
 
@@ -243,8 +244,22 @@ class _SeasonPill extends StatelessWidget {
                 selected: false,
                 onTap: () {
                   Navigator.of(sheetContext).pop();
+                  // 지난 시즌 **랭킹**(그 시즌 전체 리더보드 스냅샷)은 여전히
+                  // 없다 — HI-06이 채운 것은 "내 시즌 결과"뿐이다(클래스 최상단
+                  // doc 참고). 그래서 이 필은 역대 시즌 화면으로 자동 이동시키지
+                  // 않고, 볼 수 있는 대체 화면만 링크로 제안한다.
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('지난 시즌 랭킹은 아직 지원하지 않아요')),
+                    SnackBar(
+                      content: const Text('지난 시즌 전체 랭킹은 아직 지원하지 않아요'),
+                      action: SnackBarAction(
+                        label: '내 시즌 기록',
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SeasonHistoryPage(),
+                          ),
+                        ),
+                      ),
+                    ),
                   );
                 },
               ),

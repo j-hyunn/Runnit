@@ -59,6 +59,14 @@ class ProfilePage extends ConsumerWidget {
                       child: _MenuCard(
                         items: [
                           _MenuItemData(
+                            // 역대 시즌 기록(HI-06). 마이페이지에 두는 이유:
+                            // 시즌 결과는 뱃지·레벨과 같은 **영구 자산**(§4.3)이라
+                            // 활동 탭의 "이번 달 통계"보다 프로필 쪽 성격에 가깝다.
+                            icon: Icons.emoji_events_outlined,
+                            label: '역대 시즌',
+                            onTap: () => context.push(Routes.seasonHistory),
+                          ),
+                          _MenuItemData(
                             icon: Icons.watch_outlined,
                             label: '웨어러블 연동',
                             onTap: () => Navigator.of(context).push(

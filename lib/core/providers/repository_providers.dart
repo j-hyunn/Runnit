@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/gamification/data/supabase_gamification_repository.dart';
+import '../../features/history/data/supabase_season_history_repository.dart';
 import '../../features/notifications/data/supabase_notification_repository.dart';
 import '../../features/profile/data/supabase_user_repository.dart';
 import '../../features/ranking/data/supabase_ranking_repository.dart';
@@ -10,6 +11,7 @@ import '../repositories/gamification_repository.dart';
 import '../repositories/notification_repository.dart';
 import '../repositories/ranking_repository.dart';
 import '../repositories/run_repository.dart';
+import '../repositories/season_history_repository.dart';
 import '../repositories/user_repository.dart';
 
 /// 레포지토리 provider의 단일 등록 지점.
@@ -37,6 +39,11 @@ final gamificationRepositoryProvider = Provider<GamificationRepository>((ref) {
 
 final userRepositoryProvider = Provider<UserRepository>((ref) {
   return SupabaseUserRepository(ref.watch(supabaseClientProvider));
+});
+
+/// 역대 시즌 기록(HI-06). 읽기 전용 — 행을 쓰는 쪽은 서버뿐이다.
+final seasonHistoryRepositoryProvider = Provider<SeasonHistoryRepository>((ref) {
+  return SupabaseSeasonHistoryRepository(ref.watch(supabaseClientProvider));
 });
 
 /// 알림함·알림 설정·푸시 토큰(PRD §5.10). 발행 경로는 없다 — 조건 판정은 전부
