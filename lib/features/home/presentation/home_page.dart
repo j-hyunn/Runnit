@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/auth/auth_providers.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../models/models.dart';
@@ -643,6 +645,7 @@ class _RunnerList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(leaderboardProvider(tier));
+    final myUserId = ref.watch(currentUserIdProvider);
 
     return async.when(
       loading: () => const SliverToBoxAdapter(
@@ -684,7 +687,23 @@ class _RunnerList extends ConsumerWidget {
               children: [
                 for (var i = 0; i < visible; i++) ...[
                   if (i > 0) const SizedBox(height: AppTokens.s8),
-                  RunnerListTile(entry: entries[i]),
+                  RunnerListTile(
+                    entry: entries[i],
+                    // AC-03 진입점(전체 랭킹 화면과 동일). 게스트는 탭 비활성 —
+                    // `/users/:id`가 게스트 차단 라우트라 눌러도 로그인 화면으로
+                    // 튕기는데, 홈 랭킹 자체는 게스트에게 공개된 화면이다.
+                    //
+                    // 본인 행은 `/users/:me`가 아니라 마이 탭으로 보낸다
+                    // (2026-08-31 QA F-1) — 자세한 사유는 `full_ranking_page.dart`의
+                    // 같은 자리 주석 참고.
+                    onTap: myUserId == null
+                        ? null
+                        : () => entries[i].userId == myUserId
+                            ? context.go(Routes.profile)
+                            : context.push(
+                                Routes.userProfileOf(entries[i].userId),
+                              ),
+                  ),
                 ],
               ],
             ),

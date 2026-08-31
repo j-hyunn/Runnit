@@ -1,7 +1,6 @@
 // Material의 `Badge` 위젯과 도메인 모델 `Badge`가 이름 충돌하므로 위젯 쪽을 숨긴다.
 import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../core/auth/auth_providers.dart';
 import '../../../core/theme/app_tokens.dart';
@@ -12,8 +11,8 @@ import '../../sharing/data/share_providers.dart';
 import '../../sharing/domain/share_card_data.dart';
 import '../../sharing/presentation/share_card_sheet.dart';
 import '../data/gamification_providers.dart';
-import '../domain/badge_assets.dart';
 import '../domain/badge_progress.dart';
+import 'widgets/badge_medal_art.dart';
 
 /// 뱃지 갤러리 **본문** — 게스트도 볼 수 있지만 개인화 레이어는 비공개다.
 ///
@@ -574,8 +573,13 @@ class _BadgeTile extends StatelessWidget {
 }
 
 /// 뱃지 메달 — 카테고리별 실제 아트(`assets/badges/{카테고리}/{등급}.svg`,
-/// 등급별 색이 이미 입혀져 있다)를 그린다. 2026-08-26 기준 모든 카테고리에
-/// 아트가 있어 Material 아이콘 폴백은 더 이상 필요 없다.
+/// 등급별 색이 이미 입혀져 있다)를 그린다.
+///
+/// 실제 렌더링은 `widgets/badge_medal_art.dart`의 [BadgeMedalArt]가 한다.
+/// 여기는 이 화면 고유의 입력인 [BadgeProgress]를 그 위젯이 필요로 하는 최소
+/// 정보(카테고리·등급·획득 여부)로 푸는 어댑터다 — 2026-08-31 AC-03 타인
+/// 프로필이 같은 메달을 그리게 되면서 분리했다(그쪽은 `BadgeProgress`를
+/// 만들 수 없다).
 class _BadgeMedal extends StatelessWidget {
   const _BadgeMedal({
     required this.progress,
@@ -595,114 +599,25 @@ class _BadgeMedal extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final badge = progress.badge;
-    final scheme = Theme.of(context).colorScheme;
     final active = _isEarnedForDisplay(progress, showEarnedState);
-    final dimmed = !active && !forceFullColor;
 
-    // 미획득 상태는 흑백이 아니라 **투명도만** 낮춘다 — 등급 색이 회색으로
-    // 뭉개지지 않고 옅게라도 보여야 갤러리에서 등급을 가늠할 수 있다.
-    final medal = SizedBox(
-      width: size,
-      height: size,
-      child: Center(
-        child: _BadgeArtwork(
-          // 경로 규칙 정본은 `domain/badge_assets.dart` — 공유 카드와 공유한다.
-          assetPath: badgeAssetPath(
-            category: badge.category,
-            badgeGrade: badge.badgeGrade,
-          ),
-          // 원본 뷰박스가 40×44(세로로 긴 방패) — 폭을 size에 맞추고 비율은 그대로 둔다.
-          width: size,
-          dimmed: dimmed,
-        ),
-      ),
+    return BadgeMedalArt(
+      category: badge.category,
+      badgeGrade: badge.badgeGrade,
+      size: size,
+      earned: active,
+      dimmed: !active && !forceFullColor,
     );
-
-    if (!active) return medal;
-
-    // 획득 뱃지는 살짝 튀어오르는 등장 연출 + 체크 배지로 성취를 강조한다.
-    // 잠금 아이콘은 더 이상 그리지 않는다 — 미획득 상태는 위에서 투명도만으로 표현한다.
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0.85, end: 1),
-          duration: const Duration(milliseconds: 380),
-          curve: Curves.easeOutBack,
-          builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
-          child: medal,
-        ),
-        Positioned(
-          right: 0,
-          bottom: 0,
-          child: Container(
-            padding: const EdgeInsets.all(2),
-            decoration: BoxDecoration(shape: BoxShape.circle, color: scheme.surface),
-            child: Icon(Icons.check_circle, size: size * 0.24, color: _checkColor(badge.badgeGrade)),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 등급별로 이미 채색된 뱃지 SVG 한 장. 미획득 상태는 흑백(그레이스케일)으로
-/// 죽여서 "잠겨 있다"는 걸 전달한다 — 등급 색은 여전히 톤으로 짐작 가능해서
-/// 완전 회색 원(예전 폴백 렌더링)보다 정보량이 많다.
-class _BadgeArtwork extends StatelessWidget {
-  const _BadgeArtwork({
-    required this.assetPath,
-    required this.width,
-    required this.dimmed,
-  });
-
-  final String assetPath;
-  final double width;
-  final bool dimmed;
-
-  @override
-  Widget build(BuildContext context) {
-    final svg = SvgPicture.asset(assetPath, width: width);
-    if (!dimmed) return svg;
-    return Opacity(opacity: 0.35, child: svg);
   }
 }
 
 // 아트 경로 규칙(`_categoryAssetFolder` / `_gradeAssetName`)은 2026-08-26
-// `../domain/badge_assets.dart`로 옮겼다. 공유 카드(HI-08)가 **같은 메달**을
-// 그려야 하는 두 번째 소비자가 되면서, 규칙이 두 벌 있으면 갤러리에서 본 메달과
-// 인스타에 올라간 메달이 갈라질 수 있게 됐기 때문이다. 이 파일은 그 함수를
-// 그대로 호출한다.
+// `../domain/badge_assets.dart`로, 메달 렌더링과 등급 색/라벨은 2026-08-31
+// `widgets/badge_medal_art.dart`로 옮겼다. 소비자가 갤러리 하나가 아니게 되면
+// (공유 카드 HI-08, 타인 프로필 AC-03) 규칙이 두 벌 있는 순간 화면마다 다른
+// 메달이 그려지기 때문이다.
 
-/// 획득 체크 배지 색상. 사용자 요청으로 platinum↔diamond만 서로 맞바꿔
-/// 쓴다(2026-08-25) — 나머지 등급은 [_gradeColor]와 동일.
-Color _checkColor(String badgeGrade) => switch (badgeGrade) {
-      'platinum' => AppTokens.tierDiamond,
-      'diamond' => AppTokens.tierPlatinum,
-      _ => _gradeColor(badgeGrade),
-    };
-
-/// `Badge.badgeGrade`는 String(카탈로그 운영 중 등급이 늘 수 있음 — `badge.dart`
-/// doc 참고)이라 모르는 값이 오면 outline 색으로 안전하게 폴백한다.
-Color _gradeColor(String badgeGrade) => switch (badgeGrade) {
-      'bronze' => AppTokens.tierBronze,
-      'silver' => AppTokens.tierSilver,
-      'gold' => AppTokens.tierGold,
-      'platinum' => AppTokens.tierPlatinum,
-      'diamond' => AppTokens.tierDiamond,
-      'special' => AppTokens.tierSpecial,
-      _ => const Color(0xFF9B9B9B),
-    };
-
-String _gradeLabel(String badgeGrade) => switch (badgeGrade) {
-      'bronze' => '브론즈',
-      'silver' => '실버',
-      'gold' => '골드',
-      'platinum' => '플래티넘',
-      'diamond' => '다이아몬드',
-      'special' => '스페셜',
-      _ => badgeGrade,
-    };
+String _gradeLabel(String badgeGrade) => badgeGradeLabel(badgeGrade);
 
 /// `docs/badge-catalog.csv`의 `category` 열(한글 라벨, 16종)과 1:1 대응 —
 /// CSV가 정본이므로 이 표기를 그대로 따른다.

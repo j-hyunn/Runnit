@@ -70,4 +70,23 @@ abstract class SeasonHistory with _$SeasonHistory {
 
   /// GM-07 뱃지·프로필 표기용 라벨. 예: `2026 Q3`.
   String get seasonLabel => seasonId.replaceFirst('-', ' ');
+
+  /// TI-09 역대 최고 티어 — **끝난 시즌만** 본다. 하나도 없으면 null.
+  ///
+  /// 진행 중인 시즌의 티어(`AppUser.currentTier`)는 입력이 아니다. 이 값의
+  /// 의미는 "확정된 명예"이고, 아직 안 끝난 시즌은 확정이 아니기 때문이다.
+  /// 무효 처리된 시즌([isVoided])도 제외한다 — 부정 판정된 시즌이 최고 기록으로
+  /// 남으면 PRD §8.1의 회수 정책이 무의미해진다.
+  ///
+  /// 본인용(`bestEverTierProvider`)과 타인용(`bestTierOfProvider`)이 함께
+  /// 호출한다. 규칙을 provider 쪽에 복제하면 "무효 시즌 제외" 같은 정책이
+  /// 한쪽에만 반영되는 사고가 나므로 모델에 한 번만 둔다.
+  static Tier? bestTierOf(Iterable<SeasonHistory> histories) {
+    Tier? best;
+    for (final h in histories) {
+      if (h.isVoided) continue;
+      if (best == null || h.finalTier.order > best.order) best = h.finalTier;
+    }
+    return best;
+  }
 }

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -84,19 +86,61 @@ class TierPill extends StatelessWidget {
   }
 }
 
-/// 프로필 사진 없이 회색 원(Figma `#eee`)만 쓴다 — 목업에 실제 사진이 없고,
-/// `RankingEntry`에 `avatarUrl`이 있긴 하지만 이번 라운드 범위 밖(요청 시 후속).
+/// 프로필 사진 원형 아바타. 기본은 회색 원(Figma `#eee`)이고, [imageUrl] 또는
+/// [imageBytes]가 주어지면 그 이미지를 원형으로 클리핑해 그린다.
+///
+/// 2026-08-31 AC-02/AC-03에서 이미지 지원을 추가했다. 랭킹 목록은 여전히 인자
+/// 없이 호출해 회색 원만 쓴다 — `RankingEntry.avatarUrl`을 목록 전체에 걸어
+/// 그리는 건 별개 판단이라 이번 범위에 넣지 않았다.
+///
+/// 로드 실패(끊긴 링크, 오프라인)는 **에러 위젯을 그리지 않고** 회색 원으로
+/// 되돌아간다. 아바타는 보조 정보라, 깨진 이미지 아이콘이 뜨는 쪽이 더 나쁘다.
 class ProfileCircle extends StatelessWidget {
-  const ProfileCircle({super.key, required this.size});
+  const ProfileCircle({
+    super.key,
+    required this.size,
+    this.imageUrl,
+    this.imageBytes,
+  });
 
   final double size;
+  final String? imageUrl;
+
+  /// 아직 업로드하지 않은 로컬 선택 이미지의 미리보기(AC-02 편집 화면).
+  /// [imageUrl]보다 우선한다 — 사용자가 방금 고른 사진이 항상 이겨야 한다.
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final placeholder = Container(
       width: size,
       height: size,
       decoration: const BoxDecoration(color: Color(0xFFEEEEEE), shape: BoxShape.circle),
+    );
+
+    Widget? image;
+    if (imageBytes != null) {
+      image = Image.memory(
+        imageBytes!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => placeholder,
+      );
+    } else if (imageUrl != null && imageUrl!.isNotEmpty) {
+      image = Image.network(
+        imageUrl!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => placeholder,
+      );
+    }
+
+    if (image == null) return placeholder;
+
+    return ClipOval(
+      child: SizedBox(width: size, height: size, child: image),
     );
   }
 }
@@ -105,11 +149,21 @@ class ProfileCircle extends StatelessWidget {
 /// 티어 배지는 `entry.ownerTier`(행 소유자의 실제 개인 티어, 마이그레이션 24)를
 /// 쓴다 — `entry.tier`는 보드의 조회 조건이라 "전체" 보드에서는 항상 null이다.
 /// [highlighted]는 전체 랭킹 화면에서 "내 순위" 행을 표시할 때 쓴다.
+///
+/// [onTap]은 AC-03 타인 프로필(`/users/:id`) 진입점이다. 호출부가 넘겨주지
+/// 않으면 행은 탭에 반응하지 않는다 — "누를 수 있어 보이는데 아무 일도 없는"
+/// 상태를 만들지 않기 위해, 잉크 리플도 [onTap]이 있을 때만 붙는다.
 class RunnerListTile extends StatelessWidget {
-  const RunnerListTile({super.key, required this.entry, this.highlighted = false});
+  const RunnerListTile({
+    super.key,
+    required this.entry,
+    this.highlighted = false,
+    this.onTap,
+  });
 
   final RankingEntry entry;
   final bool highlighted;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -144,22 +198,31 @@ class RunnerListTile extends StatelessWidget {
       ],
     );
 
+    final Widget body;
     if (!highlighted) {
-      return Padding(
+      body = Padding(
         padding: const EdgeInsets.symmetric(vertical: AppTokens.s8),
+        child: row,
+      );
+    } else {
+      body = Container(
+        margin: const EdgeInsets.symmetric(vertical: AppTokens.s4),
+        padding: const EdgeInsets.symmetric(horizontal: AppTokens.s12, vertical: AppTokens.s8),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer,
+          borderRadius: BorderRadius.circular(AppTokens.rMd),
+          border: Border.all(color: scheme.primary.withValues(alpha: 0.5)),
+        ),
         child: row,
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: AppTokens.s4),
-      padding: const EdgeInsets.symmetric(horizontal: AppTokens.s12, vertical: AppTokens.s8),
-      decoration: BoxDecoration(
-        color: scheme.primaryContainer,
-        borderRadius: BorderRadius.circular(AppTokens.rMd),
-        border: Border.all(color: scheme.primary.withValues(alpha: 0.5)),
-      ),
-      child: row,
+    if (onTap == null) return body;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppTokens.rMd),
+      child: body,
     );
   }
 }

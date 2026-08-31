@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/auth/auth_providers.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../models/models.dart';
 import '../../history/presentation/season_history_page.dart';
@@ -356,6 +358,20 @@ class _RankingListView extends ConsumerWidget {
             return RunnerListTile(
               entry: entry,
               highlighted: myUserId != null && entry.userId == myUserId,
+              // AC-03 진입점. 게스트에게는 탭을 열지 않는다 — `/users/:id`는
+              // 게스트 차단 라우트라 눌러도 로그인 화면으로 튕길 뿐이고,
+              // 랭킹 자체는 게스트에게도 공개된 화면이다.
+              //
+              // **본인 행은 `/users/:me`로 보내지 않는다**(2026-08-31 QA F-1).
+              // 그 라우트는 홈 브랜치에 쌓이는데 본인 프로필은 마이 탭에 있어서,
+              // push한 뒤 브랜치를 바꾸면 홈 스택에 죽은 화면이 남는다.
+              // 경계는 여기 진입점에 둔다 — 화면 안에서 되돌리는 방식은
+              // "일단 잘못된 곳으로 보낸 뒤 수습"이라 항상 흔적이 남는다.
+              onTap: myUserId == null
+                  ? null
+                  : () => entry.userId == myUserId
+                      ? context.go(Routes.profile)
+                      : context.push(Routes.userProfileOf(entry.userId)),
             );
           },
         );
