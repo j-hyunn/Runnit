@@ -222,8 +222,25 @@ class _FakeRunRepository implements RunRepository {
   factory _FakeRunRepository.pending() =>
       _FakeRunRepository._(null, _Mode.pending);
 
-  final RunRecord? _record;
+  RunRecord? _record;
   final _Mode _mode;
+
+  /// 편집 시트가 넘긴 인자. 널 여부까지 보려고 튜플로 남긴다.
+  (String, String?, String?)? metaEdit;
+
+  /// true면 `updateMeta`가 던진다 — 저장 실패 국면 재현.
+  bool failEdit = false;
+
+  @override
+  Future<RunMeta> updateMeta(String id, {String? title, String? note}) async {
+    metaEdit = (id, title, note);
+    if (failEdit) throw Exception('offline');
+    // 서버 정규화(trim → 절단 → 빈 문자열은 null)를 그대로 흉내 낸다.
+    final meta = RunMeta.normalized(title: title, note: note);
+    // 실제 리포지토리가 로컬 행까지 갱신하므로, 재조회도 새 값을 봐야 한다.
+    _record = _record?.copyWith(title: meta.title, note: meta.note);
+    return meta;
+  }
 
   @override
   Future<RunRecord?> findById(String id, {bool includeSamples = false}) {

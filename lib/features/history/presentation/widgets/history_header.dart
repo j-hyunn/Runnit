@@ -14,12 +14,21 @@ import '../../../../core/theme/app_tokens.dart';
 /// `AppBar`를 쓰지 않는 이유는 이 계열 화면이 모두 흰 배경 + 20/600 제목이라,
 /// Material의 기본 elevation·surfaceTint를 매번 지우는 편이 더 번거롭기 때문이다.
 class HistoryHeader extends StatelessWidget {
-  const HistoryHeader({super.key, required this.title, this.onBack});
+  const HistoryHeader({
+    super.key,
+    required this.title,
+    this.onBack,
+    this.trailing,
+  });
 
   final String title;
 
   /// null이면 `Navigator.pop`. 헤더가 화면 밖 사정을 몰라도 되게 기본값을 둔다.
   final VoidCallback? onBack;
+
+  /// 오른쪽 끝 액션(예: 상세 화면의 편집 버튼). 제목은 `Expanded`라 이 위젯이
+  /// 늘어나지 않는다 — 아이콘 버튼 한 개 정도를 상정한다.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +67,10 @@ class HistoryHeader extends StatelessWidget {
               ),
             ),
           ),
+          if (trailing != null) ...[
+            const SizedBox(width: AppTokens.s8),
+            trailing!,
+          ],
         ],
       ),
     );

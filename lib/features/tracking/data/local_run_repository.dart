@@ -203,11 +203,119 @@ class LocalRunRepository implements RunRepository {
     return uploaded;
   }
 
+  /// 제목·메모 편집 (PRD HI-07 / TRD §4.4).
+  ///
+  /// ## 왜 upsert가 아니라 부분 `update`인가
+  /// `_push()`의 전체 행 upsert를 재사용하면 제목 한 줄 고치는 데 3,600 샘플을
+  /// 다시 올린다. 서버 가드가 어차피 `title`/`note` 외 전부를 되돌리므로 나머지
+  /// 필드를 싣는 것은 순수한 낭비다.
+  ///
+  /// ## 서버 응답이 곧 확정값
+  /// 정규화(`btrim` → 절단 → 빈 문자열은 `null`)를 BEFORE 트리거가 같은
+  /// 트랜잭션에서 수행하므로 `.select().single()` 응답이 최종값이다 — 재조회가
+  /// 필요 없다(`applyServerConfirmation`과 같은 구조).
+  ///
+  /// ## 아직 서버에 없는 기록(오프라인 저장분)은 네트워크를 아예 타지 않는다
+  /// 분기 근거는 서버 응답이 아니라 **로컬 `sync_status`**다. `synced`가 아닌 행은
+  /// 서버에 존재한 적이 없으므로(`save()`가 완료 기록만 올리고, 실패하면
+  /// `pending`/`failed`로 남는다) 로컬 편집만으로 완전히 옳다 —
+  /// [RunMeta.normalized]가 서버 가드와 같은 규칙을 적용하고, 이후
+  /// `syncPending()`이 `_remotePayload`에 담아 title/note까지 함께 올린다.
+  ///
+  /// 지하 주차장에서 러닝을 끝낸 직후가 정확히 이 국면이다(업로드 실패 → 상세에서
+  /// 메모 작성). 여기서 서버를 먼저 치면 오프라인 우선 아키텍처가 겨냥한 바로 그
+  /// 상황에서 편집이 막힌다 (QA C-1).
+  ///
+  /// ## 응답 0행은 로컬 전용 편집이 **아니라** 에러다
+  /// `synced`인데 `update ... eq(id)`가 0행이면 서버에 행이 없거나 RLS가 매칭에
+  /// 실패한 이상 상태다. 이때 로컬만 고치면 `sync_status`가 `synced`라
+  /// `syncPending()`이 재전송하지 않아 **영구 divergence**가 생기는데 사용자에겐
+  /// 성공으로 보인다. 그래서 표면화한다 (QA C-2).
+  @override
+  Future<RunMeta> updateMeta(
+    String id, {
+    String? title,
+    String? note,
+  }) async {
+    final row = await _rowOf(id);
+    // 로컬 행이 없으면(다른 기기 기록을 원격에서만 본 경우) 서버 경로로 간다.
+    final uploaded =
+        row == null || syncStatusFromWire(row.syncStatus) == SyncStatus.synced;
+
+    if (!uploaded) {
+      final meta = RunMeta.normalized(title: title, note: note);
+      await _applyMeta(id, meta);
+      return meta;
+    }
+
+    final confirmed = await guardSupabase(
+      () => _client
+          .from(_table)
+          .update(<String, dynamic>{'title': title, 'note': note})
+          .eq('id', id)
+          .select(_metaColumns)
+          .maybeSingle(),
+    );
+    if (confirmed == null) {
+      throw const Failure.network(
+        message: '수정할 기록을 서버에서 찾지 못했습니다.',
+      );
+    }
+
+    final meta = RunMeta.fromServer(confirmed);
+    await _applyMeta(id, meta);
+    return meta;
+  }
+
+  Future<RunRecordRow?> _rowOf(String id) => (_db.select(_db.runRecordRows)
+        ..where((t) => t.id.equals(id))
+        ..limit(1))
+      .getSingleOrNull();
+
+  /// 편집 응답으로 되받을 컬럼. `samples`가 딸려 오지 않도록 명시한다.
+  static const String _metaColumns = 'id,title,note,updated_at';
+
+  /// 확정된 [RunMeta]를 로컬 `summaryJson`에 겹쳐 쓴다.
+  ///
+  /// [applyServerConfirmation]과 같은 이유로 행 전체를 다시 쓰지 않는다 —
+  /// `samplesJson`을 건드리지 않고, 동시에 진행 중인 업로드가 확정한
+  /// `awarded_xp`/`is_flagged`를 되돌리지 않기 위해서다.
+  ///
+  /// `sync_status`는 **바꾸지 않는다.** 서버 편집이 성공했더라도 그 기록이
+  /// `pending`(본문 업로드 미완)이면 여전히 pending이어야 하고, 반대로 이미
+  /// `synced`인 기록을 편집했다고 pending으로 내리면 `syncPending()`이 3,600
+  /// 샘플을 통째로 다시 올린다.
+  Future<void> _applyMeta(String id, RunMeta meta) async {
+    await _db.transaction(() async {
+      final row = await _rowOf(id);
+      if (row == null) return;
+
+      final summary = jsonDecode(row.summaryJson) as Map<String, dynamic>;
+      summary['title'] = meta.title;
+      summary['note'] = meta.note;
+      if (meta.updatedAt != null) {
+        summary['updated_at'] = meta.updatedAt!.toIso8601String();
+      }
+
+      await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
+        RunRecordRowsCompanion(
+          summaryJson: Value(jsonEncode(summary)),
+          updatedAtLocal: Value(DateTime.now().toUtc()),
+        ),
+      );
+    });
+  }
+
+  /// 미완결 세션 폐기 전용 — 계약은 [RunRepository.delete] 참조.
+  ///
+  /// 서버 DELETE를 **부르지 않는다.** 여기 오는 행은 `recording`/`paused`
+  /// 체크포인트라 애초에 업로드된 적이 없고(`save()`가 완료 기록만 올린다),
+  /// 마이그레이션 51-3이 `runs_delete_own` 정책을 내려 서버 삭제 경로 자체가
+  /// 사라졌다(PRD v1.6 — 사용자는 러닝을 삭제할 수 없다). 남겨 두면 폐기할 때마다
+  /// 0행짜리 왕복 요청만 나간다.
   @override
   Future<void> delete(String id) async {
     await (_db.delete(_db.runRecordRows)..where((t) => t.id.equals(id))).go();
-    // 서버에 없던 기록이면 0행 삭제로 조용히 끝난다. RLS가 남의 기록을 막는다.
-    await guardSupabase(() => _client.from(_table).delete().eq('id', id));
   }
 
   // ─────────────────────────── 읽기 ───────────────────────────
