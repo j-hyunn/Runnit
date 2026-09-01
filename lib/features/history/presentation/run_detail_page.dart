@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/share_anchor.dart';
 import '../../../models/models.dart';
 import '../../tracking/presentation/tracking_format.dart';
 import '../../tracking/presentation/widgets/run_map_view.dart'
@@ -62,7 +63,8 @@ class RunDetailPage extends ConsumerWidget {
                   : _DetailActions(
                       onEdit: () => editRunMeta(context, ref, record),
                       onExportGpx: hasExportableRoute(record)
-                          ? () => exportRunAsGpx(context, ref, record)
+                          ? (origin) =>
+                              exportRunAsGpx(context, ref, record, origin: origin)
                           : null,
                     ),
             ),
@@ -125,12 +127,17 @@ Future<void> editRunMeta(
 /// 준비 스낵바를 먼저 띄우고(직렬화·파일 쓰기가 큰 기록에선 수백 ms), 실패했을
 /// 때만 별도 안내로 덮는다. 성공(시트 표시)은 OS 시트 자체가 피드백이라 조용히
 /// 지나간다.
+///
+/// [origin]은 iPad 팝오버 앵커다. **호출부가 오버플로 버튼의 사각형을 계산해
+/// 넘긴다** — 여기서 `context.findRenderObject()`를 부르면 그건 페이지 전체의
+/// RenderBox라 팝오버가 화면 중앙에서 뜬다(QA A-6). [_DetailActions] 참조.
 @visibleForTesting
 Future<void> exportRunAsGpx(
   BuildContext context,
   WidgetRef ref,
-  RunRecord record,
-) async {
+  RunRecord record, {
+  Rect? origin,
+}) async {
   final messenger = ScaffoldMessenger.of(context);
   messenger.showSnackBar(
     const SnackBar(
@@ -138,11 +145,6 @@ Future<void> exportRunAsGpx(
       duration: Duration(seconds: 1),
     ),
   );
-
-  final box = context.findRenderObject() as RenderBox?;
-  final origin = (box != null && box.hasSize)
-      ? box.localToGlobal(Offset.zero) & box.size
-      : null;
 
   final outcome =
       await ref.read(gpxExportServiceProvider).exportAndShare(record, origin: origin);
@@ -157,24 +159,39 @@ Future<void> exportRunAsGpx(
 }
 
 /// 헤더 오른쪽 액션 묶음 — 편집 버튼 + (경로가 있을 때만) 오버플로 메뉴.
-class _DetailActions extends StatelessWidget {
+///
+/// 오버플로 버튼에 [GlobalKey]를 달아 두는 이유는 하나뿐이다: iPad 공유
+/// 팝오버가 **그 버튼**을 가리켜야 하기 때문(QA A-6). 키는 State가 소유해야
+/// 리빌드 사이에 같은 위젯을 계속 가리킨다.
+class _DetailActions extends StatefulWidget {
   const _DetailActions({required this.onEdit, this.onExportGpx});
 
   final VoidCallback onEdit;
-  final VoidCallback? onExportGpx;
+
+  /// 인자는 iPad 팝오버 앵커(오버플로 버튼의 전역 사각형). 계산 불가면 null.
+  final void Function(Rect? origin)? onExportGpx;
+
+  @override
+  State<_DetailActions> createState() => _DetailActionsState();
+}
+
+class _DetailActionsState extends State<_DetailActions> {
+  final _overflowKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
+    final onExportGpx = widget.onExportGpx;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _EditButton(onTap: onEdit),
+        _EditButton(onTap: widget.onEdit),
         if (onExportGpx != null) ...[
           const SizedBox(width: AppTokens.s4),
           PopupMenuButton<String>(
+            key: _overflowKey,
             icon: const Icon(Icons.more_vert, size: 22, color: Colors.black),
             tooltip: '더보기',
-            onSelected: (_) => onExportGpx!(),
+            onSelected: (_) => onExportGpx(shareOriginOfKey(_overflowKey)),
             itemBuilder: (_) => const [
               PopupMenuItem<String>(
                 value: 'gpx',

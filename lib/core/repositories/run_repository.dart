@@ -9,6 +9,10 @@ import '../../models/models.dart';
 /// 어느 구현이든 이 시그니처를 지키면 상위 계층 수정 없이 교체 가능하다.
 abstract interface class RunRepository {
   /// 완결된 러닝 저장(로컬 우선 저장 후 동기화). id는 클라이언트 생성 UUID.
+  ///
+  /// **await이 보장하는 것은 로컬 저장까지다.** 서버 업로드는 백그라운드로
+  /// 넘어가고, 실패해도 이 호출은 성공으로 끝난다(실패분은 [syncPending]이
+  /// 재시도). 러닝 종료 → 요약 화면 전환이 서버 응답에 묶이면 안 되기 때문이다.
   Future<void> save(RunRecord record);
 
   /// 단건 조회. samples 포함 여부는 [includeSamples]로 제어(목록 payload 절감).
@@ -48,8 +52,14 @@ abstract interface class RunRepository {
   /// 그대로 되살아난다. 사용자에게 노출되는 삭제 UI를 만들지 않는다.
   Future<void> delete(String id);
 
-  /// 미동기화(local/failed) 기록을 서버로 밀어 올린다. 성공 건수를 반환.
-  Future<int> syncPending();
+  /// 미동기화(pending/failed) 기록을 서버로 밀어 올린다. 성공 건수를 반환.
+  ///
+  /// [userId]를 주면 **그 사용자의 기록만** 올린다. 한 기기에서 계정을 바꾸면
+  /// 이전 계정의 미업로드 행이 현재 세션 JWT로 나가 RLS(`user_id = auth.uid()`)에
+  /// 42501로 걸리는데, 그 행은 절대 `synced`가 되지 않으므로 재시도 신호마다
+  /// 영구히 반복된다. 호출부(`RunSyncCoordinator`)는 항상 현재 로그인 사용자로
+  /// 좁혀 부른다.
+  Future<int> syncPending({String? userId});
 }
 
 /// `runs.title` 상한. 서버 CHECK `runs_title_len`과 같은 값이다(TRD §4.4).

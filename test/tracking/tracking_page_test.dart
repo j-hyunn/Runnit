@@ -339,6 +339,69 @@ void main() {
     });
   });
 
+  group('자동 일시정지 (TR-03)', () {
+    testWidgets('정지가 감지되면 배너로 알린다', (tester) async {
+      await pumpPage(
+        tester,
+        extraOverrides: [
+          autoPauseReaderProvider.overrideWithValue(() => true),
+        ],
+      );
+      await tester.tap(find.text('시작'));
+      await settle(tester);
+
+      service.emit(
+        _record(userId, status: RunStatus.recording, distanceMeters: 1200),
+      );
+      await settle(tester);
+
+      expect(find.textContaining('자동 일시정지됨'), findsOneWidget);
+      // 수동 일시정지가 아니다 — 컨트롤은 그대로 '일시정지'로 남아야 한다.
+      // (자동 일시정지에는 사용자가 누를 '재개' 대상이 없다.)
+      expect(find.text('일시정지'), findsOneWidget);
+      expect(find.text('재개'), findsNothing);
+      expect(find.text('일시정지됨'), findsNothing);
+    });
+
+    testWidgets('다시 움직이면 배너가 사라진다', (tester) async {
+      var stationary = true;
+      await pumpPage(
+        tester,
+        extraOverrides: [
+          autoPauseReaderProvider.overrideWithValue(() => stationary),
+        ],
+      );
+      await tester.tap(find.text('시작'));
+      await settle(tester);
+
+      service.emit(
+        _record(userId, status: RunStatus.recording, elapsedSeconds: 30),
+      );
+      await settle(tester);
+      expect(find.textContaining('자동 일시정지됨'), findsOneWidget);
+
+      // 이동이 다시 인정되면 상태기계가 스스로 해제한다 — 사용자 조작 없음.
+      stationary = false;
+      service.emit(
+        _record(userId, status: RunStatus.recording, elapsedSeconds: 31),
+      );
+      await settle(tester);
+
+      expect(find.textContaining('자동 일시정지됨'), findsNothing);
+    });
+
+    testWidgets('정지가 아니면 배너가 없다', (tester) async {
+      await pumpPage(tester);
+      await tester.tap(find.text('시작'));
+      await settle(tester);
+
+      service.emit(_record(userId, status: RunStatus.recording));
+      await settle(tester);
+
+      expect(find.textContaining('자동 일시정지됨'), findsNothing);
+    });
+  });
+
   group('요약 국면', () {
     testWidgets('종료 확인 후 최종 기록이 요약된다', (tester) async {
       await pumpPage(tester);
@@ -508,5 +571,5 @@ class FakeRunRepository implements RunRepository {
       const Stream<List<RunRecord>>.empty();
 
   @override
-  Future<int> syncPending() async => 0;
+  Future<int> syncPending({String? userId}) async => 0;
 }

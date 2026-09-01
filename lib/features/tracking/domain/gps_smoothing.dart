@@ -113,14 +113,22 @@ enum TrackingProfile {
   /// 일반 러닝 기본값. 5초 간격.
   standard,
 
-  /// 마라톤/장거리. 10초 간격.
+  /// 마라톤/장거리. 5초 간격 + 낮은 정확도 등급 + 큰 거리필터.
+  ///
+  /// **폴링 간격은 표준과 같은 5초다**(2026-09-01, C-3). 이전 10초는
+  /// PRD TR-04("5초 이내 최신 위치 반영")를 **구조적으로** 만족할 수 없었다 —
+  /// 앱이 아는 최신 좌표 자체가 최대 10초 전 것이라 지도를 아무리 빨리 그려도
+  /// 기준을 못 지킨다. 절전은 이제 간격이 아니라
+  /// **정확도 등급(medium) + 거리필터(8m)** 로 얻는다: GNSS 듀티 사이클과
+  /// 콜백 수를 줄이는 쪽이며, 표준 대비 절감폭은 이전보다 작다(§배터리 노트).
   batterySaver;
 
   /// 이 프로파일이 기대하는 fix 간격(s). 드리프트 노이즈 바닥값 계산에 쓴다.
   double get expectedIntervalSeconds => switch (this) {
         TrackingProfile.highAccuracy => 1,
         TrackingProfile.standard => 5,
-        TrackingProfile.batterySaver => 10,
+        // TR-04 상한과 같은 값. 여기를 다시 올리면 TR-04가 다시 깨진다.
+        TrackingProfile.batterySaver => 5,
       };
 
   /// geolocator `distanceFilter`(m). 프로파일이 길수록 더 크게 잡아
@@ -136,7 +144,7 @@ enum TrackingProfile {
 class GpsFilterConfig {
   const GpsFilterConfig({
     this.maxAccuracyMeters = 25,
-    this.maxPlausibleSpeedMps = 8.5,
+    this.maxPlausibleSpeedMps = 25 / 3.6,
     this.minMovingSpeedMps = 0.6,
     this.minStepMeters = 1.0,
     this.smoothingWindow = 5,
@@ -150,12 +158,27 @@ class GpsFilterConfig {
 
   /// 이 반경보다 부정확한 fix는 버린다. 25m는 도심 캐니언에서 흔한 값이라
   /// 더 조이면 도심 러닝에서 fix가 거의 남지 않는다.
+  ///
+  /// 이 게이트는 **클라이언트 전용**이다 — 서버 `validate_run`에는 대응 검사가
+  /// 없다(정확도는 업로드 payload에 샘플별로만 남는다). 그래서 "서버에 맞춘다"는
+  /// 축이 존재하지 않고, 도심 fix 생존율이 유일한 판단 기준이다.
+  /// TRD §8.3의 서술값(20m)을 이 실측 기준값으로 정정했다(2026-09-01, C-1).
   final double maxAccuracyMeters;
 
-  /// 8.5 m/s ≈ 30.6 km/h. 우사인 볼트 최고속도(약 12 m/s)보다 낮지만,
-  /// 여기는 *구간 평균* 속도라 스프린트도 이 값을 넘지 않는다.
-  /// 서버 재검증(`validate_run`)의 `implausible_max_speed`(15 m/s)보다
-  /// 클라이언트가 더 보수적인 것은 의도적이다 — 플래그 전에 걸러낸다.
+  /// **25 km/h**(≈6.94 m/s). PRD §8.4 "구간 속도 25km/h 초과 → 해당 구간 제거"와
+  /// **같은 숫자**다 — ARCHITECTURE §6.4가 요구하는 "서버 검증과 동일 기준의
+  /// 클라이언트 1차 필터"를 글자 그대로 맞춘 것이다(2026-09-01, C-1).
+  ///
+  /// 이전 값은 8.5 m/s(≈30.6 km/h)였다. 서버가 어차피 제거할 구간을 클라이언트가
+  /// 거리에 넣으면 **화면의 거리와 서버가 확정한 거리가 벌어진다** — 티어·랭킹의
+  /// 원천이 서버 재계산값이므로(§8.4 원칙), 사용자에게 보여준 값이 더 큰 쪽으로
+  /// 어긋나는 것이 가장 나쁜 형태의 불일치다.
+  ///
+  /// ⚠️ 트레이드오프: 25km/h는 2'24"/km라 **엘리트 인터벌 스프린트 구간이
+  /// 통째로 버려질 수 있다**(fix를 버리면 다음 fix는 더 오래된 기준점과 비교되어
+  /// 연쇄로 버려진다). 지속주 상한(~20km/h)보다는 위에 있어 일반 러닝에는
+  /// 닿지 않는다. 실기기 검증(§3.1 세트 A/B)에서 스프린트 구간 손실이 관측되면
+  /// 서버 임계값과 **함께** 올린다 — 한쪽만 올리면 C-1이 되살아난다.
   final double maxPlausibleSpeedMps;
 
   /// 0.6 m/s ≈ 2.2 km/h. 가장 느린 걷기(약 3 km/h)보다도 낮아

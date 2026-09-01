@@ -10,6 +10,7 @@ import '../../../models/models.dart';
 import '../domain/gps_smoothing.dart';
 import '../domain/run_session_aggregator.dart';
 import '../domain/run_tracking_service.dart';
+import 'battery_optimization.dart';
 import 'health_wearable_source.dart';
 
 /// [RunTrackingService]의 geolocator 구현.
@@ -27,16 +28,22 @@ import 'health_wearable_source.dart';
 class GeolocatorRunTrackingService implements RunTrackingService {
   GeolocatorRunTrackingService({
     this.profile = TrackingProfile.standard,
+    this.filterConfig = const GpsFilterConfig(),
     this.wearableSource,
     this.onCheckpoint,
     this.weightKg,
     this.checkpointInterval = const Duration(seconds: 15),
+    this.batteryOptimizationGuard = const BatteryOptimizationGuard(),
     Uuid? uuid,
   }) : _uuid = uuid ?? const Uuid();
 
   /// 배터리 ↔ 정확도 프로파일. 사용자 설정에서 바꾸면 provider가 서비스를
   /// 새로 만들도록 되어 있다(`tracking_providers.dart`).
   final TrackingProfile profile;
+
+  /// 스무딩·이상치 임계값. 집계기에 그대로 넘기고, [rawFixStream]의 정확도
+  /// 게이트도 같은 값을 쓴다(두 곳이 어긋나면 마커만 튀는 fix로 움직인다).
+  final GpsFilterConfig filterConfig;
 
   /// 워치 지표 소스. null이면 폰 단독 트래킹(정상 경로다 — 에러가 아니다).
   final WearableMetricsSource? wearableSource;
@@ -47,6 +54,10 @@ class GeolocatorRunTrackingService implements RunTrackingService {
 
   final Duration checkpointInterval;
 
+  /// Android 배터리 최적화 예외 요청 경로(R-2). 테스트에서 교체 가능하도록
+  /// 주입받는다.
+  final BatteryOptimizationGuard batteryOptimizationGuard;
+
   /// 칼로리 추정용 체중(kg). 프로필에서 주입.
   final double? weightKg;
 
@@ -56,6 +67,10 @@ class GeolocatorRunTrackingService implements RunTrackingService {
       StreamController<RunSample>.broadcast();
   final StreamController<RunRecord> _sessionController =
       StreamController<RunRecord>.broadcast();
+
+  /// 스무딩 **이전** 좌표. 지도 마커 전용이다([rawFixStream] 주석 참조).
+  final StreamController<GpsFix> _rawFixController =
+      StreamController<GpsFix>.broadcast();
 
   RunSessionAggregator? _aggregator;
   StreamSubscription<geo.Position>? _positionSub;
@@ -68,6 +83,12 @@ class GeolocatorRunTrackingService implements RunTrackingService {
   bool _hasBackgroundPermission = false;
   bool get hasBackgroundLocationPermission => _hasBackgroundPermission;
 
+  /// Android 배터리 최적화 예외가 적용됐는지(R-2). Android가 아니면 항상 true.
+  /// 거부돼도 트래킹은 그대로 진행한다 — OEM 정책상 기록이 끊길 확률이
+  /// 올라갈 뿐이다.
+  bool _hasBatteryOptimizationExemption = false;
+  bool get hasBatteryOptimizationExemption => _hasBatteryOptimizationExemption;
+
   /// 이 세션에 워치 지표가 한 번이라도 붙었는지. UI 배너 판단용.
   bool _wearableConnected = false;
   bool get wearableConnected => _wearableConnected;
@@ -76,6 +97,22 @@ class GeolocatorRunTrackingService implements RunTrackingService {
   /// true면 UI가 "워치 데이터는 동기화 후 반영됩니다" 안내를 띄운다.
   bool _usesDelayedWearableSync = false;
   bool get usesDelayedWearableSync => _usesDelayedWearableSync;
+
+  /// 자동 일시정지(TR-03) 중인지. 판정은 집계기의 상태기계가 한다
+  /// (`RunSessionAggregator.isAutoPaused` 주석에 수동 일시정지와 합치지 않은 이유).
+  bool get isAutoPaused => _aggregator?.isAutoPaused ?? false;
+
+  /// **스무딩 이전** 최신 좌표 스트림 — 지도 마커 전용이다(TR-04, C-4).
+  ///
+  /// [sampleStream]의 좌표는 이동평균 창(기본 5)을 거쳐 약 2 fix(표준 프로파일
+  /// 기준 10초) 뒤처진다. 경로 폴리라인은 그 값이 맞다(지그재그가 죽는다).
+  /// 하지만 "지금 내가 있는 점"까지 뒤처지면 사용자 체감으로 TR-04의
+  /// "5초 이내 최신 위치 반영"을 못 지킨다.
+  ///
+  /// 정확도 게이트([GpsFilterConfig.maxAccuracyMeters])만 통과시키고 점프 게이트·
+  /// 이동평균은 거치지 않는다 — 마커가 튀는 것을 막을 최소한만 남긴 것이다.
+  /// **거리 계산에는 절대 쓰지 않는다.**
+  Stream<GpsFix> get rawFixStream => _rawFixController.stream;
 
   @override
   Stream<RunSample> get sampleStream => _sampleController.stream;
@@ -108,6 +145,14 @@ class GeolocatorRunTrackingService implements RunTrackingService {
     // 화면을 켜둔 채로 뛰는 사용자는 포그라운드 권한만으로 충분하다.
     // 이 값이 false면 Android 포그라운드 서비스 알림도 켜지 않는다.
     _hasBackgroundPermission = await _requestBackgroundLocation();
+
+    // 3단계: Android 배터리 최적화 예외(R-2). 백그라운드 권한을 실제로 받은
+    // 경우에만 묻는다 — 포그라운드 전용으로 저하된 사용자에게는 의미가 없는
+    // 다이얼로그다. 결과와 무관하게 트래킹은 진행한다.
+    if (_hasBackgroundPermission) {
+      _hasBatteryOptimizationExemption =
+          await batteryOptimizationGuard.ensureExempted();
+    }
   }
 
   Future<bool> _requestBackgroundLocation() async {
@@ -140,6 +185,7 @@ class GeolocatorRunTrackingService implements RunTrackingService {
       userId: userId,
       activityType: type,
       startedAt: startedAt,
+      filterConfig: filterConfig,
       profile: profile,
       weightKg: weightKg,
     );
@@ -246,17 +292,27 @@ class GeolocatorRunTrackingService implements RunTrackingService {
     final aggregator = _aggregator;
     if (aggregator == null) return;
 
-    final sample = aggregator.addFix(
-      GpsFix(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        timestamp: position.timestamp.toUtc(),
-        accuracyMeters: position.accuracy,
-        altitudeMeters: position.altitude,
-        speedMps: position.speed,
-        headingDegrees: position.heading,
-      ),
+    final fix = GpsFix(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      timestamp: position.timestamp.toUtc(),
+      accuracyMeters: position.accuracy,
+      altitudeMeters: position.altitude,
+      speedMps: position.speed,
+      headingDegrees: position.heading,
     );
+
+    // 지도 마커용 원시 좌표 — 정확도 게이트만 통과시킨다(TR-04, [rawFixStream]).
+    // 일시정지 중에는 위치를 갱신하지 않는다(멈춰 있음을 화면이 보여야 한다).
+    final accuracy = position.accuracy;
+    if (!aggregator.isPaused &&
+        !accuracy.isNaN &&
+        accuracy <= filterConfig.maxAccuracyMeters &&
+        !_rawFixController.isClosed) {
+      _rawFixController.add(fix);
+    }
+
+    final sample = aggregator.addFix(fix);
     if (sample == null) return; // 필터에 걸러진 fix — 조용히 버린다.
     _sampleController.add(sample);
   }
@@ -372,5 +428,6 @@ class GeolocatorRunTrackingService implements RunTrackingService {
     await _teardown();
     await _sampleController.close();
     await _sessionController.close();
+    await _rawFixController.close();
   }
 }

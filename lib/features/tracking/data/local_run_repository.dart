@@ -14,9 +14,16 @@ import 'local_run_database.dart';
 /// [RunRepository]의 **오프라인 우선** 구현.
 ///
 /// ## 저장 순서 (이 순서가 계약이다)
-/// `save()` → ① 로컬 SQLite에 먼저 쓴다 ② 완료 기록이면 서버 업로드를 시도한다
-/// ③ 실패하면 로컬에 `SyncStatus.pending`으로 남고 `syncPending()` 재시도로 올라간다.
+/// `save()` → ① 로컬 SQLite에 먼저 쓴다(여기까지만 await한다) ② 완료 기록이면
+/// 서버 업로드를 **백그라운드로** 띄운다 ③ 실패하면 로컬에 `SyncStatus.failed`로
+/// 남고 `syncPending()` 재시도로 올라간다.
 /// 네트워크를 먼저 치면 지하 주차장에서 끝낸 러닝이 통째로 사라진다.
+///
+/// ②를 await하지 않는 이유는 UI다 — `save()`를 기다리는 호출부가 러닝 종료
+/// 흐름(`TrackingController.stop()` → 요약 화면)이라, 업로드까지 기다리면 요약
+/// 화면이 서버 응답에 묶인다(QA C-4). 업로드 실패는 어차피 `save()`의 실패가
+/// 아니므로 기다릴 이유도 없다. 테스트는 [uploadSettled]로 그 백그라운드 작업을
+/// 관측한다.
 ///
 /// ## 왜 업로드가 멱등한가
 /// `RunRecord.id`가 클라이언트 생성 UUID v4이고 서버 `runs.id`의 PK와 같은
@@ -37,10 +44,30 @@ import 'local_run_database.dart';
 /// `null`로 남아 공유 카드 게이트가 `pending`에서 멈춘다
 /// (`gamification/domain/achievement_moment.dart`).
 class LocalRunRepository implements RunRepository {
-  LocalRunRepository(this._db, this._client);
+  LocalRunRepository(
+    this._db,
+    this._client, {
+    this.uploadTimeout = const Duration(seconds: 30),
+  });
 
   final LocalRunDatabase _db;
   final SupabaseClient _client;
+
+  /// 업로드 요청 하나의 상한.
+  ///
+  /// 스탈된 TCP 연결("연결은 됐는데 응답이 없는" 구간 — 캡티브 포털, 지하철 셀
+  /// 전환)에서 요청이 영원히 반환되지 않으면 [syncPending]이 끝나지 않고,
+  /// `RunSyncCoordinator`의 재진입 래치가 걸린 채로 앱 수명 내내 큐가 멈춘다
+  /// (QA C-3). 비행기 모드처럼 즉시 실패하는 경우는 해당 없다.
+  ///
+  /// ⚠️ `.timeout()`은 이미 나간 HTTP 요청을 **취소하지 못한다**(소켓은 SDK가
+  /// 쥐고 있다). 끊기는 것은 우리 쪽 대기뿐이며, 그것으로 충분하다 — 업로드가
+  /// 멱등이라 서버에 늦게 도착한 요청이 성공했더라도 재시도가 중복 행을 만들지
+  /// 않는다.
+  ///
+  /// 30초: 1시간 러닝의 3,600 샘플(압축 전 0.5~1MB)을 저대역에서 올리는 시간을
+  /// 감안한 값. 테스트에서만 줄인다.
+  final Duration uploadTimeout;
 
   static const String _table = 'runs';
 
@@ -85,7 +112,29 @@ class LocalRunRepository implements RunRepository {
     if (!isFinal) return;
 
     // 업로드 실패는 `save()`의 실패가 아니다 — 이미 로컬에 안전하게 남았다.
-    await _push(record);
+    // 그래서 기다리지 않는다(QA C-4): 요약 화면은 로컬 데이터로 즉시 뜨고,
+    // 실패는 `failed`로 남아 코디네이터의 다음 신호에서 재시도된다.
+    _schedulePush(record);
+  }
+
+  /// 진행 중인 백그라운드 업로드의 꼬리. `save()`가 더 이상 업로드를 await하지
+  /// 않으므로, 업로드 결과를 관측해야 하는 테스트가 이걸 기다린다.
+  ///
+  /// 체인으로 이어 붙여 **업로드끼리 겹치지 않게** 직렬화한다 — 같은 기기에서
+  /// 연달아 저장된 기록이 동시에 3,600 샘플씩 밀어 올리는 상황을 피한다.
+  Future<void> _uploads = Future<void>.value();
+
+  @visibleForTesting
+  Future<void> get uploadSettled => _uploads;
+
+  void _schedulePush(RunRecord record) {
+    // 이 체인은 아무도 await하지 않으므로 예외를 여기서 삼킨다. `_push()`가 이미
+    // 모든 업로드 실패를 `failed`로 흡수하고, 그 뒤에도 던질 수 있는 것은 로컬
+    // DB가 닫힌 경우뿐이다(앱 종료) — 그때는 다음 실행의 `syncPending()`이 큐를
+    // 다시 집어 든다.
+    _uploads = _uploads
+        .then((_) => _push(record))
+        .then((_) {}, onError: (Object _) {});
   }
 
   Future<void> _writeLocal(RunRecord record) async {
@@ -117,19 +166,30 @@ class LocalRunRepository implements RunRepository {
   /// 않는 이유는 **업로드가 멱등**이기 때문이다: 서버에는 이미 들어갔더라도
   /// 로컬이 `failed`로 남아 `syncPending()`이 같은 `id`로 다시 upsert하고,
   /// 그때 응답을 다시 받아 반영한다. 중복 행도, 잃어버린 판정도 없다.
+  /// ## 타임아웃
+  /// [uploadTimeout]을 넘기면 `TimeoutException`이 나고, 다른 실패와 똑같이
+  /// `failed`로 내려 다음 신호에서 재시도된다 — 멈춘 연결 하나가 큐 전체를
+  /// 정지시키지 않게 하는 유일한 장치다(QA C-3).
   Future<bool> _push(RunRecord record) async {
     try {
-      final confirmed = await _client
-          .from(_table)
-          .upsert(_remotePayload(record))
-          .select(_confirmationColumns)
-          .single();
+      final confirmed = await _upsertRemote(record).timeout(uploadTimeout);
       await applyServerConfirmation(record.id, confirmed);
       return true;
     } catch (_) {
       await _markSyncStatus(record.id, SyncStatus.failed);
       return false;
     }
+  }
+
+  /// PostgREST 왕복만 떼어 둔다. 빌더는 `Future`를 *구현*할 뿐이라 `.timeout()`을
+  /// 빌더에 바로 걸기보다, async 함수로 감싸 진짜 `Future`로 만든 뒤 거는 것이
+  /// 안전하다.
+  Future<Map<String, dynamic>> _upsertRemote(RunRecord record) async {
+    return _client
+        .from(_table)
+        .upsert(_remotePayload(record))
+        .select(_confirmationColumns)
+        .single();
   }
 
   static Map<String, dynamic> _remotePayload(RunRecord record) {
@@ -182,18 +242,25 @@ class LocalRunRepository implements RunRepository {
     );
   }
 
+  /// [userId]를 주면 그 사용자의 행만 올린다 — 계약은 [RunRepository.syncPending]
+  /// 참조. 한 기기에서 계정을 바꿨을 때 이전 계정의 행을 현재 세션 JWT로 밀어
+  /// 올려 RLS 42501을 무한 반복하는 것을 막는다(QA C-5). 이전 계정 행은 **지우지
+  /// 않는다** — 그 계정으로 다시 로그인하면 그대로 올라간다.
   @override
-  Future<int> syncPending() async {
-    final rows = await (_db.select(_db.runRecordRows)
-          ..where(
-            (t) =>
-                t.status.equals(runStatusWire(RunStatus.completed)) &
-                t.syncStatus.isNotValue(syncStatusWire(SyncStatus.synced)),
-          )
-          ..orderBy(<OrderClauseGenerator<RunRecordRows>>[
-            (t) => OrderingTerm.asc(t.startedAt),
-          ]))
-        .get();
+  Future<int> syncPending({String? userId}) async {
+    final query = _db.select(_db.runRecordRows)
+      ..where(
+        (t) =>
+            t.status.equals(runStatusWire(RunStatus.completed)) &
+            t.syncStatus.isNotValue(syncStatusWire(SyncStatus.synced)),
+      );
+    if (userId != null) {
+      query.where((t) => t.userId.equals(userId));
+    }
+    query.orderBy(<OrderClauseGenerator<RunRecordRows>>[
+      (t) => OrderingTerm.asc(t.startedAt),
+    ]);
+    final rows = await query.get();
 
     var uploaded = 0;
     for (final row in rows) {

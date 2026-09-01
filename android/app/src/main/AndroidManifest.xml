@@ -32,6 +32,13 @@
          분리돼 있다. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- 배터리 최적화 예외 요청(BatteryOptimizationGuard, PRD TR-02).
+         포그라운드 서비스만으로는 샤오미/화웨이 등 OEM 전력 관리가 화면 꺼짐
+         수십 분 뒤 서비스를 재워 기록이 끊긴다. "항상 허용" 위치 권한까지 받은
+         뒤 **딱 한 번** 시스템 다이얼로그를 띄운다.
+         ⚠️ Play 정책상 이 권한은 핵심 기능이 백그라운드 지속 실행을 요구하는
+         앱(피트니스 트래킹 등)만 허용된다 — 스토어 등록 시 용도 설명 필요. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <!-- ── Health Connect (Garmin/Wear OS 심박) ────────────────────────
          HealthWearableMetricsSource는 READ만 한다. 미설치 기기에서는

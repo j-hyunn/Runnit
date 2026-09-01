@@ -8,6 +8,7 @@ import 'package:runnit/core/map/map_surface.dart';
 import 'package:runnit/core/providers/repository_providers.dart';
 import 'package:runnit/core/repositories/run_repository.dart';
 import 'package:runnit/core/theme/app_theme.dart';
+import 'package:runnit/features/history/data/gpx_export_service.dart';
 import 'package:runnit/features/history/presentation/run_detail_page.dart';
 import 'package:runnit/features/history/presentation/widgets/lap_table.dart';
 import 'package:runnit/features/history/presentation/widgets/pace_chart.dart';
@@ -62,9 +63,11 @@ void main() {
 
   Future<void> pump(
     WidgetTester tester,
-    _FakeRunRepository repository,
-  ) async {
-    tester.view.physicalSize = const Size(420, 1400);
+    _FakeRunRepository repository, {
+    Size size = const Size(420, 1400),
+    GpxExportService? gpxService,
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -72,6 +75,8 @@ void main() {
       ProviderScope(
         overrides: [
           runRepositoryProvider.overrideWithValue(repository),
+          if (gpxService != null)
+            gpxExportServiceProvider.overrideWithValue(gpxService),
           // 네이버 지도는 초기화된 SDK와 네이티브 뷰를 요구한다. 위젯 테스트에는
           // 둘 다 없으므로 지도 표면을 스텁으로 갈아끼운다.
           mapSurfaceBuilderProvider.overrideWithValue(stubMapSurfaceBuilder),
@@ -264,6 +269,42 @@ void main() {
     expect(find.text('GPX 내보내기'), findsOneWidget);
   });
 
+  testWidgets('iPad 공유 앵커는 화면 전체가 아니라 오버플로 버튼 사각형이다',
+      (tester) async {
+    // iPad 12.9" 세로. 여기서 앵커가 화면 전체가 되면 팝오버가 버튼과 무관한
+    // 곳에서 뜬다(QA A-6) — 화면이 클수록 어긋남이 눈에 띈다.
+    const screen = Size(1024, 1366);
+    final gpx = _FakeGpxExportService();
+    await pump(
+      tester,
+      _FakeRunRepository.value(run(samples: threeKmSamples())),
+      size: screen,
+      gpxService: gpx,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('GPX 내보내기'));
+    await tester.pumpAndSettle();
+
+    expect(gpx.calls, 1);
+    final origin = gpx.lastOrigin;
+    expect(origin, isNotNull);
+
+    // 1) 화면 전체가 아니다 — 버그의 증상이 정확히 이것이었다.
+    expect(origin, isNot(Offset.zero & screen));
+    expect(origin!.width, lessThan(screen.width / 4));
+    expect(origin.height, lessThan(screen.height / 4));
+
+    // 2) 실제 오버플로 버튼과 겹친다.
+    final button = tester.getRect(find.byIcon(Icons.more_vert));
+    expect(origin.overlaps(button), isTrue);
+    // 헤더는 화면 오른쪽 위 — 앵커도 거기 있어야 한다.
+    expect(origin.center.dx, greaterThan(screen.width / 2));
+    expect(origin.center.dy, lessThan(screen.height / 4));
+  });
+
   testWidgets('경로가 없는 실내 러닝은 오버플로 메뉴 자체가 없다', (tester) async {
     await pump(
       tester,
@@ -322,6 +363,19 @@ void main() {
     expect(find.text('기록 수정'), findsOneWidget);
     expect(find.text('지하 주차장에서 종료'), findsOneWidget);
   });
+}
+
+/// 파일 I/O·플랫폼 채널 없이 `origin`만 받아 적는다 — 앵커 계산이 관심사다.
+class _FakeGpxExportService implements GpxExportService {
+  Rect? lastOrigin;
+  int calls = 0;
+
+  @override
+  Future<GpxExportOutcome> exportAndShare(RunRecord record, {Rect? origin}) async {
+    calls++;
+    lastOrigin = origin;
+    return GpxExportOutcome.presented;
+  }
 }
 
 class _FakeRunRepository implements RunRepository {
@@ -388,7 +442,7 @@ class _FakeRunRepository implements RunRepository {
       const Stream<List<RunRecord>>.empty();
 
   @override
-  Future<int> syncPending() async => 0;
+  Future<int> syncPending({String? userId}) async => 0;
 }
 
 enum _Mode { value, failing, pending }
