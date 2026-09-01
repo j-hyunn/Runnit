@@ -95,7 +95,7 @@ geolocator/health/riverpod를 전혀 모르므로 합성 GPS 로그로 단위 �
 | 값 | 기본 | 근거 |
 |----|------|------|
 | `maxAccuracyMeters` | 25 | 도심 캐니언 통상값. 더 조이면 fix가 안 남는다 |
-| `maxPlausibleSpeedMps` | 8.5 | ≈30.6 km/h. 구간 *평균*이라 스프린트도 안 넘는다. 서버(15)보다 보수적 |
+| `maxPlausibleSpeedMps` | **25/3.6** | ≈6.94 m/s = **25 km/h**. PRD §8.4 서버 기준과 같은 숫자로 맞췄다(2026-09-01, A-6 C-1 — 이전 값 8.5). 근거·트레이드오프는 `20260901_gps_a6-code-fixes.md` §1 |
 | `minMovingSpeedMps` | 0.6 | ≈2.2 km/h. 가장 느린 걷기(3 km/h)보다 낮아 실제 이동을 안 자른다 |
 | `minStepMeters` | 1.0 | 속도 게이트를 통과해도 절대 이동량이 이보다 작으면 노이즈 |
 | `smoothingWindow` | 5 | 더 키우면 실제 코너링이 뭉개진다 |
@@ -112,7 +112,11 @@ geolocator/health/riverpod를 전혀 모르므로 합성 GPS 로그로 단위 �
 |----------|---------|----------------|-------------------|
 | `highAccuracy` | 1s | 0m | best |
 | `standard`(기본) | 5s | 3m | high |
-| `batterySaver` | 10s | 8m | medium |
+| `batterySaver` | **5s** | 8m | medium |
+
+⚠️ `batterySaver`의 fix 간격은 2026-09-01(A-6 C-3)에 10s → 5s로 바뀌었다.
+10s에서는 TR-04(5초 이내 최신 위치 반영)를 구조적으로 만족할 수 없었다.
+절전 이득은 이제 정확도 등급(medium)과 거리필터(8m)에서만 나온다.
 
 ⚠️ **러닝 중에는 바꾸지 말 것.** `trackingProfileProvider`가 바뀌면
 `runTrackingServiceProvider`가 재생성되어 진행 중 세션이 사라진다.

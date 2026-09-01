@@ -86,10 +86,32 @@ class RunSessionAggregator {
 
   bool _paused = false;
 
+  /// 이 세션에서 "이동으로 인정된 구간"이 한 번이라도 있었는지.
+  /// 자동 일시정지 표시의 전제다 — 세션은 항상 정지 상태로 시작하므로
+  /// (`GpsTrackFilter` §상태기계) 이 플래그가 없으면 출발선에 서 있는 동안
+  /// "자동 일시정지됨"이 떠 버린다. 러너는 아직 멈춘 적이 없다.
+  bool _hasMoved = false;
+
   List<RunSample> get samples => List<RunSample>.unmodifiable(_samples);
   double get distanceMeters => _filter.cumulativeDistanceMeters;
   int get movingSeconds => _filter.movingSeconds.round();
   bool get isPaused => _paused;
+
+  /// **자동 일시정지 중인지** (PRD TR-03). 상태기계가 정지로 판정해 거리·이동
+  /// 시간 누적이 멈춘 상태다.
+  ///
+  /// ## 수동 일시정지와 왜 같은 상태로 합치지 않았는가
+  /// [RunStatus.paused]로 승격하지 않고 별도 플래그로 둔다.
+  /// - `RunStatus`는 로컬 체크포인트·서버 업로드에 그대로 실리는 **영속 상태**다.
+  ///   신호등마다 status가 `paused`↔`recording`을 오가면 15초 체크포인트가
+  ///   그 순간의 값을 그대로 저장하고, 강제 종료 복구 시 "사용자가 멈춰 둔
+  ///   러닝"으로 잘못 되살아난다.
+  /// - 화면의 컨트롤이 [RunStatus.paused]에서 "재개" 버튼으로 바뀌는데,
+  ///   자동 일시정지에는 누를 대상이 없다(`resume()`은 `isPaused=false`라
+  ///   no-op이다) — 사용자가 눌러도 아무 일도 일어나지 않는 버튼이 생긴다.
+  /// 그래서 이 값은 **표시 전용 파생 상태**이며, 해제도 사용자가 아니라
+  /// 다음 이동 fix가 한다.
+  bool get isAutoPaused => !_paused && _hasMoved && _filter.isStationary;
 
   void pause() {
     _paused = true;
@@ -100,6 +122,9 @@ class RunSessionAggregator {
   void resume() {
     _paused = false;
     _filter.breakContinuity();
+    // 재개 직후 필터는 다시 정지 상태에서 출발한다. `_hasMoved`를 살려 두면
+    // 사용자가 방금 재개 버튼을 눌렀는데 "자동 일시정지됨"이 뜬다.
+    _hasMoved = false;
   }
 
   /// 워치(HealthKit/Health Connect)에서 온 심박/케이던스를 대기열에 얹는다.
@@ -128,6 +153,8 @@ class RunSessionAggregator {
 
     final smoothed = _filter.add(fix);
     if (smoothed == null) return null;
+
+    if (smoothed.isMoving) _hasMoved = true;
 
     if (smoothed.instantSpeedMps > _maxSpeedMps) {
       _maxSpeedMps = smoothed.instantSpeedMps;

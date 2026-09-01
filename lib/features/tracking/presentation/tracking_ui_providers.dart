@@ -11,7 +11,9 @@ import '../data/tracking_providers.dart';
 /// `data/tracking_providers.dart`(gps-tracking-engineer 소유)는 건드리지 않고,
 /// 화면이 필요로 하는 파생 상태만 여기에 둔다.
 /// - [liveRouteProvider]           : 지도 폴리라인의 증분 누적
+/// - [liveMarkerProvider]           : 지도 마커용 원시(스무딩 이전) 좌표
 /// - [wearableNoticeReaderProvider] : 워치 배너 판단(테스트에서 override 가능)
+/// - [autoPauseReaderProvider]      : 자동 일시정지 표시 판단(동상)
 /// - [storedRunProvider]            : 저장된 러닝의 최신 서버 확정 상태
 
 /// 로컬 DB에 저장된 그 러닝의 **최신 상태**.
@@ -66,6 +68,35 @@ class LiveRoute extends Notifier<List<LatLng>> {
 final liveRouteProvider = NotifierProvider<LiveRoute, List<LatLng>>(
   LiveRoute.new,
 );
+
+/// 지도 **마커**가 따라갈 좌표 — 스무딩 이전 원시 fix다(TR-04, C-4).
+///
+/// [liveRouteProvider]가 주는 좌표는 이동평균을 거쳐 약 2 fix 뒤처진다. 선은
+/// 그 값이 맞지만(지그재그가 죽는다) "지금 내 위치" 점까지 뒤처지면 사용자가
+/// 체감하는 반영 지연이 폴링 간격 + 스무딩 지연이 된다.
+///
+/// 원시 스트림을 못 얻는 구현체(테스트 fake 등)에서는 빈 스트림이며, 이때
+/// 지도는 예전처럼 폴리라인 마지막 점으로 마커를 그린다(`RunMapView`).
+final liveMarkerProvider = StreamProvider<LatLng>((ref) {
+  final service = ref.watch(runTrackingServiceProvider);
+  if (service is! GeolocatorRunTrackingService) {
+    return const Stream<LatLng>.empty();
+  }
+  return service.rawFixStream.map((fix) => LatLng(fix.latitude, fix.longitude));
+});
+
+/// **자동 일시정지 중인지**를 호출 시점에 읽는 함수(TR-03, C-2).
+///
+/// [wearableNoticeReaderProvider]와 같은 이유로 값이 아니라 함수를 노출한다 —
+/// 판정 근거가 구현체의 가변 상태(집계기 상태기계)라 Riverpod가 변화를 통지하지
+/// 못한다. 소비 측([_ActiveBanners])이 초당 틱에 맞춰 다시 읽는다.
+final autoPauseReaderProvider = Provider<bool Function()>((ref) {
+  return () {
+    final service = ref.read(runTrackingServiceProvider);
+    if (service is! GeolocatorRunTrackingService) return false;
+    return service.isAutoPaused;
+  };
+});
 
 /// 워치 연동 안내 상태. 배너 문구를 고르는 데만 쓴다.
 class WearableNotice {

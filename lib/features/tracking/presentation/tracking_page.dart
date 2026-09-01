@@ -1357,6 +1357,8 @@ class _ActiveBanners extends ConsumerWidget {
     // elapsedSeconds만 select — 초당 1회 리빌드되지만 배너 두 줄짜리 서브트리다.
     ref.watch(activeRunProvider.select((v) => v.valueOrNull?.elapsedSeconds));
     final notice = ref.watch(wearableNoticeReaderProvider)();
+    // 자동 일시정지도 같은 초당 틱에 얹어 판정한다(TR-03).
+    final autoPaused = ref.watch(autoPauseReaderProvider)();
 
     final banners = <Widget>[
       if (liveError is ServiceDisabledFailure)
@@ -1376,6 +1378,16 @@ class _ActiveBanners extends ConsumerWidget {
           icon: Icons.watch_outlined,
           tone: TrackingBannerTone.info,
           message: '워치 데이터는 Garmin Connect 동기화 후 반영돼요.',
+        ),
+      // 자동 일시정지(TR-03). 표시가 없으면 사용자는 "왜 거리가 안 늘지?"를
+      // 알 방법이 없다 — 실제로는 신호등 대기가 페이스를 오염시키지 않도록
+      // 정상 동작하는 중이다. 재개는 움직이면 자동으로 된다(누를 버튼이 없다).
+      if (autoPaused)
+        const TrackingBanner(
+          icon: Icons.pause_circle_outline,
+          tone: TrackingBannerTone.info,
+          message: '자동 일시정지됨 — 멈춘 동안은 거리·페이스에 넣지 않아요. '
+              '다시 움직이면 이어서 기록해요.',
         ),
     ];
 

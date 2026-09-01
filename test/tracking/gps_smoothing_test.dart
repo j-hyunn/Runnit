@@ -253,6 +253,74 @@ void main() {
       expect(aggregator.distanceMeters, distanceBefore);
     });
 
+    test('자동 일시정지 — 출발 전에는 뜨지 않고, 멈추면 켜지고, 재개하면 꺼진다', () {
+      final aggregator = makeAggregator();
+      final random = math.Random(5);
+
+      // ① 출발선. 아직 한 번도 움직이지 않았으므로 "자동 일시정지"가 아니다.
+      aggregator.addFix(
+        GpsFix(
+          latitude: seoulLat,
+          longitude: seoulLon,
+          timestamp: base,
+          accuracyMeters: 5,
+        ),
+      );
+      expect(aggregator.isAutoPaused, isFalse);
+
+      // ② 3분 러닝(3 m/s, 5초 간격).
+      var meters = 0.0;
+      var seconds = 5;
+      for (var i = 0; i < 36; i++, seconds += 5) {
+        meters += 15;
+        aggregator.addFix(
+          GpsFix(
+            latitude: latPlusMeters(seoulLat, meters),
+            longitude: seoulLon,
+            timestamp: base.add(Duration(seconds: seconds)),
+            accuracyMeters: 5,
+          ),
+        );
+      }
+      expect(aggregator.isAutoPaused, isFalse);
+
+      // ③ 신호등 60초 정지(드리프트만 남는다).
+      for (var i = 0; i < 12; i++, seconds += 5) {
+        aggregator.addFix(
+          GpsFix(
+            latitude: latPlusMeters(seoulLat, meters + (random.nextDouble() - 0.5) * 4),
+            longitude: seoulLon + (random.nextDouble() - 0.5) * 4 / 88000.0,
+            timestamp: base.add(Duration(seconds: seconds)),
+            accuracyMeters: 5,
+          ),
+        );
+      }
+      expect(aggregator.isAutoPaused, isTrue);
+
+      // ④ 다시 달리면 사용자 조작 없이 해제된다.
+      for (var i = 0; i < 4; i++, seconds += 5) {
+        meters += 15;
+        aggregator.addFix(
+          GpsFix(
+            latitude: latPlusMeters(seoulLat, meters),
+            longitude: seoulLon,
+            timestamp: base.add(Duration(seconds: seconds)),
+            accuracyMeters: 5,
+          ),
+        );
+      }
+      expect(aggregator.isAutoPaused, isFalse);
+
+      // ⑤ 수동 일시정지는 자동 일시정지로 표시되지 않는다(서로 다른 축이다).
+      aggregator.pause();
+      expect(aggregator.isPaused, isTrue);
+      expect(aggregator.isAutoPaused, isFalse);
+
+      // ⑥ 재개 직후에도 뜨지 않는다 — 필터는 정지 상태에서 다시 출발한다.
+      aggregator.resume();
+      expect(aggregator.isAutoPaused, isFalse);
+    });
+
     test('snapshot — elapsed는 벽시계, moving은 이동 시간, 페이스는 moving 기준', () {
       final aggregator = makeAggregator();
       for (var i = 0; i <= 60; i++) {

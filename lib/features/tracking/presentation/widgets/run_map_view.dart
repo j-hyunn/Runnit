@@ -20,6 +20,13 @@ import '../tracking_ui_providers.dart';
 /// 통계 텍스트(1초마다 갱신되는 `activeRunProvider`)와도 분리돼 있어, 매 초
 /// 타이머가 흘러도 지도는 다시 그려지지 않는다.
 ///
+/// ## 선과 점의 좌표가 다르다 (TR-04)
+/// - **폴리라인**: [liveRouteProvider] — 스무딩된 좌표. 지그재그가 죽는다.
+/// - **현재 위치 마커·카메라**: [liveMarkerProvider] — 스무딩 **이전** 원시 fix.
+///   이동평균 창(5) 때문에 스무딩 좌표는 약 2 fix 뒤처지는데, 그 지연이 마커에
+///   실리면 "5초 이내 최신 위치 반영"(TR-04)을 체감상 못 지킨다.
+/// 원시 스트림이 없는 구현(테스트 fake)에서는 마커도 폴리라인 마지막 점을 쓴다.
+///
 /// 지도 타일은 네트워크가 없으면(지하 주차장·기내 등) 비어 보이지만 폴리라인과
 /// 통계는 그대로 동작한다 — 트래킹이 타일 로딩에 종속되지 않게 한 것이다.
 class RunMapView extends ConsumerStatefulWidget {
@@ -46,6 +53,11 @@ class _RunMapViewState extends ConsumerState<RunMapView> {
 
   /// 마커 아이콘을 굽는 작업이 여러 번 겹치지 않게 막는다.
   bool _buildingMarker = false;
+
+  /// 원시 fix([liveMarkerProvider])가 한 번이라도 들어왔는지. 들어온 뒤에는
+  /// 마커·카메라를 그쪽에만 맡긴다 — 폴리라인(스무딩 좌표)의 마지막 점으로
+  /// 되돌리면 마커가 앞뒤로 튄다.
+  bool _followingRawFix = false;
 
   /// 첫 프레임의 카메라 위치. 매 빌드마다 옵션 인스턴스를 새로 만들면
   /// (`NaverMapViewOptions`는 `==`가 없다) 옵션 갱신이 계속 네이티브로 날아간다.
@@ -74,6 +86,13 @@ class _RunMapViewState extends ConsumerState<RunMapView> {
   Widget build(BuildContext context) {
     // watch가 아니라 listen — 좌표가 와도 이 위젯은 리빌드되지 않는다.
     ref.listen<List<LatLng>>(liveRouteProvider, (_, next) => _syncRoute(next));
+    // 마커·카메라는 스무딩 이전 좌표를 따라간다(TR-04). 선만 스무딩 좌표다.
+    ref.listen<AsyncValue<LatLng>>(liveMarkerProvider, (_, next) {
+      final point = next.valueOrNull;
+      if (point == null) return;
+      _followingRawFix = true;
+      _moveTo(point);
+    });
 
     final builder = ref.watch(mapSurfaceBuilderProvider);
 
@@ -119,14 +138,23 @@ class _RunMapViewState extends ConsumerState<RunMapView> {
       }
     }
 
-    await _syncPositionMarker(controller, route.last);
+    // 원시 fix가 마커를 이미 몰고 있으면 여기서는 선만 갱신한다.
+    if (!_followingRawFix) await _moveTo(route.last);
+  }
+
+  /// 현재 위치 마커와 카메라를 한 점으로 옮긴다.
+  Future<void> _moveTo(LatLng point) async {
+    final controller = _controller;
+    if (controller == null) return;
+
+    await _syncPositionMarker(controller, point);
 
     // 카메라 이동은 빌드 중에 호출하면 안 된다(빌드 도중 상태 변경).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // zoom을 넘기지 않으면 사용자가 맞춰 둔 줌 배율이 유지된다.
       controller.updateCamera(
-        NCameraUpdate.scrollAndZoomTo(target: route.last.toNaver()),
+        NCameraUpdate.scrollAndZoomTo(target: point.toNaver()),
       );
     });
   }
