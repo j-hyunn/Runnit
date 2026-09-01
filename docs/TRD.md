@@ -25,6 +25,7 @@
 | v0.13 | **HI-07 서버 강제 — 저장된 러닝은 제목·메모만 수정 가능**(마이그레이션 51, **원격 적용 완료** 2026-08-31 — over-limit 행 0건이라 51-1 정리 UPDATE는 no-op, 조작 UPDATE 되돌리기 스모크 테스트 통과, advisor 신규 경보 없음). §4.4 신설: `trg_runs_guard`의 UPDATE 분기가 터미널 상태(`completed`/`discarded`) 행에 대해 `new := old` 후 `title`/`note`만 재적용한다 — 화이트리스트라 앞으로 추가되는 컬럼도 자동 보호되고, 되돌리기가 파생값 재계산보다 앞서므로 편집이 페이스·XP·티어·랭킹·뱃지를 흔들지 않는다. 예외를 던지지 않는 이유는 오프라인 멱등 재 upsert(`syncPending`)를 깨뜨리지 않기 위함. `runs_title_len`(60자)·`runs_note_len`(500자) CHECK 백스톱 + 가드의 `btrim`→절단→`NULL` 정규화. PRD v1.6에서 이미 제거된 사용자 삭제 경로의 잔재인 RLS `runs_delete_own` 정책 삭제(테이블 GRANT는 유지 — 회수하면 미완결 세션 "버리기"가 42501로 실패한다). §5 RLS 표 `runs` 행·§9 갱신. QA 지적 반영 — 51-1 정리 UPDATE를 `set_config('runnit.server_write','on')`로 감싸 AFTER 트리거 4종의 대량 재집계를 차단(C-5), 51-2에 체크포인트 업로드 도입 시 우회 경로 경고 주석 추가(L-3) |
 | v0.14 | **HI-06 후속 (2026-08-31)** — (1) `season_histories` RLS 서술 정정: §5 표가 "본인 행만 select"라고 적었으나 실제 `season_histories_select_visible`(마이그레이션 21)은 `is_voided=false or user_id=auth.uid()` — 무효 아닌 타인 행도 `authenticated`에게 공개다(TI-09/AC-03 전제). `tier_change_history`와 한 셀에 묶여 있던 것을 분리. (2) **마이그레이션 52** — `recompute_season_tier`의 `season_histories.best_weekly_rank` 서브쿼리에 `and le.tier is not null` 추가. 마이그레이션 23 이후 `leaderboard_entries`에 통합 보드(`tier IS NULL`)와 티어별 보드가 공존해 `min(rank)`가 두 스코프를 섞을 수 있었다(마감 후 수정 불가 컬럼). 43 함수 본문에서 이 한 줄 외 변경 없음. §9 갱신. **원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`) |
 | v0.15 | **AC-02 프로필 편집 / AC-03 타인 프로필 백엔드**(마이그레이션 53~55, 2026-08-31, 원격 적용 완료 — v0.18 참조). §4.5 신설. (1) `profiles.weekly_goal_km double precision` + CHECK `> 0 and <= 500`, `NULL`=미설정 — **단위가 km**인 프로젝트 유일한 거리 컬럼이고 서버 판정에 쓰이지 않는 표시 전용이다. `trg_profiles_guard`는 **블랙리스트**(서버 전용 컬럼만 되돌림)라 가드 변경 없이 편집이 열린다 — `runs`의 화이트리스트 가드(§4.4)와 기본값이 정반대라는 점을 §4.5 표로 대비시켜 기록. (2) `avatars` Storage 버킷 신설 + `storage.objects` RLS — 읽기 전체 공개(게스트 랭킹이 남의 아바타를 그린다), 쓰기는 `(storage.foldername(name))[1] = auth.uid()::text`로 본인 폴더만, 용량/MIME 제한은 버킷 설정(2MiB·jpeg/png/webp). (3) `user_badges_select_public` — 타인의 `verified and not revoked` 행 공개. **스키마 드리프트 정정**: 이 정책은 원격 DB에 **이미 살아 있었으나 마이그레이션 파일 어디에도 없었다**(적용 이력은 52에서 끝난다 — 대시보드/임시 SQL로 만들어진 것). 원격에는 있고 파일에는 없으니 `db reset`·스테이징·브랜치 DB에서만 AC-03이 조용히 깨지는 상태였다. 술어를 라이브와 한 글자도 다르지 않게(`user_id <> auth.uid() and revoked = false and verified = true`) 맞추고 drop-then-create로 감싸 **원격 적용이 진짜 no-op**이 되도록 했다. 인덱스는 마이그레이션 25의 `user_badges_public_idx`가 동일 술어로 이미 존재. ⚠️ 부수효과: Realtime 구독에 타인 행 이벤트가 도달하므로 `user_id` 필터가 유일한 방어선이 된다. **`runs` RLS는 손대지 않았다** — AC-03은 타인의 러닝 목록을 노출하지 않는다 |
+| v0.19 | **TR-08 오프라인 동기화 QA 후속**(2026-09-01, A-5 — 클라이언트 수정만, **마이그레이션 없음**). §9에 "알려진 제약 — 경계를 넘긴 지각 업로드" 항목 추가: 오프라인으로 시즌·주 경계를 넘긴 지각 업로드는 **현 시즌·현 주 기준으로만 처리하고 마감된 과거는 소급 변경하지 않는다**(사용자 확정 정책, QA C-1·C-2 — 소급 반영 마이그레이션을 만들지 않는다). 클라이언트 측은 업로드 요청 타임아웃 30초, `save()`의 업로드 fire-and-forget 분리, `syncPending(userId:)` 계정 필터, `connectivity_plus` 온라인 전환 훅 — 상세는 ARCHITECTURE §9 |
 | v0.18 | **마이그레이션 53~56 원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`). 53/55/56 은 `apply_migration`. 54 는 버킷만 `apply_migration`, `storage.objects` 정책 4종은 `apply_migration`이 `42501 must be owner of table objects`로 거부돼 `execute_sql`(대시보드 SQL 에디터 동등)로 적용 — 원격 반영됐으나 `supabase_migrations` 이력엔 정책 부분이 빠졌다(파일엔 있음, `db reset`/브랜치 DB 정상). `get_advisors(security)` 신규 경보 없음 |
 | v0.17 | **AC-02/03 QA 수정**(2026-08-31, 마이그레이션 56 추가). F-1 랭킹에서 본인 행 탭 시 홈 탭이 스피너에 갇히던 것 — 진입점(`home_page`·`full_ranking_page`)에서 본인 행을 `/users/:me` push 대신 마이 탭 전환으로 갈라내고, `user_profile_page` 방어 분기는 `pop()` 우선으로. F-2 `username` 서버 강제 고정(마이그레이션 56 — `trg_profiles_guard`가 UPDATE 시 되돌림) + 클라 `_editablePatch`에서 키 제거. F-3 리포지토리 주석의 "화이트리스트" 오기 정정. §4.5 갱신 |
 | v0.16 | **AC-05(기록 공개 범위) 삭제**(PRD v1.7, 2026-08-31 사용자 확정). `profiles.visibility` 컬럼·`ProfileVisibility` enum 설계(§3.3 레거시 블록, §4 보존 DDL)를 폐기. §5 RLS 표 `profiles` 행에서 "AC-03/AC-05" → "전체 공개(`profiles_select_all`), 공개 범위 분기 없음"으로 정정. §14 이슈 #24(알림 문구 `display_name`이 비공개 설정을 우회) 비쟁점화 — 우회할 설정이 사라졌다 |
@@ -1355,6 +1356,8 @@ Edge Function 시크릿 `FCM_SERVICE_ACCOUNT`, 그리고 함수 배포. 셋이 �
 | 경로 비현실성 | 연속 3개 이상 샘플이 완전 직선 + 등간격(순간이동 패턴) | 플래그, 수동 검토 큐(운영 콘솔, Phase 1 이후) |
 | 다계정 의심 | 동일 기기 식별자로 다수 계정의 유사 경로 반복 | Phase 4 대상 — 현재는 로깅만, 포인트 없음 |
 
+⚠️ **표와 실제 구현의 차이 (2026-09-01 확인, A-6 C-1 부수 확인)**: 현재 `validate_run`(마이그레이션 04)은 **플래그만** 세운다 — `implausible_avg_speed`(평균 > 7.0 m/s = 2'23"/km), `implausible_max_speed`(`max_speed_mps` > 15.0 m/s), `moving_exceeds_elapsed`, `zero_moving_time`, 거리·시간·고도 상한. 위 표의 **"구간 속도 25km/h 초과 구간 제거 후 재계산"과 "샘플로 거리 재계산"은 아직 서버에 없다.** 즉 25km/h 기준은 현재 **클라이언트 1차 필터에만 살아 있다**(§8.3, `GpsFilterConfig.maxPlausibleSpeedMps`). 방향은 안전하다 — 클라이언트가 더 조이므로 서버 플래그 이전에 걸러진다. 서버 측 샘플 재계산 구현은 backend 담당의 남은 항목이다(§14 #27).
+
 **동점 처리 정렬 규칙 (PRD §8.2)** — 실제 구현은 §4.3 (마이그레이션 40, `refresh_all_leaderboards`):
 ```sql
 -- leaderboard_entries, metric='distance'
@@ -1374,13 +1377,19 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 ### 8.2 백그라운드 트래킹
 
 - **Android**: Foreground Service(`type=location`) 사용. 알림 상시 노출로 OS의 강제 종료 방지.
+- **Android 배터리 최적화 예외 (2026-09-01 추가, A-6 R-2)**: 포그라운드 서비스만으로는 부족하다 — 샤오미·화웨이·오포·일부 삼성의 OEM 전력 관리가 화면 꺼짐 수십 분 뒤 서비스째로 재워 60분 러닝의 뒷부분이 통째로 빈다(TR-02 "데이터 손실 0" 위반). `permission_handler`의 `Permission.ignoreBatteryOptimizations`로 예외를 요청한다(`BatteryOptimizationGuard`). 요청 시점은 **"항상 허용" 위치 권한을 실제로 받은 직후**(`ensureReady()` 3단계)이고, **앱 생애에 딱 한 번만** 묻는다(`SharedPreferences: runnit.tracking.battery_opt_asked`) — 러닝마다 같은 시스템 다이얼로그를 띄우는 것은 소음이다. 거부·실패는 삼키고 트래킹은 그대로 진행한다. 매니페스트 권한 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`은 Play 정책상 용도 설명이 필요하다(피트니스 트래킹은 허용 카테고리). OEM 자체 설정(MIUI "자동 시작" 등)은 코드로 열 수 없다.
 - **iOS**: Background Modes `location` 활성화. `CLLocationManager`의 `allowsBackgroundLocationUpdates=true`.
+  - **확인 완료(2026-09-01, A-6 R-5)**: `ios/Runner/Info.plist`의 `UIBackgroundModes`에 `location`이 이미 들어 있다. 백그라운드 **위치**는 entitlement가 필요 없는 기능이라 `Runner.entitlements`가 pbxproj에 연결돼 있지 않아도 동작한다. 미연결 entitlement가 막고 있는 것은 **HealthKit(웨어러블 라운드 소관)과 APNs(§14 #25 FCM 운영 설정)** 뿐이며, 둘 다 Xcode에서 Capability를 추가해야 해결된다(파일 상단 주석에 절차 기재).
 - 권한 거부 시 백그라운드 트래킹 없이 포그라운드 트래킹만으로 우아하게 저하(degrade)한다 — 트래킹 자체를 막지 않는다.
 
 ### 8.3 GPS 스무딩 파라미터
 
 - 알고리즘: 이동평균 또는 Kalman filter(구현 난이도 대비 이동평균으로 시작, 정확도 이슈 발생 시 Kalman으로 승격).
-- 이상치 판정: `accuracy > 20m`인 샘플은 거리 계산에서 제외. 순간 속도 25km/h 초과 구간은 제거(§7과 동일 기준 클라이언트 1차 필터).
+- 이상치 판정 (**2026-09-01 코드 실측값으로 정정 — A-6 C-1**):
+  - `accuracy > 25m`인 fix는 통째로 폐기. 이전 서술값 20m를 코드값 25m에 맞췄다. **이 게이트는 클라이언트 전용**이며 서버 `validate_run`에 대응 검사가 없다 — 맞출 대상이 서버가 아니라 "도심 캐니언에서 fix가 남는가"뿐이라, 20m로 조이면 고층 구간에서 fix가 거의 살아남지 않는다.
+  - 구간 속도 **25km/h(≈6.94 m/s)** 초과는 GPS 튐으로 보고 폐기. 코드값을 8.5 m/s(≈30.6km/h)에서 이 값으로 낮춰 PRD §8.4·§7·ARCHITECTURE §6.4의 "서버와 동일 기준 클라이언트 1차 필터"와 숫자를 일치시켰다. 서버가 어차피 제거할 구간을 클라이언트가 거리에 넣으면 화면 거리 > 서버 확정 거리로 벌어지는데, 티어·랭킹의 원천이 서버 재계산값이므로 이 방향의 불일치가 가장 나쁘다.
+  - ⚠️ 25km/h는 2'24"/km라 **엘리트 인터벌 스프린트가 필터에 걸릴 수 있다**. 실기기 검증에서 손실이 관측되면 서버 임계값과 **함께** 올린다(한쪽만 올리면 C-1이 재발한다). → §14 #5
+- 정본 파라미터 표(구현값 전체)는 `_workspace/20260901_gps_field-accuracy-verification.md` §1.3.
 - 거리 계산: 스무딩된 연속 포인트 간 Haversine 공식 누적.
 - 페이스: `duration / distance_km`(분/km), 1km 구간별 split 별도 계산(TR-07).
 - 칼로리: MET 기반 추정 — `weightKg`, 평균 페이스 활용. 심박수 있으면 정교화(P1, WR-05 연동 후).
@@ -1416,11 +1425,15 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 
 ### 8.5 배터리 모드
 
-| 모드 | `LocationAccuracy` | 폴링 주기 |
-|---|---|---|
-| 고정밀 | `best` | 1~2초 |
-| 표준(기본값) | `high` | 5초 |
-| 절전 | `medium` | 10초+ |
+| 모드 | `LocationAccuracy` | 폴링 주기 | `distanceFilter` |
+|---|---|---|---|
+| 고정밀 | `best` | 1초 | 0m |
+| 표준(기본값) | `high` | 5초 | 3m |
+| 절전 | `medium` | **5초** | 8m |
+
+**절전 모드의 폴링 주기를 10초 → 5초로 올렸다 (2026-09-01, A-6 C-3).** 10초 폴링에서는 앱이 아는 최신 좌표 자체가 최대 10초 전 것이라 **PRD TR-04("5초 이내 최신 위치 반영")를 구조적으로 만족할 수 없다** — 지도를 아무리 빨리 그려도 그릴 데이터가 없다. 절전은 이제 주기가 아니라 **정확도 등급(`medium`) + 거리필터(8m)** 로 얻는다(GNSS 듀티 사이클·콜백 수 절감). 표준 대비 절감폭은 이전보다 작으며, 실측치는 실기기 검증에서 채운다(§14 #5 계열).
+
+**지도 마커는 스무딩 이전 원시 좌표를 따라간다 (A-6 C-4).** 이동평균 창(5)은 표준 프로파일에서 약 2 fix(≈10초) 지연을 만든다. 폴리라인은 스무딩 좌표(지그재그 제거)를, **현재 위치 마커·카메라는 정확도 게이트만 통과한 원시 fix**를 쓴다(`GeolocatorRunTrackingService.rawFixStream` → `liveMarkerProvider`). 원시 좌표는 **거리 계산에 절대 쓰지 않는다.**
 
 ---
 
@@ -1429,6 +1442,7 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 - **티어 판정**: `runs` upsert의 트리거 트랜잭션 내에서 동기 처리(`recompute_season_tier` 등). 배치 지연 없음(PRD TI-03).
 - **주간 랭킹 집계**: `pg_cron` 5분 주기 배치(`refresh_all_leaderboards`). 조회는 PostgREST 직접 select.
 - **시즌/주간 경계**: 시즌은 `season_id_at()`/`season_start()`/`season_end()` 계산 함수(역년 분기 KST). 주 경계는 KST 월요일 00:00 ~ 일요일 23:59, `leaderboard_entries.period_start`. 러닝 **시작 시각** 기준으로 귀속(PRD §8.5).
+- **알려진 제약 — 경계를 넘긴 지각 업로드 (2026-09-01 확정, QA C-1·C-2)**: 오프라인으로 시즌·주 경계를 넘겨 뒤늦게 올라온 기록은 **현 시즌·현 주 기준으로만 처리하고, 마감된 과거 시즌·주는 소급 변경하지 않는다.** `recompute_season_tier(user_id, now())`는 지난 시즌을 `on conflict do nothing`으로 한 번만 마감하고 현 시즌 거리를 `started_at >= season_start(now())`로 합산하며, `refresh_leaderboard(..., p_anchor default now())`는 앵커가 속한 한 기간만 재집계한다(진입점은 pg_cron뿐 — `runs` AFTER 트리거는 랭킹을 건드리지 않는다). 따라서 시즌 마지막 날/일요일 밤의 오프라인 러닝을 경계 넘겨 업로드하면 **그 과거 구간의 티어 누적·주간 순위에는 반영되지 않는다.** 이는 버그가 아니라 정책이다 — 마감된 스냅샷을 지각 도착 기록으로 흔드는 것은 PRD §5.4(확정 결과의 안정성)에 반하고 경계 직후 업로드로 지난 주 순위를 뒤집는 부정행위 벡터가 된다. 러닝 자체·누적 거리·뱃지·XP는 정상 반영되므로 데이터 손실은 없다. **소급 반영 마이그레이션을 만들지 않는다.** 서술 정본은 ARCHITECTURE §9.1.
 - **주중 승급 시 랭킹 이관**: `leaderboard_entries`의 `tier` 파티션만 갱신, 주간 거리는 `runs` 재집계로 자연 유지 — row 재생성 안 함(PRD §8.6).
 - **누적 거리 재계산 시 티어 (PRD v1.6, 마이그레이션 43)**: 사용자는 러닝을 삭제할 수 없다(HI-07은 제목·메모 수정만). 누적 거리가 줄어드는 유일한 경로는 서버의 부정 판정(`is_flagged=true`)이며, 이 경우 `recompute_season_tier`가 `season_distance_meters`는 실제값으로 낮추되 **같은 시즌이면 `current_tier`는 내리지 않는다** — `v_new_tier := greatest(tier_for_distance(dist), 직전_티어)`. 시즌 경계를 넘은 첫 recompute만 하드 리셋(다음 시즌 bronze부터). 부정으로 획득된 뱃지는 행을 남기고 `user_badges.revoked=true`. 정상 러닝은 삭제 자체가 없으므로 티어 하향 시나리오가 존재하지 않는다.
 - **시즌 마감 `best_weekly_rank`는 티어 스코프만 (마이그레이션 52)**: `recompute_season_tier`가 시즌 경계에서 `season_histories.best_weekly_rank`를 채울 때 `leaderboard_entries`에서 `min(rank)`를 뽑는데, 마이그레이션 23 이후 통합 보드(`tier IS NULL`)와 티어별 보드가 공존하므로 `and le.tier is not null`로 티어별 보드만 집계한다. 클라이언트가 노출하는 주간 랭킹도 항상 티어 스코프이므로 마감 스냅샷도 동일 기준이다. 마감 후 수정 불가한 컬럼이라 명시적으로 고정.
@@ -1578,10 +1592,14 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | ~~13~~ | ~~`season_first_long_distance` 의 거리 허용오차가 PB 조건과 다르다~~ → **해소(2026-08-26, 마이그레이션 42)**. `목표 − min(목표×2%, 300m)` 으로 통일(§10.2 표) — 같은 "목표 거리 완주" 판정이므로 별도 기준을 둘 이유가 없다 | — |
 | ~~15~~ | ~~`session_distance_gte` 5종은 허용오차 없이 정확히 `≥ 목표×1000m`~~ → **해소(2026-08-26, 마이그레이션 42)**. 동일 허용오차 `목표 − min(목표×2%, 300m)`로 통일(완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 채움) | — |
 | 14 | **`tier_change_history` 가 0행이라 XP-4(티어 도달 XP)가 아무에게도 적립되지 않고 있다.** 마이그레이션 34가 "상승 이벤트만 기록"으로 정정하면서 백필을 취소했고(소급 복원 불가는 의도된 결정), 기존 유저는 이번 시즌에 강등 없이는 다시 상승할 기회가 없다. 다음 시즌부터 정상 적립된다 — 그때까지 `total_xp` 는 XP-4 만큼 과소 집계된 상태다 | 2026-Q4 시즌 시작 시 자연 해소 |
-| 16 | **`session_distance_gte`는 실내 러닝을 제외하지 않는데 `pb_first_achieved`/`season_first_long_distance`는 제외한다.** 마이그레이션 42가 세 조건을 "같은 목표 거리 판정"으로 선언해 허용오차만 통일했고 실내 취급 차이는 그대로 남았다 — 트레드밀 42.2km는 `session_dist_full`(풀런)은 받고 `pb_first_full`/`season_first_long_distance`는 못 받는다. PRD §8.3(실내 기록 처리)만으로는 이 셋 중 무엇이 맞는 기준인지 단정할 수 없다 | gamification-designer 확인 대상 |
+| 16 | **`session_distance_gte`는 실내 러닝을 제외하지 않는데 `pb_first_achieved`/`season_first_long_distance`는 제외한다.** 마이그레이션 42가 세 조건을 "같은 목표 거리 판정"으로 선언해 허용오차만 통일했고 실내 취급 차이는 그대로 남았다 — 트레드밀 42.2km는 `session_dist_full`(풀런)은 받고 `pb_first_full`/`season_first_long_distance`는 못 받는다. PRD §8.3(실내 기록 처리)만으로는 이 셋 중 무엇이 맞는 기준인지 단정할 수 없다 | #26으로 이관 — 웨어러블 라운드에서 일괄 정리 |
+| 26 | **실내 러닝 전면(측정 방식·XP·스트릭·전용 뱃지·규칙 일관성)을 웨어러블 연동 라운드에서 일괄 처리한다**(2026-09-01, 사용자 확정). 현재 상태: 폰 실내 러닝은 GPS 스트림을 안 열고 `moving_seconds`·`distance_meters` 모두 0이라 XP 0·스트릭 미인정 — 사실상 미기능. 웨어러블(Apple Watch·Garmin)이 붙으면 실내 워크아웃은 기기 측정 거리·시간을 함께 넘기므로(HealthKit `HKWorkout.totalDistance` 등) "자가 신고" 문제가 없다. 그때 함께 결정할 항목: ① 폰 단독 실내는 시간 기반으로 둘지 / ② 웨어러블 실내 거리의 티어·랭킹·PB·거리뱃지 반영 범위(경로 없는 기기 측정값의 신뢰 수준) / ③ 실내 XP 산식(현행 거리 기반은 거리 0이면 0점) / ④ 스트릭 활동 주 판정의 실내 대안 조건 / ⑤ `session_distance_gte`·`cumulative_distance_gte`에 `activity_type <> 'indoor_run'` 명시 여부 / ⑥ `session_duration_gte` 2종의 실내 어뷰징 표면 / ⑦ PRD §8.3이 약속한 "전용 실내 뱃지" 0종 신설. **그때까지 실내 러닝 관련 코드·스키마·카탈로그는 손대지 않는다.** | Phase 4 웨어러블 라운드, gamification-designer·gps·backend 공동 |
 | 18 | **`user_badges`에 "판정 확정값" 컬럼이 없다** — PB 카드가 서버가 확정한 기록(초)을 그릴 수 없는 구간이 생긴다(§3.9.1). 제안: `achieved_value numeric null` 한 컬럼에 서버가 판정 시점 값(PB 초 / 스트릭 주 / 주간 순위)을 적는다. **P0는 이것 없이 성립**한다(102% 이내는 `moving_seconds`가 곧 서버 규칙, 초과 구간은 시간을 비운 카드) — 이 컬럼이 생기면 폴백 분기가 사라진다 | P1, backend-engineer |
 | ~~19~~ | ~~성취 큐에 소비자가 없어 밀린 `is_seen=false` 뱃지가 한꺼번에 쏟아진다~~ → **해소(2026-08-26, UI 구현)**. `isAchievementBacklog()`(`features/sharing/domain/achievement_backlog.dart`)가 **개수(>5) 또는 획득 시각 간격(>24h)** 중 하나라도 걸리면 큐를 "밀린 성취"로 보고 "그동안 받은 뱃지 N개" 한 장으로 접은 뒤 **일괄** `markBadgesSeen` 한다. 요약 화면·전역 호스트 양쪽에 같은 판정이 걸려 있다. **로컬 "이미 처리함" 플래그는 두지 않았다** — 접고 나면 서버 행이 `is_seen=true`가 되어 큐에서 영구히 빠지므로 그 상태는 이미 서버가 들고 있고, 같은 사실을 두 곳에 적으면 재설치·기기 변경에서 어긋난다 | — |
 | 17 | **클라이언트 진행률 바가 마이그레이션 42의 새 허용오차(§10.2)를 반영하지 않는다.** `badge_condition.dart`의 `sessionDistanceGte` 진행률 계산이 여전히 `distance/목표`(정확 비율)라, 텐런을 9.8km(서버 인정 기준)에서 뛰어도 바는 98.00%로 멈춘다. 실제 지급 시점에 `isEarned`가 `ratio: 1.0`으로 스냅해 자가 치유되므로 사용자에게 "받았는데 바가 98%"로 잠깐 보이는 정도이며, 클라이언트가 값을 내는 조건이 이 하나뿐이라 영향 범위는 좁다 | 다음 gamification-designer/flutter-ui-designer 라운드에서 진행률 계산에 동일 허용오차 반영 |
 | ~~20~~ | ~~성취 억제 카운터와 전역 축하 다이얼로그 사이에 프레임 경합이 있다~~ → **해소(2026-08-27).** 인라인 축하(요약 화면)와 억제 카운터 메커니즘 자체를 제거하고 전역 `AchievementCelebrationHost` 풀페이지 하나로 통합했다(사용자 요청, §3.9.3). 경합을 일으키던 두 소비 지점 중 하나가 사라져 원인이 구조적으로 없어졌다 | — |
 | 21 | **뱃지 아트 경로 규칙이 다시 두 곳이다**(QA O-4) — `badge_assets.dart`의 정본 `badgeAssetPath`와 `share_card_body.dart`의 `tierEmblemAssetPath`가 별도로 존재한다. 현재는 `assets/badges/tier/{bronze,silver,gold,platinum}.svg` 파일명이 우연히 일치해 문제가 드러나지 않지만, 이번 라운드가 없앤 이원화와 같은 형태다 | flutter-ui-designer, 정본으로 통합 |
+| 27 | **서버가 샘플로 거리를 재계산하지 않는다.** §7 표와 PRD §8.4는 "구간 속도 25km/h 초과 구간 제거 후 재계산"을 규정하지만 `validate_run`은 클라이언트가 올린 집계값에 플래그만 세운다(§7 ⚠️ 참조). 지금은 클라이언트 1차 필터(§8.3, 같은 25km/h)가 그 역할을 대신하고 있어 방향은 안전하지만, **"클라이언트 계산 값을 신뢰하지 않는다"는 PRD §8.4 원칙이 아직 코드로 성립하지 않는다** — 앱을 개조한 클라이언트가 임의 거리를 올리면 평균 7.0 m/s 미만인 한 통과한다. 웨어러블 임포트(경로 있는 외부 기록)가 붙으면 검증 표면이 더 넓어진다 | 🔴 베타 오픈 전, backend-engineer |
+| 28 | **TR-04 잔여 격차 — 거리필터가 만드는 지연.** A-6 C-3/C-4로 폴링(절전 10→5초)과 스무딩 지연(마커를 원시 fix로 분리)은 해소했으나, `distanceFilter`(표준 3m / 절전 8m)는 **이동량이 적을 때 콜백 자체를 억제**한다 — 아주 느린 걷기·제자리 대기에서는 마커 갱신이 5초를 넘을 수 있다. 같은 이유로 절전 모드에서는 정지 판정용 fix가 안 들어와 **자동 일시정지(TR-03) 진입이 늦거나 안 될 수 있다.** 거리필터를 0으로 내리면 배터리 목표(§11)와 충돌하므로, 실기기에서 두 수치를 함께 재고 결정한다 | Phase 1 실기기 검증(§3.3·§3.4)에서 실측 후 |
+| 29 | **중복 업로드 경합 (A-5로 증폭, 회귀 아님).** `local_run_repository.dart`의 `_schedulePush` fire-and-forget 체인과 `RunSyncCoordinator`의 `syncPending()`은 별개 실행 경로다 — 러닝 종료 직후 백그라운드 업로드가 도는 중 코디네이터 신호(특히 연결 회복)가 발화하면 같은 행을 두 번 올린다. `id`=클라이언트 UUID upsert라 **데이터 손상은 없고** A-5 이전에도 있던 경합이지만, `_uploads` 체인이 생기며 연속 저장 시 증폭 여지가 늘었다. 재시도 상한 부재(L-2)와 같은 뿌리 — 업로드 인플라이트 가드 하나로 함께 처리 | P1, backend-engineer |
 | 22 | **`share_card_renderer.dart` 주석의 뱃지 SVG 종수가 158종으로 적혀 있으나 정본(`docs/badge-catalog.csv`)은 현재 146개다.** 판정 로직에 쓰이는 숫자는 아니고 서술뿐이지만, 카탈로그 삭제(마이그레이션 35/37)가 반영 안 된 흔적이다 | 문서 정리, 낮은 우선순위 |
