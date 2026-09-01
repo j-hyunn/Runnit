@@ -32,6 +32,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_tokens.dart';
+import '../../../core/utils/share_anchor.dart';
 import '../data/share_card_renderer.dart';
 import '../data/share_providers.dart';
 import '../data/share_service.dart';
@@ -78,6 +79,10 @@ class _ShareCardPageState extends ConsumerState<ShareCardPage> {
   /// 캡처 대상 경계. State가 소유해야 리빌드 사이에 안정적으로 같은 위젯을 가리킨다.
   final _boundaryKey = GlobalKey();
 
+  /// 공유 버튼. iPad 팝오버가 **이 버튼**을 가리키게 하려고 키를 단다 —
+  /// 페이지 `context`로 앵커를 잡으면 화면 전체가 앵커가 된다(QA A-6).
+  final _shareButtonKey = GlobalKey();
+
   bool _sharing = false;
   String? _error;
 
@@ -104,11 +109,9 @@ class _ShareCardPageState extends ConsumerState<ShareCardPage> {
       _error = null;
     });
 
-    // iPad는 팝오버 앵커가 없으면 시트를 띄우지 못한다. 시트 자체의 위치를 준다.
-    final box = context.findRenderObject() as RenderBox?;
-    final origin = box == null
-        ? null
-        : box.localToGlobal(Offset.zero) & box.size;
+    // iPad는 팝오버 앵커가 없으면 시트를 띄우지 못한다. 방금 누른 **공유 버튼**의
+    // 사각형을 준다 — 페이지 context를 쓰면 화면 전체가 앵커가 된다(QA A-6).
+    final origin = shareOriginOfKey(_shareButtonKey);
 
     final outcome = await ref.read(shareServiceProvider).shareCard(
           boundaryKey: _boundaryKey,
@@ -189,6 +192,7 @@ class _ShareCardPageState extends ConsumerState<ShareCardPage> {
                 const SizedBox(height: AppTokens.s8),
               ],
               FilledButton.icon(
+                key: _shareButtonKey,
                 // 캡처 중 잠금(연타하면 8MB 이미지를 여러 장 동시에 굽는다) +
                 // 아트 준비 전 잠금.
                 onPressed: (_sharing || !_artReady) ? null : _share,
