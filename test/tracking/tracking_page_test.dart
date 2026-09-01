@@ -508,5 +508,5 @@ class FakeRunRepository implements RunRepository {
       const Stream<List<RunRecord>>.empty();
 
   @override
-  Future<int> syncPending() async => 0;
+  Future<int> syncPending({String? userId}) async => 0;
 }

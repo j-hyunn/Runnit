@@ -107,6 +107,13 @@ dependencies:
   logger: ^2.4.0
   flutter_web_auth_2: ^5.1.0
 
+  # ── 네트워크 상태 ─────────────────────────────────────────
+  # connectivity_plus: 오프라인 → 온라인 전환 감지. `RunSyncCoordinator`가 이
+  #   전환에서 `syncPending()`을 건다(QA C-9). 이 패키지는 "연결됨"만 알려줄 뿐
+  #   실제 도달 가능성을 보장하지 않으므로(캡티브 포털), 기존 3신호(로그인/앱
+  #   복귀/2분 주기)를 대체하지 않고 **보강**한다.
+  connectivity_plus: ^7.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
