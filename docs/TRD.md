@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.18 |
+| 문서 버전 | v0.22 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~42`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
@@ -25,6 +25,9 @@
 | v0.13 | **HI-07 서버 강제 — 저장된 러닝은 제목·메모만 수정 가능**(마이그레이션 51, **원격 적용 완료** 2026-08-31 — over-limit 행 0건이라 51-1 정리 UPDATE는 no-op, 조작 UPDATE 되돌리기 스모크 테스트 통과, advisor 신규 경보 없음). §4.4 신설: `trg_runs_guard`의 UPDATE 분기가 터미널 상태(`completed`/`discarded`) 행에 대해 `new := old` 후 `title`/`note`만 재적용한다 — 화이트리스트라 앞으로 추가되는 컬럼도 자동 보호되고, 되돌리기가 파생값 재계산보다 앞서므로 편집이 페이스·XP·티어·랭킹·뱃지를 흔들지 않는다. 예외를 던지지 않는 이유는 오프라인 멱등 재 upsert(`syncPending`)를 깨뜨리지 않기 위함. `runs_title_len`(60자)·`runs_note_len`(500자) CHECK 백스톱 + 가드의 `btrim`→절단→`NULL` 정규화. PRD v1.6에서 이미 제거된 사용자 삭제 경로의 잔재인 RLS `runs_delete_own` 정책 삭제(테이블 GRANT는 유지 — 회수하면 미완결 세션 "버리기"가 42501로 실패한다). §5 RLS 표 `runs` 행·§9 갱신. QA 지적 반영 — 51-1 정리 UPDATE를 `set_config('runnit.server_write','on')`로 감싸 AFTER 트리거 4종의 대량 재집계를 차단(C-5), 51-2에 체크포인트 업로드 도입 시 우회 경로 경고 주석 추가(L-3) |
 | v0.14 | **HI-06 후속 (2026-08-31)** — (1) `season_histories` RLS 서술 정정: §5 표가 "본인 행만 select"라고 적었으나 실제 `season_histories_select_visible`(마이그레이션 21)은 `is_voided=false or user_id=auth.uid()` — 무효 아닌 타인 행도 `authenticated`에게 공개다(TI-09/AC-03 전제). `tier_change_history`와 한 셀에 묶여 있던 것을 분리. (2) **마이그레이션 52** — `recompute_season_tier`의 `season_histories.best_weekly_rank` 서브쿼리에 `and le.tier is not null` 추가. 마이그레이션 23 이후 `leaderboard_entries`에 통합 보드(`tier IS NULL`)와 티어별 보드가 공존해 `min(rank)`가 두 스코프를 섞을 수 있었다(마감 후 수정 불가 컬럼). 43 함수 본문에서 이 한 줄 외 변경 없음. §9 갱신. **원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`) |
 | v0.15 | **AC-02 프로필 편집 / AC-03 타인 프로필 백엔드**(마이그레이션 53~55, 2026-08-31, 원격 적용 완료 — v0.18 참조). §4.5 신설. (1) `profiles.weekly_goal_km double precision` + CHECK `> 0 and <= 500`, `NULL`=미설정 — **단위가 km**인 프로젝트 유일한 거리 컬럼이고 서버 판정에 쓰이지 않는 표시 전용이다. `trg_profiles_guard`는 **블랙리스트**(서버 전용 컬럼만 되돌림)라 가드 변경 없이 편집이 열린다 — `runs`의 화이트리스트 가드(§4.4)와 기본값이 정반대라는 점을 §4.5 표로 대비시켜 기록. (2) `avatars` Storage 버킷 신설 + `storage.objects` RLS — 읽기 전체 공개(게스트 랭킹이 남의 아바타를 그린다), 쓰기는 `(storage.foldername(name))[1] = auth.uid()::text`로 본인 폴더만, 용량/MIME 제한은 버킷 설정(2MiB·jpeg/png/webp). (3) `user_badges_select_public` — 타인의 `verified and not revoked` 행 공개. **스키마 드리프트 정정**: 이 정책은 원격 DB에 **이미 살아 있었으나 마이그레이션 파일 어디에도 없었다**(적용 이력은 52에서 끝난다 — 대시보드/임시 SQL로 만들어진 것). 원격에는 있고 파일에는 없으니 `db reset`·스테이징·브랜치 DB에서만 AC-03이 조용히 깨지는 상태였다. 술어를 라이브와 한 글자도 다르지 않게(`user_id <> auth.uid() and revoked = false and verified = true`) 맞추고 drop-then-create로 감싸 **원격 적용이 진짜 no-op**이 되도록 했다. 인덱스는 마이그레이션 25의 `user_badges_public_idx`가 동일 술어로 이미 존재. ⚠️ 부수효과: Realtime 구독에 타인 행 이벤트가 도달하므로 `user_id` 필터가 유일한 방어선이 된다. **`runs` RLS는 손대지 않았다** — AC-03은 타인의 러닝 목록을 노출하지 않는다 |
+| v0.22 | **QA 후속 2건 구현**(2026-09-01, 마이그레이션 60·61, 사용자 승인·원격 적용 완료). **§14 #32 해소(마이그레이션 60, 옵션 B)** — 59의 SECURITY DEFINER 헬퍼를 없애기 위해 `season_leaderboard_snapshots.is_voided` 를 비정규화하고 SELECT 정책을 `season_histories` 와 같은 순수 컬럼 술어로 되돌렸다. 복제본 정합을 위해 `set_season_history_voided()` 단일 진입점 신설. advisor 기존 6건으로 원복. **§14 #30 / QA C-2 해소(마이그레이션 61)** — **PRD §8.5 "시즌 말 단축 주간"을 구현**했다(미구현 스펙의 구현이므로 PRD 변경 아님): 주간 기간을 시즌으로 클램프, `week_id_at()` 의 `@{season}` 접미사, 뱃지 판정 시즌을 `runnit.badge_season` GUC 로 전환, 확정 배치의 14일 되짚기 + 시즌 롤오버 선확정. §6.3/§6.4/§9 갱신 |
+| v0.21 | **QA 지적 반영**(2026-09-01, 마이그레이션 59 + 문서). **C-1(blocking) 수정** — 58의 `season_snapshots_select_visible`가 `season_histories`를 인라인 서브쿼리로 조회해 **무효 시즌 스냅샷이 전원에게 공개**되고 있었다(RLS 정책식 내 서브쿼리는 참조 테이블의 RLS를 그대로 받는다 → `season_histories`가 이미 감춘 타인의 무효 행이 서브쿼리에도 안 보여 `not exists`가 항상 참). 59가 SECURITY DEFINER 헬퍼 `_season_history_voided()`로 그 평가를 RLS 밖으로 빼 수정했고, 라이브 재현 쿼리로 `snapshot_visible_to_other` 1 → 0 확인(정상 시즌 노출·본인 무효 시즌 열람은 유지). **C-3 정정** — §14 #11의 "아무도 못 받는다" 전제 정정: 41 이전 레거시 지급 3건이 실재한다. **C-2·부수 논점 등재** — §14 #30(시즌 말 걸친 주의 RK-06 미지급 + PRD §8.5 단축 주간 미구현, 사용자 확인 필요), #31(무효 시즌 숨김이 남기는 rank 구멍), #32(59 헬퍼의 RPC 노출 — advisor 신규 1건, 수용) |
+| v0.20 | **주간 랭킹 확정 배치 + 시즌 랭킹 스냅샷**(2026-09-01, 마이그레이션 57·58, 원격 적용 완료 `xwtbwexcofcgmbvktwdo`). §14 **#12 해소** — `finalize_weekly_ranking()` + pg_cron `runnit-weekly-finalize`(`10 15 * * 0` UTC = 월 00:10 KST, 정본 스케줄). 방금 끝난 주를 티어별 최종 재집계 → `leaderboard_entries.finalized_at` 도장 + `weekly_ranking_finalizations` 원장 → RK-06 뱃지 지급 → NT-06 알림 순. 딸려 있던 (a) RK-06 지급 시점, (b) `badge_level:weekly:{week_id}` 발화점이 함께 해소됐다. NT-06 은 §6-N.5 방해 금지를 지켜 별도 job `runnit-weekly-rank-badge-notify`(`0 23 * * 0` = 월 08:00 KST)가 발행하고, 확정 배치가 같은 함수를 불러도 `_batch_hours_ok` 게이트에 걸린다. §14 **#23 해소** — 결함 #1(최소 모집단)은 마이그레이션 41 에서 이미 닫혀 있었고(라이브 정의 확인), 남아 있던 결함 #2(확정된 지난 주 필터)를 `evaluate_badge_condition` 의 `season_weekly_rank_lte` 분기에 `and le.finalized_at is not null` 한 줄로 닫았다. §14 **#4 관련** — `season_leaderboard_snapshots` 신설(PRD RK-10 / HI-06 잔여). `recompute_season_tier` 가 `season_histories` 마감과 **같은 트랜잭션·같은 멱등 규약**으로 티어별 시즌 누적 거리 랭킹을 한 번 적재한다. 첫 적재는 2026-09-30 시즌 마감(cron `runnit-season-reset-30`). §6.3/§6.4/§9/§4.1 갱신 |
 | v0.19 | **TR-08 오프라인 동기화 QA 후속**(2026-09-01, A-5 — 클라이언트 수정만, **마이그레이션 없음**). §9에 "알려진 제약 — 경계를 넘긴 지각 업로드" 항목 추가: 오프라인으로 시즌·주 경계를 넘긴 지각 업로드는 **현 시즌·현 주 기준으로만 처리하고 마감된 과거는 소급 변경하지 않는다**(사용자 확정 정책, QA C-1·C-2 — 소급 반영 마이그레이션을 만들지 않는다). 클라이언트 측은 업로드 요청 타임아웃 30초, `save()`의 업로드 fire-and-forget 분리, `syncPending(userId:)` 계정 필터, `connectivity_plus` 온라인 전환 훅 — 상세는 ARCHITECTURE §9 |
 | v0.18 | **마이그레이션 53~56 원격 적용 완료**(2026-08-31, `xwtbwexcofcgmbvktwdo`). 53/55/56 은 `apply_migration`. 54 는 버킷만 `apply_migration`, `storage.objects` 정책 4종은 `apply_migration`이 `42501 must be owner of table objects`로 거부돼 `execute_sql`(대시보드 SQL 에디터 동등)로 적용 — 원격 반영됐으나 `supabase_migrations` 이력엔 정책 부분이 빠졌다(파일엔 있음, `db reset`/브랜치 DB 정상). `get_advisors(security)` 신규 경보 없음 |
 | v0.17 | **AC-02/03 QA 수정**(2026-08-31, 마이그레이션 56 추가). F-1 랭킹에서 본인 행 탭 시 홈 탭이 스피너에 갇히던 것 — 진입점(`home_page`·`full_ranking_page`)에서 본인 행을 `/users/:me` push 대신 마이 탭 전환으로 갈라내고, `user_profile_page` 방어 분기는 `pop()` 우선으로. F-2 `username` 서버 강제 고정(마이그레이션 56 — `trg_profiles_guard`가 UPDATE 시 되돌림) + 클라 `_editablePatch`에서 키 제거. F-3 리포지토리 주석의 "화이트리스트" 오기 정정. §4.5 갱신 |
@@ -977,6 +980,12 @@ create table public.lunar_holidays (
 | *(대응 필드 없음)* | `profiles.streak_freeze_credits` | smallint | 리플레이 파생값 캐시(표시용, 0 또는 1) |
 | *(대응 필드 없음)* | `profiles.streak_last_active_week` | text | KST ISO 주 키 `YYYY-Www`. 알림 판단용 |
 | *(대응 필드 없음)* | `leaderboard_entries.reached_at` | timestamptz | PRD §8.2 ② 타이브레이크 근거(§4.3) |
+| *(대응 필드 없음)* | `leaderboard_entries.finalized_at` | timestamptz nullable | **마이그레이션 57.** 주간 확정 도장. `null` = 진행 중이거나 확정 대상 아님. 서버 전용 — 클라이언트는 "확정된 주"를 이 컬럼(또는 `weekly_ranking_finalizations`)으로 판별한다 |
+| `RankingEntry.rank` | `season_leaderboard_snapshots.rank` | integer | **마이그레이션 58.** 시즌 랭킹 스냅샷은 `RankingEntry`와 **같은 camelCase 규약**을 따르도록 컬럼명을 지었다 — 별도 모델을 만들지 않고 재사용할 수 있게 하기 위함 |
+| `RankingEntry.score` | `season_leaderboard_snapshots.season_distance_meters` | double precision | ⚠️ 주간(`score`)과 이름이 다르다 — 시즌 스냅샷은 지표가 **거리 하나로 고정**이라(`metric` 컬럼이 없다) 이름에 단위를 박았다. `seasonDistanceMeters`로 매핑하거나 `RankingEntry.score`에 그대로 넣는다 |
+| `RankingEntry.participantCount` | `season_leaderboard_snapshots.participant_count` | integer | 같은 시즌·같은 티어 모집단. RK-04 "상위 N%" 표기용 |
+| `SeasonHistory.seasonId` | `season_leaderboard_snapshots.season_id` | text | `2026-Q3` 형식. `season_histories.season_id`와 동일 키 — 두 테이블을 이 값으로 조인해 "내 마감 결과 + 그 시즌 전체 랭킹"을 한 화면에 그린다 |
+| *(대응 필드 없음)* | `season_leaderboard_snapshots.reached_at` / `run_count` / `moving_seconds` / `computed_at` | — | 타이브레이크 근거·부가 표시값. 필요해질 때 모델에 올린다 |
 | `Badge.conditionType` | `badges.condition_type` | text (check, 39종) | 판정 함수 디스패치 키 |
 | `Badge.condition` | `badges.condition` | jsonb | 키 집합은 `condition_type`마다 다름 |
 | `Badge.badgeGrade` | `badges.badge_grade` | text (check, 6종) | 표시용 등급 — 경쟁 `Tier`와 무관 |
@@ -1132,17 +1141,136 @@ create table public.lunar_holidays (
 
 `weekly_ranking_cache`에서 조회. 배치 갱신 주기를 벗어나지 않는 한 Postgres 직접 select로도 충분 — 별도 Edge Function 없이 PostgREST(Supabase 자동 API)로 대체 가능(§9 참고).
 
-### 6.3 배치 함수 — 랭킹 캐시 갱신 (`pg_cron` 트리거)
+### 6.3 배치 함수 — 랭킹 캐시 갱신 · 주간 확정 (`pg_cron`) — 2026-09-01 실구현
 
-5분 주기로 실행되는 스케줄 함수. 활성 시즌·주(week)에 대해 티어별로 파티션하여 `rank`를 재계산한다(§7 동점 규칙 적용). 초기 구현은 SQL 윈도우 함수(`rank() over (partition by season_id, week_id, tier order by ...)`)로 충분하며, 별도 배치 엔진 없이 Edge Function + `pg_cron`으로 처리한다.
+> 아래가 **실구현 정본**이다. 이 절의 이전 서술("5분 주기 하나로 충분")은 확정 시점이
+> 스펙(§14 #12)과 달랐고, 마이그레이션 57 이 두 층으로 분리하면서 해소됐다.
 
-### 6.4 시즌 경계 배치 (`season-rollover`)
+| 층 | job | 스케줄(UTC) | KST | 함수 | 역할 |
+|---|---|---|---|---|---|
+| 신선도 | `runnit-leaderboard` | `*/5 * * * *` | 5분 | `refresh_all_leaderboards()` | **주중** 진행 중 주의 순위 갱신. 홈 화면 "앞사람까지 0.8km"의 소스 |
+| 신선도+알림 | `runnit-rank-notify` | `0 23,0-12 * * *` | 매시 08~22 | `refresh_leaderboards_and_notify()` | 갱신 + NT-04 순위 변동 알림(같은 트랜잭션) |
+| **확정** | `runnit-weekly-finalize` | `10 15 * * 0` | **월 00:10** | `finalize_weekly_ranking()` | 방금 끝난 주 확정 |
+| 확정 알림 | `runnit-weekly-rank-badge-notify` | `0 23 * * 0` | 월 08:00 | `notify_weekly_rank_badges()` | NT-06 주간 뱃지 알림 |
+| 확정(시즌 경계) | `runnit-season-reset-30/31` | `5 15 30 6,9 *` / `5 15 31 3,12 *` | 분기 첫날 00:05 | `reset_stale_seasons()` → `finalize_weekly_ranking()` | **구시즌 단축 조각 확정**(마이그레이션 61) |
 
-역년 분기 시작 시각(1/4/7/10월 1일 00:00 KST)에 실행:
-1. 종료된 시즌의 `user_season_tier.current_tier`를 이력 테이블(HI-06, 별도 `season_history` 또는 `user_season_tier` 자체를 이력으로 유지)로 보존.
-2. 신규 `seasons` row 생성.
-3. 신규 시즌의 `user_season_tier`는 필요 시점(첫 기록 업로드)에 지연 생성(lazy insert)하거나, 활성 사용자 전원에 대해 `bronze`/`0`으로 미리 생성 — 운영 부하 대비 후자를 권장(랭킹 조회 시 NULL 분기 처리를 피함).
-4. D-14/D-3 알림(NT-03)은 이 배치가 아니라 별도 스케줄(시즌 종료 14일/3일 전) 함수에서 발행.
+`finalize_weekly_ranking(p_at default now())` — SECURITY DEFINER, 반환 `jsonb`(진단용):
+
+1. **대상 주 결정 (마이그레이션 61에서 변경)**: "직전 1개"가 아니라 **끝났는데 아직 확정되지
+   않은 모든 주간 기간**을 확정한다(KST 자정 앵커로 하루씩 되짚기, **14일** 폭).
+   - 이미 확정된 기간은 **건너뛴다** — 재집계하면 그 시점의 티어로 과거 순위가 다시 쓰여
+     "확정"의 의미가 사라진다(QA L-1이 과거 주로 번지는 것도 이걸로 막힌다).
+   - 되짚기가 필요한 이유는 §8.5 단축 주간(§6.4) 때문이다. 시즌 클램프 이후 월요일 배치의
+     "직전 기간"은 **신시즌 조각**이라, 구시즌 단축 조각은 어떤 월요일 실행의 직전 기간도
+     되지 못해 **영영 확정되지 않는다.**
+   - 14일보다 길게 잡지 않는 이유: 한 번도 집계된 적 없는 오래된 주의 보드를 **오늘의
+     티어로 합성**하게 된다 — 없는 것보다 나쁜 기록이다.
+2. **최종 재집계**: 티어별 4개 보드 + 통합 보드에 대해 `refresh_leaderboard(..., v_prev_anchor, tier)`.
+   정렬·타이브레이크는 기존 함수를 그대로 재사용한다 — 확정 시점에 규칙이 갈라지면
+   주중에 보던 순위와 확정 순위가 달라진다(§8.2 3단계 + `user_id` 폴백, 공동 순위 없음).
+3. **확정 마킹 (두 곳)**:
+   - `leaderboard_entries.finalized_at`(신설) `= coalesce(finalized_at, now())` — **행 단위 도장**.
+     뱃지 판정이 술어 한 줄로 쓰는 hot path 라 조인을 피하려고 컬럼으로 뒀다.
+     `refresh_leaderboard`의 upsert update 목록에 없으므로 이후 재집계가 지우지 않는다.
+   - `weekly_ranking_finalizations(period_start, tier_key, tier, week_id, participant_count, finalized_at, recomputed_at)`
+     PK `(period_start, tier_key)` — **주×티어 원장**. 참가자 0명인 티어도 행을 남긴다
+     ("확정했고 아무도 없었다" ≠ "확정 안 함"). `leaderboard_entries`에는 그런 행이
+     아예 없으므로 "그 주가 확정되었는가"를 답할 수 있는 곳은 여기뿐이다.
+4. **RK-06 지급**: 확정된 그 주의 티어별 보드에서 최소 모집단 게이트(top1 N≥10 / 나머지 N≥20)를
+   통과하는 사용자만 골라 `evaluate_badges(user_id, null)`. 판정 정본은 여전히
+   `evaluate_badge_condition`이며 여기서는 "누구를 재평가할 가치가 있는가"만 좁힌다.
+5. **NT-06**: `notify_weekly_rank_badges()` 호출 — 그 함수가 `_batch_hours_ok`로 자가 게이트하므로
+   00:10 KST 실행에서는 0을 반환하고, 같은 날 08:00 KST job 이 실제로 발행한다.
+
+**멱등성** — 재실행해도 뱃지·알림 중복이 없다: 재집계는 upsert, 도장은 `coalesce`(최초 확정
+시각 보존), 원장은 `on conflict do update`(`finalized_at` 보존, `recomputed_at`만 갱신),
+뱃지는 `user_badges on conflict do nothing`, 알림은 `notifications(user_id, dedupe_key)` unique.
+
+`notify_weekly_rank_badges(p_at)` — dedupe 키 `badge_level:weekly:{week_id}`(사용자당 주 1건),
+route `/history?tab=badges`(§6-N.7). 대상은 **가장 최근 확정된 주**이며 확정 후 7일이 지나면
+발행하지 않는다(배치가 멈췄다 돌아왔을 때 철 지난 알림 차단).
+
+**NT-06 을 확정 시각에 보내지 않는 이유**: §6-N.5 "방해 금지"(배치 계열 KST 08~22).
+NT-06 이 트리거 계열일 때 심야가 허용된 근거는 "사용자가 방금 러닝을 끝낸 순간"인데
+월요일 00:10 확정은 그 문맥이 아니다.
+
+### 6.4 시즌 경계 배치 — 2026-09-01 실구현
+
+> ⚠️ 아래 이전 초안은 **폐기**: `seasons`·`user_season_tier` 테이블은 존재하지 않는다
+> (시즌은 `season_id_at()` 계산 함수, 티어는 `profiles.current_tier` 컬럼 — §14 #4).
+> ~~1. 종료된 시즌의 `user_season_tier.current_tier`를 이력 테이블로 보존. 2. 신규 `seasons`
+> row 생성. 3. 신규 시즌의 `user_season_tier` lazy insert / 사전 생성.~~
+
+실제 경로: pg_cron `runnit-season-reset-31`(`5 15 31 3,12 *`) / `runnit-season-reset-30`
+(`5 15 30 6,9 *`) = 분기 첫날 00:05 KST → `reset_stale_seasons()` → `tier_season_id`가
+현 시즌이 아닌 사용자마다 `recompute_season_tier(user_id, now())`. 그 함수가 시즌 경계에서:
+
+1. 지난 시즌을 `season_histories`에 마감(`on conflict (user_id, season_id) do nothing`).
+2. **(마이그레이션 58)** 같은 트랜잭션에서 `snapshot_season_leaderboard(지난_시즌)` —
+   `season_leaderboard_snapshots`에 **티어별 시즌 누적 거리 랭킹**을 영구 적재(PRD RK-10 / HI-06).
+   `if not exists (… where season_id = 지난_시즌)` 가드가 붙어 있어
+   `reset_stale_seasons`가 N명을 도는 동안 전체 재집계가 N번 돌지 않는다.
+3. 현 시즌 거리 재합산 + 티어 확정(같은 시즌이면 강등 없음 — 마이그레이션 43).
+4. D-14/D-3 알림(NT-03)은 이 배치가 아니라 `notify_season_ending()`(매일 09:00 KST)이 발행.
+
+**스냅샷의 순서 의존과 그 근거**: 스냅샷은 **가장 먼저 마감되는 사용자의 호출**에서 전체
+모집단에 대해 한 번 찍힌다. 그 시점에 나머지 사용자의 `profiles.current_tier`는 아직 지난
+시즌 티어이므로 "마감 시점 티어"가 그대로 잡힌다. 그래도 호출 순서에 기대지 않도록 티어는
+3단 폴백으로 결정한다: `season_histories.final_tier`(마감된 사용자의 불변 정본) →
+`profiles.current_tier`(아직 그 시즌인 사용자) → `tier_for_distance(시즌 거리)`(티어는
+절대평가라 재현 가능. 단 강등 없음 규칙 때문에 부정 판정 이력이 있으면 낮게 나올 수 있다).
+
+랭킹 산정 기준은 주간과 동일한 필터·타이브레이크: 그 시즌 `runs`의 누적 거리
+(`started_at` 귀속, `status='completed'`, `is_flagged=false`, `activity_type<>'indoor_run'`),
+티어 파티션, 거리 desc → 러닝 횟수 asc → `reached_at` asc → 이동 시간 asc → `user_id` asc.
+
+**소급 백필 없음** — 첫 시즌 2026-Q3는 2026-09-30 종료로 마감된 시즌이 0개다. 복원할 과거가
+없으므로 전진 구축만 했고, 첫 적재는 2026-09-30 마감에서 자동으로 일어난다.
+
+#### 6.4.1 시즌 말 단축 주간 (PRD §8.5) — 마이그레이션 61
+
+시즌 경계는 분기 1일, 주 경계는 월요일이라 **거의 매 시즌 마지막 주가 두 시즌에 걸친다.**
+PRD §8.5는 "시즌 종료일이 주 중간이면 해당 주간 랭킹은 단축 운영"을 요구했으나 구현된 적이
+없었고, 그 미구현이 QA C-2(걸친 주의 RK-06 영구 미지급)를 만들었다.
+
+**구현: 주를 새 개념으로 만들지 않고 시즌으로 자른다.**
+`leaderboard_period_bounds('weekly', anchor)` = `[max(주시작, 시즌시작), min(주끝, 시즌끝))`.
+
+| 파생 효과 | 내용 |
+|---|---|
+| 조각 수 | 주는 분기 경계를 최대 1번 넘으므로 항상 2개 이하 |
+| 스키마 | **변경 없음** — 조각마다 `period_start`가 달라 `leaderboard_entries`의 유니크 키가 자동으로 별개 기간으로 다룬다 |
+| 시즌 귀속 | `season_id_at(period_start)`로 유일 결정(클램프 덕에 조각은 시즌을 걸치지 않는다) |
+| `best_weekly_rank` | `recompute_season_tier`의 `period_start >= season_start(prev)` 서브쿼리가 손대지 않아도 구시즌 조각만 센다 |
+| 러닝 귀속 | `started_at` 기준 그대로(§8.5 경계 걸침) — `refresh_leaderboard`가 `started_at >= v_start and < v_end`로 거른다 |
+| §8.6 승급 이관 | 영향 없음 — 이관은 `tier` 파티션 문제이고 기간 경계와 무관 |
+
+**주 키**: 두 조각은 같은 ISO 주라 `week_id_at()`이 같은 값을 주면 NT-04/NT-06의 dedupe 키가
+충돌해 **둘째 조각의 알림이 사라진다.** 그래서 `week_id_at()`이 걸친 주에만 `@{season_id}`를
+덧붙인다(`2026-W40@2026-Q3` / `2026-W40@2026-Q4`). 걸치지 않는 주는 **출력이 종전과 동일**해
+기존 dedupe 키·이력과 호환된다.
+
+**뱃지 판정 시즌 (C-2의 진짜 원인)**: `evaluate_badge_condition`은 `season_id_at(now())`로
+**판정을 실행하는 순간의 시즌**을 봤다. 정답은 **판정 중인 뱃지 인스턴스의 시즌**이다
+(`srank_gold_top1@2026-Q3`는 `badges.season_id='2026-Q3'`을 들고 있는데 디스패치가
+`(user_id, condition_type, condition)`만 넘겨 그 정보가 도달하지 못했다). `evaluate_badges`가
+뱃지마다 `runnit.badge_season` GUC에 `badges.season_id`를 실어 넘기고, 판정 함수는
+`coalesce(GUC, season_id_at(now()))`를 쓴다(§6-N의 `_notify_ctx`와 같은 관용 — 4번째 인자를
+추가하면 3인자 호출이 모호해지고 24KB 함수를 통째로 재정의해야 한다).
+
+> 🔴 이 변경은 C-2보다 넓은 잠재 결함을 함께 닫는다: 미획득으로 남은 **과거 시즌 인스턴스가
+> 현재 시즌 데이터로 재판정**되고 있었다. `evaluate_badges`는 미획득 뱃지를 매 러닝마다 다시
+> 돌므로 **Q4 성적으로 Q3 뱃지가 발급될 수 있었다.** `season_*` 조건 전체가 대상이었다.
+
+**확정 시점 (PRD 미명시 → 결정)**: PRD §8.5는 단축 운영을 요구하지만 확정 *순간*은 규정하지
+않는다. 구시즌 조각을 다음 월요일까지 미루면 사용자는 시즌 종료 후 며칠간 마지막 주 결과를
+못 본다. 그래서 `reset_stale_seasons()`(분기 첫날 00:05 KST)가 **시즌 리셋 루프보다 먼저**
+확정 배치를 부른다 — 순서가 중요하다. 루프가 `profiles.current_tier`를 신시즌 bronze로
+내리기 전에 확정해야 티어 파티션이 구시즌 값으로 잡힌다. 월요일 배치의 14일 되짚기는 안전망.
+
+**실제 첫 사례 (2026-Q3 종료, 스모크 검증 완료)**: 2026-09-30은 **수요일**이고 Q3는
+2026-10-01 00:00 KST에 끝난다. 그 주(09-28 월 ~ 10-05 월)는
+`2026-W40@2026-Q3`(09-28~10-01, 3일) + `2026-W40@2026-Q4`(10-01~10-05, 4일)로 갈린다.
 
 ---
 
@@ -1441,6 +1569,10 @@ order by score desc, run_count asc, reached_at asc, total_moving_seconds asc, us
 
 - **티어 판정**: `runs` upsert의 트리거 트랜잭션 내에서 동기 처리(`recompute_season_tier` 등). 배치 지연 없음(PRD TI-03).
 - **주간 랭킹 집계**: `pg_cron` 5분 주기 배치(`refresh_all_leaderboards`). 조회는 PostgREST 직접 select.
+- **주간 랭킹 확정 (마이그레이션 57, 2026-09-01 — §14 #12 해소)**: 신선도 갱신과 **확정**을 분리한다. 매주 월요일 KST 00:10(`10 15 * * 0` UTC, job `runnit-weekly-finalize`)에 `finalize_weekly_ranking()`이 방금 끝난 주를 티어별로 최종 재집계하고 `leaderboard_entries.finalized_at`(행 단위 도장) + `weekly_ranking_finalizations`(주×티어 원장)에 확정 사실을 남긴 뒤 RK-06 뱃지를 지급한다. 상세는 §6.3. **"확정"이 명시적 상태가 되면서 §14 #23 결함 #2도 함께 닫혔다** — `season_weekly_rank_lte` 판정에 `and le.finalized_at is not null`이 들어가, 진행 중인 주의 일시적 1위로 영구 뱃지가 나가던 경로가 없어졌다(결함 #1 최소 모집단 게이트는 마이그레이션 41에서 이미 닫혀 있었다).
+- **시즌 랭킹 스냅샷 (마이그레이션 58 — PRD RK-10 / HI-06)**: 주간 보드(`leaderboard_entries`)는 계속 덮어써지므로 *시즌* 랭킹의 자리가 아니다. `season_leaderboard_snapshots(season_id, user_id, tier, rank, season_distance_meters, run_count, moving_seconds, reached_at, participant_count, computed_at)` PK `(season_id, user_id)`에 시즌 마감 시점의 티어별 순위를 영구 보존한다. 쓰기는 `recompute_season_tier`의 `season_histories` 마감 지점 한 곳뿐 — 같은 트랜잭션, 같은 멱등 규약(`on conflict do nothing`). 상세·티어 3단 폴백은 §6.4. 무효 시즌은 `is_voided` 컬럼을 복사해 두고 SELECT 정책이 그 컬럼만 본다(마이그레이션 60) — 사후 무효 판정은 반드시 `set_season_history_voided()` 단일 진입점으로 해야 두 테이블이 함께 갱신된다.
+- **시즌 말 단축 주간 (마이그레이션 61 — PRD §8.5 구현, §14 #30 해소)**: `leaderboard_period_bounds('weekly')`가 달력 주를 **앵커가 속한 시즌으로 클램프**한다(`[max(주시작, 시즌시작), min(주끝, 시즌끝))`). 주는 분기 경계를 최대 1번 넘으므로 조각은 2개 이하이고, 조각마다 `period_start`가 달라 **스키마 변경 없이** 별개 기간이 된다. `week_id_at()`은 걸친 주에만 `@{season}`을 붙인다(안 걸친 주는 출력 불변 → 기존 dedupe 키·이력과 호환). `daily`/`monthly`는 분기에 포개져 클램프가 무의미하고 `all_time`은 클램프하면 망가지므로 **weekly만** 클램프한다. 상세는 §6.4.1.
+- **뱃지 판정의 시즌 컨텍스트 (마이그레이션 61)**: `evaluate_badge_condition`의 `v_season`이 `season_id_at(now())`(판정을 실행하는 순간의 시즌)에서 **`runnit.badge_season` GUC(= 판정 중인 `badges.season_id`)**로 바뀌었다. `evaluate_badges`가 뱃지마다 이 GUC를 실어 넘긴다. 이것이 C-2(시즌 말 걸친 주의 RK-06 영구 미지급)의 진짜 원인이었고, 동시에 **미획득으로 남은 과거 시즌 인스턴스가 현재 시즌 데이터로 재판정되던**(Q4 성적으로 Q3 뱃지 발급) 더 넓은 잠재 결함도 닫혔다 — `season_*` 조건 전체가 대상이었다.
 - **시즌/주간 경계**: 시즌은 `season_id_at()`/`season_start()`/`season_end()` 계산 함수(역년 분기 KST). 주 경계는 KST 월요일 00:00 ~ 일요일 23:59, `leaderboard_entries.period_start`. 러닝 **시작 시각** 기준으로 귀속(PRD §8.5).
 - **알려진 제약 — 경계를 넘긴 지각 업로드 (2026-09-01 확정, QA C-1·C-2)**: 오프라인으로 시즌·주 경계를 넘겨 뒤늦게 올라온 기록은 **현 시즌·현 주 기준으로만 처리하고, 마감된 과거 시즌·주는 소급 변경하지 않는다.** `recompute_season_tier(user_id, now())`는 지난 시즌을 `on conflict do nothing`으로 한 번만 마감하고 현 시즌 거리를 `started_at >= season_start(now())`로 합산하며, `refresh_leaderboard(..., p_anchor default now())`는 앵커가 속한 한 기간만 재집계한다(진입점은 pg_cron뿐 — `runs` AFTER 트리거는 랭킹을 건드리지 않는다). 따라서 시즌 마지막 날/일요일 밤의 오프라인 러닝을 경계 넘겨 업로드하면 **그 과거 구간의 티어 누적·주간 순위에는 반영되지 않는다.** 이는 버그가 아니라 정책이다 — 마감된 스냅샷을 지각 도착 기록으로 흔드는 것은 PRD §5.4(확정 결과의 안정성)에 반하고 경계 직후 업로드로 지난 주 순위를 뒤집는 부정행위 벡터가 된다. 러닝 자체·누적 거리·뱃지·XP는 정상 반영되므로 데이터 손실은 없다. **소급 반영 마이그레이션을 만들지 않는다.** 서술 정본은 ARCHITECTURE §9.1.
 - **주중 승급 시 랭킹 이관**: `leaderboard_entries`의 `tier` 파티션만 갱신, 주간 거리는 `runs` 재집계로 자연 유지 — row 재생성 안 함(PRD §8.6).
@@ -1584,10 +1716,10 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 8 | Apple Watch 벤더 판별의 기기명 의존(§8.4.1) — `HKDevice`/`Metadata.device`를 얻는 얇은 platform channel이 필요한지 | P1 웨어러블 실기기 테스트에서 오분류가 실제로 확인되면 |
 | ~~9~~ | ~~`device_source_diversity_gte`의 OR 표현식 파싱 규약~~ → **해소(2026-08-26)**. 문법·매칭 시맨틱 모두 §3.1.2에 정본화 | — |
 | ~~10~~ | ~~`runs.device_vendors` 마이그레이션(§4.0) 미적용~~ → **해소(2026-08-26, 마이그레이션 36)**. 컬럼·GIN 인덱스·백필·판정 로직 전부 적용됐다. 뱃지 5종은 이제 판정 가능하며, 실제 지급은 P1 웨어러블 연동으로 `device_vendors` 에 값이 실리기 시작한 뒤부터다 | — |
-| 11 | **`season_weekly_rank_lte` 최소 모집단(top1 N≥10 / 나머지 N≥20)이 현재 시드 규모에서 절대 충족되지 않는다.** 티어별 모집단이 1~4명이라 이 뱃지 12종은 실사용자가 붙기 전까지 아무도 못 받는다. 판정 로직은 정확하지만 **아직 실데이터로 검증되지 않았다** | 베타 사용자 20명 이상 확보 시 |
-| 12 | **주간 랭킹 확정 배치가 아직 `pg_cron` 에 없다.** 정본(§2.2)은 "매주 월요일 KST 00:10(`10 15 * * 0` UTC)"이고, 현재는 마이그레이션 16의 기존 `refresh_all_leaderboards` 주기 스케줄 + 46번의 `runnit-rank-notify`(매시)에 의존한다. 주 경계 직후 확정 시점이 스펙과 다르다. **이 배치가 없어서 딸려 있는 미구현 2건**: (a) RK-06 주간 상위권 뱃지가 "주간 확정 직후"가 아니라 다음 러닝 때 발급된다, (b) NT-06의 `badge_level:weekly:{week_id}` 키(주간 유래 뱃지 알림)를 쓰는 발화점이 아직 없다 | Phase 2 랭킹 모듈 |
-| 23 | **`season_weekly_rank_lte` 판정에 최소 모집단 게이트와 "확정된 지난 주" 필터가 없다**(gamification 문서 §6.2 결함 #1·#2, 마이그레이션 32). 참가자 3명인 티어에서 1위 뱃지가 나가고, 진행 중인 주간의 일시적 1위로도 발급된다 — 뱃지는 영구 자산이라 정상 경로로 회수할 수 없다. 현재 시드 규모(티어당 1~4명)에서는 아무도 못 받아 실피해가 없으나, **베타 사용자가 10명을 넘는 순간부터 되돌릴 수 없다.** 수정 SQL은 그 문서 §6.2에 그대로 이식 가능 | 🔴 **베타 오픈 전 필수** |
-| 25 | **알림 시스템(NT-01~08) 검증이 자동 테스트(208개) 수준에서 멈춰 있다.** ① 서버 알림 생성 + 인앱 알림함 검증 — FCM 없이 가능. 동기 트리거(NT-01/02/06)는 테스트 계정 러닝 업로드로, 배치(NT-03/04/05)는 `select notify_season_ending()` / `refresh_leaderboards_and_notify()` / `notify_weekend_push()` 수동 호출로 `notifications` 적재를 확인하고, 앱 알림함(마이페이지→종)에서 렌더·딥링크·읽음·미읽음 배지·종류별 토글을 눈으로 검증. NT-04는 `participant_count >= 10` 게이트로 현재 시드에선 안 뜸(#11·#12와 동일 제약). ② 실기기 푸시 검증 8항목 — FCM 운영 설정(프로젝트·서비스계정·네이티브 설정 파일·Vault 시크릿 2개·`push-dispatch` 배포) 완료 후. 절차·트리아지 표는 `_workspace/20260828_174224_ui_notifications.md` §5. 레벨 단독 알림(§5 항목 6, C-3 크래시하던 경로)은 러닝으로 발화 안 함 — 테스트 계정에 XP 경로를 별도로 태워야 함 | ① 지금 가능(테스트 계정 uid 확보 시) / ② FCM 운영 설정 후 |
+| 11 | **`season_weekly_rank_lte` 최소 모집단(top1 N≥10 / 나머지 N≥20)이 현재 시드 규모에서 절대 충족되지 않는다.** 티어별 모집단이 1~4명이라 이 뱃지 12종은 실사용자가 붙기 전까지 아무도 못 받는다. 판정 로직은 정확하지만 **아직 실데이터로 검증되지 않았다**. ⚠️ **정정(2026-09-01, QA C-3)**: 라이브에 이 계열 뱃지 **3건이 이미 존재한다** — user `…00a8`, 2026-08-25 부여, 플래티넘 위클리킹/탑텐/라이징. 셋 다 `participant_count = 1` 보드에서 나간 **마이그레이션 41(모집단 게이트) 이전의 레거시 지급**이고, 41 이후로는 같은 지급이 불가능하다(57의 확정 주 필터까지 더해져 이중으로 막힌다). "아무도 받은 적 없다"는 전제로 쓰인 서술(57-6 백필 주석 등)은 이 3건을 반영해 정정했다. 회수 여부는 gamification-designer 판단 | 베타 사용자 20명 이상 확보 시 |
+| ~~12~~ | ~~주간 랭킹 확정 배치가 아직 `pg_cron` 에 없다~~ → **해소(2026-09-01, 마이그레이션 57)**. `finalize_weekly_ranking()` + pg_cron `runnit-weekly-finalize`(`10 15 * * 0` UTC = 매주 월 00:10 KST — 정본 스케줄 그대로). 딸려 있던 2건도 함께 해소: (a) RK-06 주간 상위권 뱃지가 **확정 직후** 지급된다(더 이상 다음 러닝을 기다리지 않는다), (b) `badge_level:weekly:{week_id}` 발화점 = `notify_weekly_rank_badges()`. NT-06 은 §6-N.5 방해 금지를 지켜 별도 job `runnit-weekly-rank-badge-notify`(`0 23 * * 0` = 월 08:00 KST)가 발행한다. 5분 주기 `runnit-leaderboard`(주중 신선도)는 그대로 유지 — 두 층의 역할 분담은 §6.3 표. 전 단계가 멱등이라 재실행에 중복 지급이 없다 | — |
+| ~~23~~ | ~~`season_weekly_rank_lte` 판정에 최소 모집단 게이트와 "확정된 지난 주" 필터가 없다~~ → **해소(2026-09-01, 마이그레이션 57)**. 결함 #1(최소 모집단 top1 N≥10 / top10·top10pct N≥20)은 **마이그레이션 41 에서 이미 닫혀 있었다** — 라이브 `evaluate_badge_condition` 정의로 확인했고, 이 이슈 항목이 stale 했다. 남아 있던 결함 #2(확정된 주 필터)를 57 이 닫았다: 같은 분기에 `and le.finalized_at is not null` 한 줄. 확정 도장은 `finalize_weekly_ranking()` 만 찍으므로 진행 중인 주는 구조적으로 판정 대상이 아니다. 이미 종료된 과거 주는 57-6 백필이 `period_end` 를 확정 시각으로 소급 도장했다(현 시드 규모에선 지급 변화 0건 — 아무도 모집단 게이트를 넘지 못했다) | — |
+| 25 | **알림 시스템(NT-01~08) 검증이 자동 테스트(208개) 수준에서 멈춰 있다.** ① 서버 알림 생성 + 인앱 알림함 검증 — FCM 없이 가능. 동기 트리거(NT-01/02/06)는 테스트 계정 러닝 업로드로, 배치(NT-03/04/05)는 `select notify_season_ending()` / `refresh_leaderboards_and_notify()` / `notify_weekend_push()` 수동 호출로 `notifications` 적재를 확인하고, 앱 알림함(마이페이지→종)에서 렌더·딥링크·읽음·미읽음 배지·종류별 토글을 눈으로 검증. NT-04는 `participant_count >= 10` 게이트로 현재 시드에선 안 뜸(#11·#12와 동일 제약). ② 실기기 푸시 검증 8항목 — FCM 운영 설정(프로젝트·서비스계정·네이티브 설정 파일·Vault 시크릿 2개·`push-dispatch` 배포) 완료 후. **2026-09-01 추가 — NT-06 주간 랭킹 유래 알림**: 마이그레이션 57 이 `badge_level:weekly:{week_id}` 발화점(`notify_weekly_rank_badges()`)을 만들었으나, RK-06 뱃지 지급 자체가 최소 모집단 게이트(#11)에 막혀 현 시드에선 발화하지 않는다 — **#11 해소 후 이 항목의 검증 대상에 포함할 것**(수동 호출: `select notify_weekly_rank_badges();`, 단 KST 08~22 안에서만 동작한다). 절차·트리아지 표는 `_workspace/20260828_174224_ui_notifications.md` §5. 레벨 단독 알림(§5 항목 6, C-3 크래시하던 경로)은 러닝으로 발화 안 함 — 테스트 계정에 XP 경로를 별도로 태워야 함 | ① 지금 가능(테스트 계정 uid 확보 시) / ② FCM 운영 설정 후 |
 | ~~24~~ | ~~알림 문구의 `display_name`이 공개 범위(AC-05)를 우회한다~~ → **비쟁점화(2026-08-31, v1.7)**. AC-05(비공개)를 삭제해 모든 프로필이 공개이므로 알림에 이름을 그대로 써도 우회할 설정이 없다. 이름이 비면 `"순위가 128위 → 131위로 내려갔어요"` / `"2위가 …"` 폴백은 그대로 유지 | — |
 | ~~13~~ | ~~`season_first_long_distance` 의 거리 허용오차가 PB 조건과 다르다~~ → **해소(2026-08-26, 마이그레이션 42)**. `목표 − min(목표×2%, 300m)` 으로 통일(§10.2 표) — 같은 "목표 거리 완주" 판정이므로 별도 기준을 둘 이유가 없다 | — |
 | ~~15~~ | ~~`session_distance_gte` 5종은 허용오차 없이 정확히 `≥ 목표×1000m`~~ → **해소(2026-08-26, 마이그레이션 42)**. 동일 허용오차 `목표 − min(목표×2%, 300m)`로 통일(완화 방향이라 소급 회수 없음, `evaluate_badges` 재실행으로 미지급분 채움) | — |
@@ -1602,4 +1734,7 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 27 | **서버가 샘플로 거리를 재계산하지 않는다.** §7 표와 PRD §8.4는 "구간 속도 25km/h 초과 구간 제거 후 재계산"을 규정하지만 `validate_run`은 클라이언트가 올린 집계값에 플래그만 세운다(§7 ⚠️ 참조). 지금은 클라이언트 1차 필터(§8.3, 같은 25km/h)가 그 역할을 대신하고 있어 방향은 안전하지만, **"클라이언트 계산 값을 신뢰하지 않는다"는 PRD §8.4 원칙이 아직 코드로 성립하지 않는다** — 앱을 개조한 클라이언트가 임의 거리를 올리면 평균 7.0 m/s 미만인 한 통과한다. 웨어러블 임포트(경로 있는 외부 기록)가 붙으면 검증 표면이 더 넓어진다 | 🔴 베타 오픈 전, backend-engineer |
 | 28 | **TR-04 잔여 격차 — 거리필터가 만드는 지연.** A-6 C-3/C-4로 폴링(절전 10→5초)과 스무딩 지연(마커를 원시 fix로 분리)은 해소했으나, `distanceFilter`(표준 3m / 절전 8m)는 **이동량이 적을 때 콜백 자체를 억제**한다 — 아주 느린 걷기·제자리 대기에서는 마커 갱신이 5초를 넘을 수 있다. 같은 이유로 절전 모드에서는 정지 판정용 fix가 안 들어와 **자동 일시정지(TR-03) 진입이 늦거나 안 될 수 있다.** 거리필터를 0으로 내리면 배터리 목표(§11)와 충돌하므로, 실기기에서 두 수치를 함께 재고 결정한다 | Phase 1 실기기 검증(§3.3·§3.4)에서 실측 후 |
 | 29 | **중복 업로드 경합 (A-5로 증폭, 회귀 아님).** `local_run_repository.dart`의 `_schedulePush` fire-and-forget 체인과 `RunSyncCoordinator`의 `syncPending()`은 별개 실행 경로다 — 러닝 종료 직후 백그라운드 업로드가 도는 중 코디네이터 신호(특히 연결 회복)가 발화하면 같은 행을 두 번 올린다. `id`=클라이언트 UUID upsert라 **데이터 손상은 없고** A-5 이전에도 있던 경합이지만, `_uploads` 체인이 생기며 연속 저장 시 증폭 여지가 늘었다. 재시도 상한 부재(L-2)와 같은 뿌리 — 업로드 인플라이트 가드 하나로 함께 처리 | P1, backend-engineer |
+| ~~30~~ | ~~시즌 말 "걸친 주"의 RK-06 뱃지가 영영 지급되지 않는다~~ → **해소(2026-09-01, 마이그레이션 61 — 사용자 승인)**. PRD §8.5 의 미구현 스펙("시즌 종료일이 주 중간이면 해당 주간 랭킹은 단축 운영")을 구현하면서 근본 원인을 닫았다. ① `leaderboard_period_bounds('weekly')` 가 달력 주를 **앵커가 속한 시즌으로 클램프**해 조각 2개로 나눈다(스키마 변경 없음 — `period_start` 가 달라 `leaderboard_entries` 가 자동으로 별개 기간으로 다룬다). ② `week_id_at()` 이 걸친 주에만 `@{season}` 을 붙여 dedupe 키 충돌을 막는다(걸치지 않는 주는 출력 불변 → 기존 이력과 호환). ③ **판정 시즌을 `season_id_at(now())` 가 아니라 `runnit.badge_season` GUC(= `badges.season_id`)로** 바꿨다 — 이것이 C-2 의 진짜 원인이고, 동시에 "미획득으로 남은 과거 시즌 인스턴스가 현재 시즌 데이터로 재판정되는" 더 넓은 잠재 결함(Q4 성적으로 Q3 뱃지 발급)도 함께 닫힌다. ④ 확정 배치가 "직전 1개"가 아니라 **끝났는데 미확정인 모든 주간 기간(14일 되짚기)** 을 확정하고, `reset_stale_seasons` 가 리셋 루프 **전에** 확정 배치를 불러 구시즌 조각을 시즌 마감과 같은 순간에 확정한다. 스모크(2026-Q3 종료, 09-30 수요일): Q3 조각 `2026-W40@2026-Q3`(09-28~10-01, 3일) / Q4 조각 `2026-W40@2026-Q4`(10-01~10-05, 4일) 분리·확정 확인, 판정식이 Q3=true·Q4=false 로 갈리는 것과 `srank_bronze_top1@2026-Q3` 실지급까지 확인 | — |
+| 31 | **무효 시즌 사용자를 스냅샷에서 숨기면 그 티어의 `rank`·`participant_count`에 구멍이 남는다**(2026-09-01, QA C-1 부수 논점). 마이그레이션 59가 RLS 반전은 고쳤지만, 차단 방식이 "행을 감춘다"라서 3위가 무효면 나머지에게는 1·2·4위로 보이고 `participant_count`는 무효 사용자를 계속 센다. 진짜 무효 처리라면 스냅샷 **재산정** 또는 `is_voided` 반영 후 **재랭크**가 필요하다. 소비 UI가 아직 없어 실피해는 없다 | RK-10 UI 라운드, gamification-designer와 확정 |
+| ~~32~~ | ~~`_season_history_voided()` 가 `authenticated` 에게 RPC 로 노출된다~~ → **해소(2026-09-01, 마이그레이션 60 — 옵션 B, 사용자 승인)**. 헬퍼를 없애는 대신 **교차 테이블 참조 자체를 제거**했다: `season_leaderboard_snapshots.is_voided` 컬럼을 신설해 적재 시점에 `season_histories.is_voided` 를 복사하고, SELECT 정책을 `season_histories_select_visible` 와 **같은 형태의 순수 컬럼 술어**(`is_voided = false or user_id = auth.uid()`)로 되돌린 뒤 헬퍼를 DROP 했다. 정책 평가에 함수가 필요 없어져 RPC 노출이 사라지고 advisor 가 기존 6건으로 원복됐다. 두 테이블의 정책이 같은 모양이 되면서 59가 지적한 "형태가 달라 생긴 반전" 함정 자체도 없어졌다. **대가**: 복제본이 원본과 갈라질 수 있다 — `is_voided` 를 세우는 코드 경로가 없어(순수 수동 SQL) 잊히기 쉬우므로 `set_season_history_voided(user_id, season_id, voided)` 를 **단일 진입점**으로 신설해 두 테이블을 한 트랜잭션에서 갱신한다 | — |
 | 22 | **`share_card_renderer.dart` 주석의 뱃지 SVG 종수가 158종으로 적혀 있으나 정본(`docs/badge-catalog.csv`)은 현재 146개다.** 판정 로직에 쓰이는 숫자는 아니고 서술뿐이지만, 카탈로그 삭제(마이그레이션 35/37)가 반영 안 된 흔적이다 | 문서 정리, 낮은 우선순위 |
