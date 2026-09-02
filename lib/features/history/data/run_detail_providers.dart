@@ -5,6 +5,7 @@ import '../../../core/providers/repository_providers.dart';
 import '../../../models/models.dart';
 import '../../tracking/domain/polyline_codec.dart';
 import '../domain/lap_splits.dart';
+import 'history_providers.dart';
 
 /// 러닝 상세 화면(HI-02)이 쓰는 단건 조회. **샘플을 포함**해 가져온다
 /// (목록 스트림 `myRunsProvider`는 payload 절감을 위해 샘플이 비어 있다).
@@ -15,6 +16,30 @@ final runDetailProvider =
     FutureProvider.autoDispose.family<RunRecord?, String>((ref, runId) async {
   final repo = ref.watch(runRepositoryProvider);
   return repo.findById(runId, includeSamples: true);
+});
+
+/// 그 러닝의 **최신 동기화 상태**. 없으면 null(= 목록 스트림이 모르는 기록).
+///
+/// [runDetailProvider]는 단발 `FutureProvider`라, 상세를 열어 둔 채 업로드가
+/// 끝나면 "동기화 대기" 배너가 재진입 전까지 남는다. 새 조회를 짜는 대신
+/// `myRunsProvider`(drift `watch()` 기반, 업로드 완료 시 자동 재발행)에서 해당
+/// id의 `syncStatus`만 골라낸다 — 트래킹 요약 화면의 [storedRunProvider]와 같은
+/// 방식이고, 목록 칩이 즉시 사라지는 것도 같은 스트림 덕분이다.
+///
+/// null이 되는 경우는 두 가지다: ① 목록 상한(200건) 밖의 오래된 기록,
+/// ② 다른 기기에서 기록해 로컬 행이 없는 러닝. 둘 다 **호출부가
+/// `record.syncStatus`로 폴백**한다 — 모르면 조회 시점의 값을 그대로 쓴다.
+///
+/// ⚠️ 여기서 꺼내 쓸 값은 `syncStatus`뿐이다. 목록 스트림의 레코드는 payload
+/// 절감을 위해 `samples`가 비어 있어 경로·랩 용도로 쓸 수 없다.
+final runSyncStatusProvider =
+    Provider.autoDispose.family<SyncStatus?, String>((ref, runId) {
+  final runs = ref.watch(myRunsProvider).valueOrNull;
+  if (runs == null) return null;
+  for (final run in runs) {
+    if (run.id == runId) return run.syncStatus;
+  }
+  return null;
 });
 
 /// 상세 화면의 1km 랩 분할. 조회 결과에서 파생한다.

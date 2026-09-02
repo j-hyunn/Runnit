@@ -12,6 +12,7 @@ import '../data/gpx_export_service.dart';
 import '../data/run_detail_providers.dart';
 import '../domain/gpx_encoder.dart';
 import '../domain/lap_splits.dart';
+import 'sync_pending.dart';
 import 'widgets/history_header.dart';
 import 'widgets/lap_table.dart';
 import 'widgets/pace_chart.dart';
@@ -272,6 +273,10 @@ class _DetailBody extends ConsumerWidget {
     final splits = ref.watch(runLapSplitsProvider(runId));
     final route = ref.watch(runRoutePointsProvider(runId));
     final hasRoute = route.length >= 2;
+    // 상세 조회는 단발이라 열어 둔 채 업로드가 끝나도 스냅샷이 갱신되지 않는다.
+    // 목록 스트림이 아는 기록이면 그쪽의 실시간 값을 쓰고, 모르면(오래된 기록·
+    // 다른 기기 기록) 조회 시점 값으로 폴백한다.
+    final syncStatus = ref.watch(runSyncStatusProvider(runId));
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -308,9 +313,17 @@ class _DetailBody extends ConsumerWidget {
             ),
           ),
         ],
+        // 플래그가 우선이다 — 두 배너를 함께 띄우지 않는다. 검토 대상 기록은
+        // 업로드가 끝났다는 뜻이므로 애초에 동시에 성립하기 어렵고, 겹칠 경우
+        // 사용자가 먼저 알아야 할 쪽은 "반영되지 않았다"는 확정 사실이다.
         if (record.isFlagged == true) ...[
           const SizedBox(height: AppTokens.s12),
           const _FlaggedBanner(),
+        ] else if (isSyncPending(record, syncStatus: syncStatus)) ...[
+          const SizedBox(height: AppTokens.s12),
+          _SyncPendingBanner(
+            failed: (syncStatus ?? record.syncStatus) == SyncStatus.failed,
+          ),
         ],
         const SizedBox(height: AppTokens.s16),
         SizedBox(
@@ -535,6 +548,71 @@ class _FlaggedBanner extends StatelessWidget {
             child: Text(
               '이 기록은 검토 대상으로 표시되어 티어·랭킹에 반영되지 않았어요.',
               style: TextStyle(fontSize: 13, color: Color(0xFF8A5A00)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// ARCHITECTURE §9.1 — 아직 업로드되지 않은 완료 러닝 안내.
+///
+/// 이 배너가 막으려는 것은 "시즌 마지막 날 오프라인 러닝을 다음 시즌에
+/// 업로드했더니 승급이 인정되지 않더라"는 **사후 발견**이다. 서버는 지각
+/// 도착 기록을 마감된 과거 구간에 소급 반영하지 않으므로(정책), 사용자가
+/// 손을 쓸 수 있는 시점은 업로드 전뿐이다.
+///
+/// 톤은 경고가 아니라 안내다 — 기록·거리·뱃지·XP는 전혀 손실되지 않고,
+/// 사용자가 할 일도 "네트워크에 연결한다"뿐이다. [_FlaggedBanner]와 같은
+/// 앰버 info 박스를 쓰되(같은 성격의 "반영 안 됨" 알림) 겹쳐 띄우지 않는다.
+class _SyncPendingBanner extends StatelessWidget {
+  const _SyncPendingBanner({required this.failed});
+
+  /// `SyncStatus.failed` — 이미 한 번 이상 업로드를 시도했다가 실패했다.
+  /// 재시도는 코디네이터가 알아서 돌리므로(§9의 4신호) 사용자가 할 일은
+  /// `local`/`pending`일 때와 같다. 문구만 사실에 맞춘다.
+  final bool failed;
+
+  static const Color _amberInk = Color(0xFF8A5A00);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppTokens.s12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E5),
+        borderRadius: BorderRadius.circular(AppTokens.rMd),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, size: 18, color: _amberInk),
+          const SizedBox(width: AppTokens.s8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '동기화 대기 중',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: _amberInk,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  failed
+                      ? '업로드에 실패해 다시 시도하고 있어요. 네트워크에 연결되면 '
+                          '자동으로 올라가요. 그 전까지는 이번 시즌 티어와 주간 '
+                          '랭킹에 반영되지 않아요.'
+                      : '이 기록은 아직 서버에 올라가지 않았어요. 네트워크에 '
+                          '연결되면 자동으로 업로드돼요. 그 전까지는 이번 시즌 '
+                          '티어와 주간 랭킹에 반영되지 않아요.',
+                  style: const TextStyle(fontSize: 13, color: _amberInk),
+                ),
+              ],
             ),
           ),
         ],
