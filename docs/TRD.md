@@ -11,6 +11,7 @@
 **변경 이력**
 | 버전 | 변경 내용 |
 |------|----------|
+| v0.23 | **주간 보드 rank 중복 수정**(2026-09-02, 마이그레이션 62, 사용자 승인·원격 적용 완료 `xwtbwexcofcgmbvktwdo`). QA `_workspace/20260901_qa_short-week-optionb.md` **C-1 해소** — `leaderboard_entries`가 지난 기간 행을 누적 보존하고(ARCHITECTURE §5.3) 단축 주간(61)이 같은 달력 주를 `period_start` 다른 두 조각으로 나누는데, 클라이언트 `_scoped()`가 `period_start`를 안 걸어 여러 기간 행이 섞여 rank=1이 중복 반환됐다(라이브 bronze 주간 보드 재현). 뷰 `leaderboard_entries_active`(`period_start = leaderboard_period_bounds(period, now())`, `security_invoker=true`) 신설, 클라이언트 조회를 이 뷰로 전환(Realtime 구독만 베이스 테이블 유지). `fetchMyEntry`의 `.maybeSingle()`이 다주차 행 존재 시 던지던 예외도 함께 닫힘. §4.3.1 신설, §6 표·§4.1 갱신 |
 | v0.1 | 최초 작성. `docs/ARCHITECTURE.md`의 구조 결정을 구현 가능한 스펙(데이터 모델 코드, DDL, API, 검증 규칙)으로 세분화 |
 | v0.2 | 뱃지 카탈로그 확장(30종 → 158개 템플릿) 설계 반영. `Badge`에 `category`(16종)·`scope`(permanent/seasonal)·`description`·`seasonId` 필드 추가, `tierLabel`→`badgeGrade`로 개명(시즌 티어 시스템과 명칭 혼동 방지). 카탈로그 원본은 `docs/badge-catalog.csv` |
 | v0.3 | 뱃지 판정 실제 구현 완료(§10.1) — `runs` 트리거 기반 `evaluate_badges`/`evaluate_badge_condition`, `condition_type` 44→40종 중 사실상 전량 판정 가능. 시즌 뱃지 인스턴스 발급을 실제로 구현(`{templateId}@{seasonId}`, `ensure_season_badge_instances()`, §3.6 상단 정정 노트). 티어 도달 시각 이력 테이블 `tier_change_history` 신규 추가. 2026-08-26 사용자 요청으로 `seasonCumulativeDistance`/`seasonFinisher` 카테고리와 소속 뱃지 9종 삭제(158→148 템플릿, 16→14 카테고리, `condition_type` 44→40종) |
@@ -954,6 +955,36 @@ create table public.lunar_holidays (
 공동 순위를 만들지 않는다. `duration`/`run_count` 지표는 §8.2의 적용 대상이 아니므로 기존 `tie_break_value` 순서를 유지한다.
 `reached_at` = 그 기간의 마지막 집계 대상 러닝의 `started_at`(= 누적 거리가 최종값에 도달하는 시점).
 
+#### 4.3.1 클라이언트 조회 뷰 `leaderboard_entries_active` (마이그레이션 62, 2026-09-02)
+
+`leaderboard_entries`는 지난 기간 행을 **삭제 없이 누적 보존**하고(ARCHITECTURE §5.3),
+마이그레이션 61의 시즌 말 단축 주간은 같은 달력 주를 `period_start`가 다른 두 조각으로
+나눈다. 그래서 `(period, metric, scope, tier)`만 필터하는 클라이언트 조회는 여러 기간
+행을 섞어 받아 **`rank`가 중복**된다(예: 주간 보드 rank=1 두 행). 클라이언트가 KST·시즌
+클램프 규칙을 재구현하면 서버 `leaderboard_period_bounds`와 어긋날 위험이 크므로, 서버가
+활성 기간을 정하는 뷰를 둔다:
+
+```sql
+create or replace view public.leaderboard_entries_active
+with (security_invoker = true) as
+select le.*
+from public.leaderboard_entries le
+where le.period_start = (
+  select b.period_start from public.leaderboard_period_bounds(le.period, now()) b
+);
+grant select on public.leaderboard_entries_active to anon, authenticated;
+```
+
+- **클라이언트 계약**: `ranking/data/supabase_ranking_repository.dart`의 `fetchLeaderboard`·
+  `fetchMyEntry`는 이 뷰를 읽는다(`_viewTable`). 뷰가 활성 기간당 사용자 1행을 보장하므로
+  `fetchMyEntry`의 `.maybeSingle()`이 안전하다.
+- **Realtime**: 뷰는 `supabase_realtime` publication에 없다 → `watchLeaderboard`는 베이스
+  테이블 `leaderboard_entries`를 계속 구독하고 재조회만 뷰로 한다.
+- **RLS**: `security_invoker = true`로 베이스 테이블 RLS(마이그레이션 17: `authenticated` 전
+  스코프, `anon` `scope='global'`만) 승계.
+- `finalized_at`은 뷰 필터에 넣지 않는다 — 진행 중인 주도 화면에 보여야 하고, 확정 도장은
+  뱃지 판정용이다(마이그레이션 57).
+
 ### 4.1 camelCase ↔ snake_case 매핑
 
 | Dart 필드 | Postgres 컬럼 | 타입 | 비고 |
@@ -1102,7 +1133,7 @@ create table public.lunar_holidays (
 > | 초안 (§6.1~6.4) | 실제 구현 |
 > |---|---|
 > | `POST /functions/v1/upload-run-record` | 클라이언트가 `supabase_flutter`로 **`runs` 테이블에 직접 upsert**(id = 클라이언트 UUID, 멱등). `runs_guard` BEFORE 트리거가 원시 `samples`로 거리/페이스 재계산·플래그·`awarded_points` 확정, AFTER 트리거(`runs_01_recompute_stats`/`_02_challenge_progress`/`_03_evaluate_badges`)가 통계·XP·티어·뱃지 갱신. 서버 확정값은 upsert 응답(`.select(...).single()`)으로 동기 반환 |
-> | `GET /functions/v1/weekly-ranking` | PostgREST 자동 API로 `leaderboard_entries` 직접 select (`ranking/data/supabase_ranking_repository.dart`) |
+> | `GET /functions/v1/weekly-ranking` | PostgREST 자동 API로 **뷰 `leaderboard_entries_active` 직접 select** (`ranking/data/supabase_ranking_repository.dart`). 조회는 뷰, Realtime 구독만 베이스 테이블 — §4.3.1 |
 > | 배치 함수 (`pg_cron`) | `refresh_all_leaderboards()` — 5분 주기(마이그레이션 15/16). `transition_challenge_statuses()` — 10분 주기 |
 > | `season-rollover` 배치 | 시즌은 계산 함수라 롤오버 배치 불필요. 마감 스냅샷은 `sync_my_season`/`reset_stale_seasons` + `season_histories`. **D-14/D-3 알림(NT-03)은 아직 없음 — Phase 2** |
 >

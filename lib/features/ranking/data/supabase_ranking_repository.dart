@@ -21,7 +21,16 @@ class SupabaseRankingRepository implements RankingRepository {
 
   final SupabaseClient _client;
 
-  static const _table = 'leaderboard_entries';
+  /// 조회(select)는 이 뷰만 읽는다 — `leaderboard_period_bounds(period, now())`가
+  /// 정한 **현재 활성 기간** 행만 노출한다(마이그레이션 62). `leaderboard_entries`는
+  /// 지난 기간 행을 삭제 없이 누적 보존하고(ARCHITECTURE §5.3), 시즌 말 단축 주간은
+  /// 같은 달력 주를 `period_start`가 다른 두 조각으로 나누므로(마이그레이션 61),
+  /// 베이스 테이블을 그대로 읽으면 여러 기간 행이 섞여 rank가 중복된다.
+  static const _viewTable = 'leaderboard_entries_active';
+
+  /// Realtime 구독 대상 — 뷰는 publication에 없으므로 베이스 테이블을 구독하고
+  /// 재조회만 뷰(`_viewTable`)로 한다.
+  static const _baseTable = 'leaderboard_entries';
 
   @override
   Future<List<RankingEntry>> fetchLeaderboard({
@@ -52,6 +61,9 @@ class SupabaseRankingRepository implements RankingRepository {
   }) {
     return guardSupabase(() async {
       // 기간 내 기록이 없으면 캐시에 행 자체가 없다 → null이 정상.
+      // `_viewTable`이 현재 활성 기간 행만 반환하므로 (period, metric, scope, tier,
+      // user_id)당 최대 1행 — `.maybeSingle()`이 안전하다. (베이스 테이블을 직접
+      // 읽으면 한 사용자가 여러 주차 행을 가져 다중 행 예외가 났다.)
       final row = await _scoped(period, metric, scope, tier, crewId)
           .eq('user_id', userId)
           .maybeSingle();
@@ -72,7 +84,7 @@ class SupabaseRankingRepository implements RankingRepository {
     // "폴링 제거"이지 "즉시성"이 아니다 — UI는 `computed_at` 기준 시각을 함께 노출한다.
     return watchTableAndRefetch<List<RankingEntry>>(
       client: _client,
-      table: _table,
+      table: _baseTable,
       topicSuffix:
           '${scope.wire}-${period.wire}-${metric.wire}-${tier?.wire ?? 'all'}',
       // Realtime 필터는 단일 컬럼만 지원한다. 스코프로 1차만 좁히고,
@@ -95,8 +107,9 @@ class SupabaseRankingRepository implements RankingRepository {
 
   /// period/metric/scope/tier(+crew_id) 공통 필터.
   ///
-  /// `period_start`는 조건에 넣지 않는다 — 배치가 매 주기 이전 기간 행을 정리하므로
-  /// (period, metric, scope, tier) 조합당 현재 기간 행만 남는다.
+  /// `period_start`는 조건에 넣지 않는다 — `_viewTable`(마이그레이션 62)이 이미
+  /// `leaderboard_period_bounds(period, now())` 기준 현재 활성 기간 행만 반환하므로,
+  /// 클라이언트는 KST·시즌 클램프 규칙을 복제할 필요가 없다.
   ///
   /// `tier`는 `scope`와 직교하는 nullable 컬럼(마이그레이션 23) — `tier IS NULL`
   /// 행이 "전체(티어 무관)" 리더보드다. `.eq('tier', null)`은 PostgREST에서
@@ -110,7 +123,7 @@ class SupabaseRankingRepository implements RankingRepository {
   ) {
     // ⚠️ `select()`에 컬럼 별칭(`as`)을 쓰지 않는다 — RankingEntry.fromJson이 깨진다.
     var query = _client
-        .from(_table)
+        .from(_viewTable)
         .select()
         .eq('period', period.wire)
         .eq('metric', metric.wire)
