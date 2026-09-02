@@ -5,6 +5,7 @@ import '../../../../core/theme/app_tokens.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../models/models.dart';
 import '../../../tracking/presentation/tracking_format.dart';
+import '../sync_pending.dart';
 
 /// Figma 노드 `85:1266`("List 1") — 활동 탭 "최근 기록"/전체 기록 목록이
 /// 공유하는 행. 왼쪽 활동유형+날짜, 가운데 거리/페이스/시간 3항목(초록
@@ -52,6 +53,12 @@ class RunHistoryTile extends StatelessWidget {
                     _dateLabel(record.startedAt),
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400, color: Color(0xFF616161)),
                   ),
+                  // 날짜 옆이 아니라 아래에 둔다 — 왼쪽 열은 3개 통계와 chevron이
+                  // 남긴 공간이라 320pt 폰에서 날짜와 칩을 한 줄에 넣으면 넘친다.
+                  if (isSyncPending(record)) ...[
+                    const SizedBox(height: AppTokens.s4),
+                    const _SyncPendingChip(),
+                  ],
                 ],
               ),
             ),
@@ -69,6 +76,30 @@ class RunHistoryTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 아직 업로드되지 않은 완료 러닝 표식 (ARCHITECTURE §9.1).
+///
+/// 목록에서는 "왜 반영되지 않는지"까지 설명하지 않는다 — 행 하나에 들어갈
+/// 분량이 아니다. 여기서는 존재만 알리고, 상세 화면의 `_SyncPendingBanner`가
+/// 티어·주간 랭킹 미반영을 설명한다. 색은 상세 배너와 같은 앰버 계열.
+class _SyncPendingChip extends StatelessWidget {
+  const _SyncPendingChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppTokens.s8, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E5),
+        borderRadius: BorderRadius.circular(AppTokens.rPill),
+      ),
+      child: const Text(
+        '동기화 대기',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF8A5A00)),
       ),
     );
   }

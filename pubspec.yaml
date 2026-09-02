@@ -119,6 +119,10 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+  # 원격 조회 경로(`LocalRunRepository`의 PostgREST 왕복)를 실제 HTTP 없이
+  # 재현하기 위한 `MockClient`용. supabase가 이미 전이 의존으로 끌고 있다.
+  http: ^1.2.0
+
   build_runner: ^2.15.1
   freezed: ^3.2.3
   json_serializable: ^6.11.2

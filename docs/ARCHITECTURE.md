@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.16 |
+| 문서 버전 | v0.19 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** Phase 0 산출물로 출발했으나 현재는 실제 코드(`lib/`, `supabase/migrations/`)를 따라간다. 구현이 발전하면 이 문서를 갱신한다(CLAUDE.md 규칙 3) |
@@ -13,6 +13,7 @@
 | 버전 | 변경 내용 |
 |------|----------|
 | v0.1 | 최초 작성. `claude/phase-0-start` 브랜치에서 구성된 하네스(에이전트 6개·스킬 7개)에 이미 반영되어 있던 아키텍처 결정을 PRD v1.3 기준으로 정리·문서화. PRD §11의 Phase 0 산출물(아키텍처·데이터 모델·Supabase 스키마 확정)에 해당 |
+| v0.19 | **§9.1 "동기화 필요" 사용자 안내 구현**(2026-09-02, 사용자 확정 — 옵션1). §9.1이 P2 UX 과제로 남겨 뒀던 항목을 닫았다. 서버의 소급 미반영 정책은 **그대로**이고, 바뀐 것은 그 사실이 언제 사용자에게 보이느냐뿐이다 — 미업로드 완료 러닝에 상세 화면 앰버 배너(`_SyncPendingBanner`, 플래그 배너와 배타)와 목록 행 소형 pill을 붙인다. 판정은 `isSyncPending()` 단일 술어(`features/history/presentation/sync_pending.dart`). 부수 수정: `LocalRunRepository._fromRemote`가 서버 응답을 `syncStatus: synced`로 확정하지 않아 **원격에서 읽어온 기록이 "동기화 대기"로 보이는** 오탐이 있었다(모델 기본값 `local` + 서버에 없는 컬럼) — 회귀 가드 `test/tracking/find_by_id_remote_sync_status_test.dart`. PRD v1.9 §10.1 #13과 짝 |
 | v0.18 | **R-12 회귀 가드 + 마이그레이션 번호 정리**(2026-09-02, 마이그레이션 63 + 62b 파일화). (1) 마이그레이션 57·61이 `evaluate_badge_condition`(24KB 디스패처)을 문자열 앵커 치환으로 패치했다(57-5 `finalized_at` 필터, 61-3 `runnit.badge_season` GUC) — 이후 전문 재정의가 두 조각을 빠뜨리면 조용히 사라져 TRD #23·#30이 부활한다. 63은 라이브 함수 정의를 덤프해 두 문자열의 존재를 검사하고 없으면 실패하는 `DO` 블록, **이후 마이그레이션에서도 유지**(스키마 변경 없음). 원래 62로 작성·적용됐으나 병렬 세션의 `leaderboard_entries_active` 뷰가 62를 선점해 파일을 63으로 재번호(원격 `schema_migrations` 이력은 유지). (2) C-1 세션이 원격에만 적용한 `62b_grant_season_calc_functions_for_active_view`(뷰의 `security_invoker` 경로가 부르는 season 계산 함수 4종 `anon`/`authenticated` grant)를 사후 파일화 — `db reset`/브랜치 DB 정합. (3) 본문 `마이그레이션 00~42` stale 표기를 `00~63`으로. §13 범위 00~62 → 00~63. 상세 TRD §14 #33 |
 | v0.17 | **주간 보드 rank 중복 수정**(2026-09-02, 마이그레이션 62, 사용자 승인·원격 적용 완료). 클라이언트가 `leaderboard_entries`를 직접 조회하면 누적 보존된 지난 기간 행(§5.3)과 단축 주간(61)의 반대편 조각이 섞여 `rank`가 중복됐다(라이브 bronze 주간 보드 재현). §5.3에 뷰 `leaderboard_entries_active`(`period_start = leaderboard_period_bounds(period, now())`, `security_invoker=true`) 서술 추가 — 클라이언트 조회는 이 뷰만, Realtime 구독은 베이스 테이블 유지. §13 마이그레이션 범위 00~61 → 00~62. 상세 TRD §4.3.1 |
 | v0.16 | **QA 후속 2건 구현**(2026-09-01, 마이그레이션 60·61, 사용자 승인·원격 적용 완료). (1) **마이그레이션 60** — 59가 남긴 SECURITY DEFINER 헬퍼의 RPC 노출(advisor 신규 WARN)을 없앴다. `season_leaderboard_snapshots.is_voided` 를 비정규화해 정책을 `season_histories`와 **같은 순수 컬럼 술어**로 되돌리고 헬퍼를 DROP. 두 테이블의 정책 형태가 같아지면서 §5.5가 경고하던 "형태 차이로 생긴 반전" 함정 자체가 사라졌다. 복제본 정합은 `set_season_history_voided()` 단일 진입점이 담당. advisor 기존 6건으로 원복. (2) **마이그레이션 61 — PRD §8.5 "시즌 말 단축 주간" 구현**(미구현 스펙의 구현이므로 PRD 변경 아님). §5.3에 서술 추가: 주간 기간을 시즌으로 클램프해 조각 2개로 분리(스키마 변경 없음), `week_id_at()`의 `@{season}` 접미사, 확정 배치의 14일 되짚기 + 시즌 롤오버 선확정, **뱃지 판정 시즌을 `runnit.badge_season` GUC(= `badges.season_id`)로** 전환. QA C-2(걸친 주 RK-06 영구 미지급)와 과거 시즌 인스턴스 오판정을 함께 닫는다. §13 마이그레이션 범위 00~58 → 00~61 |
@@ -601,7 +602,18 @@ flowchart LR
 
 **따라서 이것은 버그가 아니라 정책이다.** 기록·거리·뱃지·XP 자체는 손실되지 않는다(러닝은 `runs`에 그대로 남고 개인 통계·누적 거리에 반영된다). 잃는 것은 **그 기록이 속했던 과거 구간의 티어 누적·주간 순위 반영**뿐이다. 서버에 소급 반영 로직을 만들지 않는다.
 
-> 부작용: 시즌 마지막 날 오프라인 러닝으로 승급 조건을 채운 사용자가 다음 시즌에 업로드하면 승급이 인정되지 않는다. 사용자 안내(업로드 전 "동기화 필요" 배지)는 P2 UX 과제로 남긴다.
+> 부작용: 시즌 마지막 날 오프라인 러닝으로 승급 조건을 채운 사용자가 다음 시즌에 업로드하면 승급이 인정되지 않는다.
+
+**사용자 안내는 구현 완료**(2026-09-02, v0.19). 서버 정책은 그대로 두고 **업로드 전에** 사실을 알린다 — 사후에 "승급이 왜 안 됐지"로 발견하는 대신 아직 손을 쓸 수 있는 시점에 보이게 하는 것이 목적이다. 대상 판정은 `isSyncPending(record)`(`lib/features/history/presentation/sync_pending.dart`) 하나 — `status == completed && syncStatus != synced`.
+
+| 화면 | 표시 | 파일 |
+|---|---|---|
+| 러닝 상세 | 제목 아래·지도 위 앰버 배너 `_SyncPendingBanner` — "동기화 대기 중 / 네트워크에 연결되면 자동 업로드, 그 전까지 이번 시즌 티어·주간 랭킹 미반영"(`failed`면 재시도 중임을 덧붙임). `is_flagged` 배너와 **동시 표출하지 않는다**(플래그 우선) | `run_detail_page.dart` |
+| 기록 목록 행 | 날짜 아래 소형 앰버 pill "동기화 대기" — 존재만 알리고 이유는 상세에 맡긴다 | `widgets/run_tile.dart` |
+
+두 화면 모두 **업로드가 끝나는 즉시** 표시가 사라진다. 목록은 drift `watch()`(`myRunsProvider`)라 자동이고, 상세는 단발 `FutureProvider`라 스냅샷이 굳으므로 `runSyncStatusProvider(runId)`가 같은 목록 스트림에서 그 id의 `syncStatus`만 골라 먹인다 — 요약 화면 `storedRunProvider`와 같은 방식이다. 목록 상한(200건) 밖이거나 로컬 행이 없는 기록이면 null이고, 그때는 조회 시점 값으로 폴백한다.
+
+⚠️ 이 표시는 `RunRecord.syncStatus`를 읽는데, 그 필드는 **기기 로컬 컬럼이라 서버 응답에 없고 모델 기본값이 `local`**이다. 원격 조회 경로(`LocalRunRepository._fromRemote`)가 `synced`로 확정하지 않으면 방금 서버에서 읽어온 기록이 "동기화 대기"로 보인다 — 같은 라운드에서 수정했다. 새 원격 파싱 경로를 추가할 때 같은 함정이 반복된다.
 
 ---
 

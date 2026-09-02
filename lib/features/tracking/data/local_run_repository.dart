@@ -420,8 +420,10 @@ class LocalRunRepository implements RunRepository {
       // ⚠️ samples 없이 가져온 결과는 로컬에 캐시하지 않는다. 캐시하면 이후
       // findById(includeSamples: true) 조회가 이 빈 행에 막혀 상세/공유 카드가
       // 조용히 깨진다(QA I-2). samples를 실제로 받아온 경우에만 캐시한다.
+      //
+      // `syncStatus`는 여기서 다시 세우지 않는다 — [_fromRemote]가 단일 진원지다.
       if (includeSamples) {
-        await _writeLocal(record.copyWith(syncStatus: SyncStatus.synced));
+        await _writeLocal(record);
       }
       return record;
     });
@@ -500,6 +502,10 @@ class LocalRunRepository implements RunRepository {
       // PostgREST가 jsonb를 문자열로 돌려주는 드문 경우 방어.
       json['samples'] = jsonDecode(json['samples'] as String);
     }
-    return RunRecord.fromJson(json);
+    // `sync_status`는 기기 로컬 컬럼이라 서버 응답에 없고, 모델 기본값은
+    // `local`이다 — 그대로 두면 **방금 서버에서 읽어온 기록**이 "동기화 대기"로
+    // 보인다(상세 화면 배너·목록 칩이 이 값을 읽는다). 원격에 행이 있다는 것이
+    // 곧 업로드 완료이므로 여기서 확정한다.
+    return RunRecord.fromJson(json).copyWith(syncStatus: SyncStatus.synced);
   }
 }

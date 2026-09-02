@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:runnit/core/auth/auth_providers.dart';
 import 'package:runnit/core/map/map_surface.dart';
 import 'package:runnit/core/providers/repository_providers.dart';
 import 'package:runnit/core/repositories/run_repository.dart';
@@ -39,6 +40,10 @@ void main() {
     double distanceMeters = 3000,
     bool? isFlagged,
     String? note,
+    // 모델 기본값은 `local`이지만 여기서는 "이미 올라간 기록"을 표준으로 둔다 —
+    // 그러지 않으면 모든 케이스에 동기화 배너가 따라붙어 검증 대상이 흐려진다.
+    SyncStatus syncStatus = SyncStatus.synced,
+    RunStatus status = RunStatus.completed,
   }) =>
       RunRecord(
         id: runId,
@@ -46,7 +51,8 @@ void main() {
         startedAt: t0,
         endedAt: t0.add(const Duration(seconds: 900)),
         activityType: activityType,
-        status: RunStatus.completed,
+        status: status,
+        syncStatus: syncStatus,
         distanceMeters: distanceMeters,
         elapsedSeconds: 900,
         movingSeconds: 900,
@@ -66,6 +72,9 @@ void main() {
     _FakeRunRepository repository, {
     Size size = const Size(420, 1400),
     GpxExportService? gpxService,
+    // 넘기면 `myRunsProvider`가 살아난다 — 상세 화면이 목록 스트림에서 최신
+    // `syncStatus`를 골라 오는 경로(`runSyncStatusProvider`)를 켜는 스위치.
+    String? userId,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -75,6 +84,7 @@ void main() {
       ProviderScope(
         overrides: [
           runRepositoryProvider.overrideWithValue(repository),
+          if (userId != null) currentUserIdProvider.overrideWithValue(userId),
           if (gpxService != null)
             gpxExportServiceProvider.overrideWithValue(gpxService),
           // 네이버 지도는 초기화된 SDK와 네이티브 뷰를 요구한다. 위젯 테스트에는
@@ -197,6 +207,106 @@ void main() {
       find.text('이 기록은 검토 대상으로 표시되어 티어·랭킹에 반영되지 않았어요.'),
       findsNothing,
     );
+  });
+
+  // ARCHITECTURE §9.1 — 지각 업로드는 마감된 과거 시즌·주에 소급되지 않는다.
+  // 업로드 전에 그 사실을 알리는 배너가 정확히 미동기화 완료 러닝에만 붙는지.
+  testWidgets('업로드가 끝난 기록에는 동기화 배너를 띄우지 않는다', (tester) async {
+    await pump(
+      tester,
+      _FakeRunRepository.value(run(samples: threeKmSamples())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('동기화 대기 중'), findsNothing);
+  });
+
+  for (final status in [SyncStatus.local, SyncStatus.pending]) {
+    testWidgets('$status 완료 러닝에는 티어·랭킹 미반영을 알리는 배너를 띄운다',
+        (tester) async {
+      await pump(
+        tester,
+        _FakeRunRepository.value(
+          run(samples: threeKmSamples(), syncStatus: status),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('동기화 대기 중'), findsOneWidget);
+      expect(
+        find.textContaining('이번 시즌 티어와 주간 랭킹에 반영되지 않아요'),
+        findsOneWidget,
+      );
+      // 재시도 문구는 실제로 실패한 적이 있을 때만.
+      expect(find.textContaining('업로드에 실패해'), findsNothing);
+    });
+  }
+
+  testWidgets('failed면 재시도 중이라는 사실까지 밝힌다', (tester) async {
+    await pump(
+      tester,
+      _FakeRunRepository.value(
+        run(samples: threeKmSamples(), syncStatus: SyncStatus.failed),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('동기화 대기 중'), findsOneWidget);
+    expect(find.textContaining('업로드에 실패해'), findsOneWidget);
+  });
+
+  // 상세 조회는 단발 FutureProvider라, 화면을 열어 둔 채 업로드가 끝나도
+  // 스냅샷은 그대로다. 목록 스트림에서 최신 상태를 골라 오는 경로가 없으면
+  // 배너가 재진입 전까지 남는다(QA O-3).
+  testWidgets('열어 둔 채 업로드가 끝나면 배너가 그 자리에서 사라진다', (tester) async {
+    final repository = _FakeRunRepository.value(
+      run(samples: threeKmSamples(), syncStatus: SyncStatus.pending),
+    );
+    await pump(tester, repository, userId: 'user-1');
+    repository.runsStream.add([
+      run(syncStatus: SyncStatus.pending),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('동기화 대기 중'), findsOneWidget);
+
+    // 업로드 완료 — drift watch()가 갱신된 행을 재발행하는 상황.
+    repository.runsStream.add([run(syncStatus: SyncStatus.synced)]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('동기화 대기 중'), findsNothing);
+  });
+
+  testWidgets('목록 스트림이 모르는 기록은 조회 시점 상태로 판정한다', (tester) async {
+    // 상한(200건) 밖의 오래된 기록·다른 기기 기록이 이 경우다.
+    final repository = _FakeRunRepository.value(
+      run(samples: threeKmSamples(), syncStatus: SyncStatus.local),
+    );
+    await pump(tester, repository, userId: 'user-1');
+    repository.runsStream.add(const <RunRecord>[]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('동기화 대기 중'), findsOneWidget);
+  });
+
+  testWidgets('플래그와 미동기화가 겹치면 플래그 배너만 띄운다', (tester) async {
+    await pump(
+      tester,
+      _FakeRunRepository.value(
+        run(
+          samples: threeKmSamples(),
+          isFlagged: true,
+          syncStatus: SyncStatus.failed,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('이 기록은 검토 대상으로 표시되어 티어·랭킹에 반영되지 않았어요.'),
+      findsOneWidget,
+    );
+    expect(find.text('동기화 대기 중'), findsNothing);
   });
 
   testWidgets('메모가 있으면 메모 섹션에 그대로 보여준다', (tester) async {
@@ -437,9 +547,14 @@ class _FakeRunRepository implements RunRepository {
   }) async =>
       const <RunRecord>[];
 
+  /// 활동 목록 스트림. 상세 화면은 여기서 최신 `syncStatus`를 골라 온다
+  /// (`runSyncStatusProvider`) — 업로드가 끝나면 배너가 그 자리에서 사라져야
+  /// 하므로, 테스트가 임의 시점에 새 목록을 밀어 넣을 수 있어야 한다.
+  final runsStream = StreamController<List<RunRecord>>.broadcast();
+
   @override
   Stream<List<RunRecord>> watchByUser(String userId, {int limit = 20}) =>
-      const Stream<List<RunRecord>>.empty();
+      runsStream.stream;
 
   @override
   Future<int> syncPending({String? userId}) async => 0;
