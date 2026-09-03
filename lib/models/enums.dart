@@ -160,7 +160,7 @@ enum BadgeScope {
   seasonal,
 }
 
-/// 뱃지 카탈로그 16개 카테고리. 정본은 `docs/badge-catalog.csv`(158종).
+/// 뱃지 카탈로그 14개 카테고리. 정본은 `docs/badge-catalog.csv`(146종).
 /// CSV의 `category` 열은 한국어 라벨(`누적거리` 등)이지만 DB/JSON 표현은 아래
 /// snake_case 영문이다 — 시드 시 backend가 매핑한다.
 enum BadgeCategory {

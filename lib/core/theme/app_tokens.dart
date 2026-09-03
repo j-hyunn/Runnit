@@ -48,7 +48,7 @@ class AppTokens {
   static const Color tierGold = Color(0xFFE0B23C);
   static const Color tierPlatinum = Color(0xFF5BC8DE);
 
-  /// `Badge.badgeGrade`(158종 카탈로그, 6단계) 전용 — 경쟁 `Tier`엔 없는 두 등급.
+  /// `Badge.badgeGrade`(146종 카탈로그, 6단계) 전용 — 경쟁 `Tier`엔 없는 두 등급.
   /// Figma 확인 안 된 임시값 — 실제 디자인 확정 시 교체 필요.
   static const Color tierDiamond = Color(0xFF8E7CE0);
   static const Color tierSpecial = Color(0xFFE0648E);
