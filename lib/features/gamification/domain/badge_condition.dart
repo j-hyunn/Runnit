@@ -1,6 +1,6 @@
 /// 뱃지 판정 조건(`Badge.conditionType`)의 **확정된 유한 집합**과 판정 주체 분류.
 ///
-/// 정본은 `docs/badge-catalog.csv`(158종)이며, 서버 `badges` 테이블에는 동일 목록이
+/// 정본은 `docs/badge-catalog.csv`(146종)이며, 서버 `badges` 테이블에는 동일 목록이
 /// `condition_type` CHECK 제약으로 걸린다. 이 파일은 클라이언트가 진행률을 표시할 때
 /// 조건을 해석하기 위한 사본이다 — 분류 근거는 `_workspace/20260825_architect_badge-model-v2.md` §4.
 ///

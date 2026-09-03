@@ -6,7 +6,7 @@
 | 담당 | backend-engineer |
 | 브랜치 | `claude/task-list-planning-a51b3a` (기준 커밋 `e469038`) |
 | 근거 | PRD §8.3·§8.4 / ARCHITECTURE §6.3·§9 / TRD §7·§14 #27·#29·#16·#26 |
-| 상태 | 코드·문서 변경 완료, **커밋하지 않음**. 마이그레이션 64는 **파일만 작성 — 원격 미적용(사용자 승인 대기)** |
+| 상태 | 코드·문서 변경 완료, **커밋하지 않음**. 마이그레이션 64는 **2026-09-03 원격 적용 완료**(Supabase `xwtbwexcofcgmbvktwdo`, §1.4) |
 
 PRD 스펙 변경은 없다. 두 건 모두 **이미 확정된 스펙의 미구현분을 구현**한 것이다.
 
@@ -136,7 +136,21 @@ PRD 스펙 변경은 없다. 두 건 모두 **이미 확정된 스펙의 미구�
 | `lib/features/tracking/data/local_run_repository.dart:83~110` | `_serverOwnedKeys`(+`client_reported`) · `_serverAdjustedKeys` · `_adoptedKeys` · `_confirmationColumns` |
 | 같은 파일 `applyServerConfirmation` | 채택 루프를 `_adoptedKeys` 기준으로 |
 
-### 1.4 원격 적용 절차 (사용자 승인 후)
+### 1.4 원격 적용 절차 → ✅ **적용 완료 (2026-09-03)**
+
+> ✅ **적용 완료** — `apply_migration(name='64_server_distance_recalc')` 로 라이브 Supabase(`xwtbwexcofcgmbvktwdo`)에 적용했다. 아래 절차·쿼리는 기록으로 남긴다.
+>
+> **적용 후 검증 결과**
+> - `runs.client_reported jsonb` 컬럼 생성 확인
+> - `recalc_run_from_samples(jsonb, activity_type)` — volatility `stable`, `authenticated` 실행 권한 유지(F-1 수정이 정상 반영 — `public`·`anon` 만 revoke)
+> - `trg_runs_guard()` — 전 롤 실행 권한 revoke(트리거 함수라 정상)
+> - **G-5 방어 회귀** — `[1,2]` / `[{},1]` / `'null'::jsonb` 모두 예외 없이 `applied=false` 반환
+> - **마이그레이션 63 회귀 가드** — 앵커 2개(`finalized_at is not null`, `runnit.badge_season`)가 라이브 `evaluate_badge_condition` 정의에 그대로 존재
+> - `runs` 트리거 5개 정상 — `runs_guard`(BEFORE) + `runs_01_recompute_stats` · `runs_02_challenge_progress` · `runs_03_evaluate_badges` · `runs_04_notifications`(AFTER)
+> - security advisor — 기존 6건 그대로, **신규 0건**
+>
+> **잔여**: F-7 실측(§6 진단 쿼리) 미실시 — 편향 확인 시 정지 구간 보정 후속 필요.
+
 
 > ## 🛑 배포 순서 계약 — **마이그레이션 64 원격 적용 → 그다음 앱 실행** (QA G-2)
 >
@@ -271,7 +285,7 @@ select (public.recalc_run_from_samples('"scalar"'::jsonb,      'outdoor_run')).a
 
 | 파일 | 변경 |
 |---|---|
-| `supabase/migrations/20260903120000_64_server_distance_recalc.sql` | **신규**(원격 미적용) |
+| `supabase/migrations/20260903120000_64_server_distance_recalc.sql` | **신규**(2026-09-03 원격 적용 완료) |
 | `lib/features/tracking/data/local_run_repository.dart` | 인플라이트 set, `maxSyncAttempts`, `_markUploadFailed`, `resetSyncAttempts`, `syncPending` 필터 + **F-4 되받기**(`_serverAdjustedKeys`·`_adoptedKeys`·`_confirmationColumns`, `applyServerConfirmation`) |
 | `lib/features/tracking/data/local_run_database.dart` | drift 스키마 v1→v2 (`sync_attempts`·`last_sync_attempt_at` + `MigrationStrategy`) |
 | `test/sync/offline_sync_test.dart` | `gate`·`recalculatedDistanceMeters` 추가, 회귀 테스트 **5건**(#29 3건 + F-4 2건), `_runsColumns`에 `client_reported` |
@@ -287,8 +301,8 @@ select (public.recalc_run_from_samples('"scalar"'::jsonb,      'outdoor_run')).a
 | `flutter analyze` | **No issues found!** (3.6s) |
 | `flutter test` (전체) | **293개 전부 통과** |
 | `flutter test test/sync/` | 28개 통과(기존 23 + #29 3건 + F-4 2건) |
-| 마이그레이션 64 구문 실행 검증 | ❌ **미실시** — 로컬에 psql/docker/supabase CLI 없음. §1.4 절차로 브랜치 DB에서 확인 필요 |
-| 원격 적용 | ❌ **미실시**(의도 — 사용자 승인 대기) |
+| 마이그레이션 64 구문 실행 검증 | ✅ **완료(2026-09-03)** — 라이브 `apply_migration` 실행 성공, 후속 검증 쿼리 전건 통과(§1.4) |
+| 원격 적용 | ✅ **완료(2026-09-03)** — `xwtbwexcofcgmbvktwdo`. advisor 신규 0건 |
 | QA 2차(코드 결함) | F-1 · F-2 · F-9 · F-10 · F-14 수정 완료(§1.3.1) |
 | QA 3차(사용자 결정) | F-3 · F-8 반영(§1.2), F-4 구현(§1.5), F-7은 실측 대기(§5.3) |
 | QA 4차(재검증) | G-1 · G-5 · G-6 수정 완료(§1.3.3). G-2는 §1.4 배포 순서 계약으로, G-3 · G-4는 §4 열린 항목으로 등록 |
@@ -299,7 +313,7 @@ select (public.recalc_run_from_samples('"scalar"'::jsonb,      'outdoor_run')).a
 
 | # | 항목 | 내용 | 담당 · 시점 |
 |---|---|---|---|
-| 1 | **F-7 실측** | 원격 적용 후 §6 진단 쿼리로 편차 분포 확인. 서버 값이 체계적으로 짧으면(정지 앵커 변위 미반영) **재계산에 정지 구간 보정**을 넣는 별도 후속 + `v_flag_shrink_ratio` 재조정. ⚠️ 임계를 완화하는 것으로 덮지 말 것 — 완화한 만큼 부정 우회 여지가 넓어진다 | backend, 원격 적용 후 |
+| 1 | **F-7 실측**(🔴 미실시 — 64 적용 완료로 이제 실행 가능) | §6 진단 쿼리로 편차 분포 확인. 서버 값이 체계적으로 짧으면(정지 앵커 변위 미반영) **재계산에 정지 구간 보정**을 넣는 별도 후속 + `v_flag_shrink_ratio` 재조정. ⚠️ 임계를 완화하는 것으로 덮지 말 것 — 완화한 만큼 부정 우회 여지가 넓어진다 | backend, 원격 적용 후 |
 | 2 | **G-3 — 확정 거리 ↔ 랩 합계 divergence** | `summaryJson`의 거리만 서버 값으로 갱신하고 `samplesJson`은 로컬 원본을 유지하므로, 상세 화면에서 **거리는 9.7km인데 랩·페이스·경로는 10.0km 기준**으로 그려진다. 해소안 둘 중 하나: ⓐ 상세 화면에 "확정 거리" 안내 UI(기기 기록 ↔ 확정값 병기) ⓑ 서버가 재기입한 샘플을 되받기(3,600 샘플 재다운로드 비용) | ⓐ flutter-ui / ⓑ backend, F-4 잔여와 함께 |
 | 3 | **F-4 잔여** | `client_reported`를 `RunRecord` 필드로 승격 + 상세 화면 표시. 지금은 `summaryJson`에만 얹혀 있어 다음 전체 로컬 재기록(`toRow()`)에서 사라진다 | flutter-ui |
 | 4 | **G-4 — 업로드 중 로컬 메타 편집 유실** | 기존 결함, 이번 변경과 무관. 업로드가 도는 동안 사용자가 제목/메모를 고치면 `applyServerConfirmation`이 `synced`로 올려 버려 그 편집이 서버에 반영되지 않는다. 제안: `updatedAtLocal`을 업로드 시작 시각과 비교해 **업로드 시작 후 로컬 변경이 있었으면 `pending` 유지** | backend, 별도 라운드 |
