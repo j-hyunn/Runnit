@@ -46,6 +46,18 @@ class RunRecordRows extends Table {
   /// 로컬 갱신 시각. 체크포인트 저장이 얼마나 최신인지 판단용.
   DateTimeColumn get updatedAtLocal => dateTime()();
 
+  /// 서버 업로드를 **실패한 누적 횟수**. 성공하면 0으로 되돌아간다.
+  ///
+  /// 이 컬럼이 없을 때 `syncPending()`은 `synced`가 아닌 행을 **영원히** 다시
+  /// 올렸다(TRD §14 L-2). 서버가 구조적으로 거부하는 행(스키마 드리프트, CHECK
+  /// 위반) 하나가 2분마다 1MB짜리 샘플을 재전송하는 상태가 앱 수명 내내 이어진다.
+  /// [LocalRunRepository.maxSyncAttempts]가 그 상한이다.
+  IntColumn get syncAttempts => integer().withDefault(const Constant(0))();
+
+  /// 마지막 업로드 시도 시각. 상한에 걸린 행을 진단·복구(수동 재시도)할 때
+  /// "언제부터 못 올라가고 있는가"를 답하는 유일한 근거다.
+  DateTimeColumn get lastSyncAttemptAt => dateTime().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{id};
 }
@@ -58,7 +70,23 @@ class LocalRunDatabase extends _$LocalRunDatabase {
   LocalRunDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  /// v1 → v2: 재시도 상한용 컬럼 2개 추가(TRD §14 #29 / L-2).
+  ///
+  /// 기존 행은 `sync_attempts = 0`으로 시작한다 — 이미 여러 번 실패했던 행이라도
+  /// 앱 업데이트 직후 한 번은 다시 기회를 받는 편이 낫다(상한의 목적은 무한
+  /// 재전송을 끊는 것이지 기록을 버리는 것이 아니다).
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (Migrator m) => m.createAll(),
+        onUpgrade: (Migrator m, int from, int to) async {
+          if (from < 2) {
+            await m.addColumn(runRecordRows, runRecordRows.syncAttempts);
+            await m.addColumn(runRecordRows, runRecordRows.lastSyncAttemptAt);
+          }
+        },
+      );
 
   static QueryExecutor _openConnection() {
     return LazyDatabase(() async {

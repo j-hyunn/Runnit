@@ -286,7 +286,123 @@ void main() {
     expect(await statusOf('a-run'), SyncStatus.synced);
   });
 
-  // ────────────────── 6) 페이로드 경계 (모델 ↔ runs 스키마) ──────────────────
+  // ───────── 6) 서버 확정 거리 되받기 (마이그레이션 64 / TRD §14 #27, QA F-4) ─────────
+
+  test('서버가 재계산으로 깎은 거리가 로컬 기록에 반영된다', () async {
+    // 64부터 서버는 샘플 재계산 거리를 **상시** 확정값으로 채택한다(밴드 없음).
+    // 되받지 않으면 "앱은 5.0km인데 랭킹엔 4.6km"가 정상 기록에서도 생긴다.
+    server
+      ..recalculatedDistanceMeters = 4600
+      ..recalculatedMovingSeconds = 1700;
+
+    await saveAndSettle(run());
+
+    final stored = await repository.findById('run-1');
+    expect(stored!.distanceMeters, 4600, reason: '서버 확정 거리를 채택해야 한다');
+    expect(stored.movingSeconds, 1700);
+    expect(await statusOf('run-1'), SyncStatus.synced);
+
+    // 올릴 때는 **클라이언트 주장값**이 실려야 한다 — 그게 서버 재계산의 입력이다.
+    expect(server.lastPayload!['distance_meters'], 5000);
+
+    // 원본 주장값은 client_reported로 함께 내려와 로컬에 남는다(상세 화면용 데이터).
+    final summary = jsonDecode(
+      (await db.select(db.runRecordRows).getSingle()).summaryJson,
+    ) as Map<String, dynamic>;
+    expect(
+      (summary['client_reported'] as Map<String, dynamic>)['distance_meters'],
+      5000,
+    );
+  });
+
+  test('서버가 거리를 조정하지 않으면 클라이언트 값이 그대로 남는다', () async {
+    // 응답에 distance_meters가 없는 경우(= 조정 없음)에도 로컬이 깨지지 않아야 한다.
+    await saveAndSettle(run());
+
+    final stored = await repository.findById('run-1');
+    expect(stored!.distanceMeters, 5000);
+    expect(stored.movingSeconds, 1750);
+  });
+
+  // ─────────── 7) 중복 업로드 인플라이트 가드 · 재시도 상한 (TRD §14 #29) ───────────
+
+  /// 현재 [RunRecordRow.syncAttempts]. 상한 로직의 유일한 상태다.
+  Future<int> attemptsOf(String id) async {
+    final row = await (db.select(db.runRecordRows)
+          ..where((RunRecordRows t) => t.id.equals(id)))
+        .getSingle();
+    return row.syncAttempts;
+  }
+
+  test('업로드가 진행 중인 기록은 syncPending()이 다시 올리지 않는다', () async {
+    // `save()`의 백그라운드 업로드가 도는 **그 순간** 코디네이터 신호(연결 회복)가
+    // 발화하는 상황이 §14 #29의 정체다. 서버 행은 클라 UUID upsert라 중복되지
+    // 않지만, 같은 3,600 샘플이 두 번 나가고 두 응답이 같은 로컬 행에
+    // `applyServerConfirmation`을 경쟁적으로 써 넣는다.
+    final gate = Completer<void>();
+    server.gate = gate;
+
+    unawaited(repository.save(run(id: 'run-race')));
+
+    // 업로드가 서버에 도달할 때까지(= 인플라이트가 될 때까지) 양보한다.
+    for (var i = 0; i < 200 && server.requestCount == 0; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(server.requestCount, 1, reason: '업로드가 시작되지 않았다');
+    expect(repository.inFlightIds, contains('run-race'));
+
+    // 여기가 경합 지점 — 가드가 없으면 두 번째 upsert가 나간다.
+    expect(await repository.syncPending(), 0);
+    expect(server.requestCount, 1, reason: '같은 행을 두 번 올렸다');
+
+    server.gate = null;
+    gate.complete();
+    await repository.uploadSettled;
+
+    expect(server.upsertedIds, <String>['run-race']);
+    expect(await statusOf('run-race'), SyncStatus.synced);
+    expect(repository.inFlightIds, isEmpty, reason: '끝난 뒤에는 비어야 한다');
+  });
+
+  test('재시도는 maxSyncAttempts에서 멈춘다 — 무한 재전송 차단 (L-2)', () async {
+    // 서버가 구조적으로 거부하는 행. 상한이 없으면 코디네이터의 2분 주기마다
+    // 1MB 페이로드가 앱 수명 내내 반복된다.
+    server.rejectIds.add('run-doomed');
+    await saveAndSettle(run(id: 'run-doomed')); // 시도 1회 소진
+
+    for (var i = 1; i < LocalRunRepository.maxSyncAttempts; i++) {
+      expect(await repository.syncPending(), 0);
+    }
+    expect(await attemptsOf('run-doomed'), LocalRunRepository.maxSyncAttempts);
+    final exhausted = server.requestCount;
+    expect(exhausted, LocalRunRepository.maxSyncAttempts);
+
+    // 상한 도달 — 이제 요청 자체가 나가지 않는다.
+    expect(await repository.syncPending(), 0);
+    expect(server.requestCount, exhausted, reason: '상한 뒤에도 재전송이 계속됐다');
+
+    // 기록은 **지워지지 않는다**. 수동 재시도로 되살아난다.
+    expect(await statusOf('run-doomed'), SyncStatus.failed);
+    expect(await repository.findById('run-doomed'), isNotNull);
+
+    server.rejectIds.clear();
+    await repository.resetSyncAttempts('run-doomed');
+    expect(await repository.syncPending(), 1);
+    expect(await statusOf('run-doomed'), SyncStatus.synced);
+  });
+
+  test('업로드에 성공하면 재시도 예산이 0으로 돌아온다', () async {
+    // 오래 쓴 기기에서 산발적 실패가 누적돼 멀쩡한 기록이 상한에 걸리면 안 된다.
+    server.offline = true;
+    await saveAndSettle(run(id: 'run-flaky'));
+    expect(await attemptsOf('run-flaky'), 1);
+
+    server.offline = false;
+    expect(await repository.syncPending(), 1);
+    expect(await attemptsOf('run-flaky'), 0);
+  });
+
+  // ────────────────── 8) 페이로드 경계 (모델 ↔ runs 스키마) ──────────────────
 
   test('업로드 페이로드는 runs 컬럼 집합 안에 있고 전부 snake_case다', () async {
     await saveAndSettle(run());
@@ -384,6 +500,8 @@ const Set<String> _runsColumns = <String>{
   'updated_at',
   'is_flagged',
   'flag_reason',
+  // 64: 서버 재계산 직전의 클라이언트 주장값(서버 전용, 클라이언트는 보내지 않는다).
+  'client_reported',
 };
 
 /// `runs` upsert만 흉내 내는 최소 PostgREST.
@@ -407,11 +525,24 @@ class _FakePostgrest {
   static const double serverPace = 361.5;
   static const int serverXp = 50;
 
+  /// 마이그레이션 64의 샘플 재계산 결과를 흉내 낸다. null이 아니면 응답에
+  /// `distance_meters`/`moving_seconds`/`client_reported`를 실어 보낸다 —
+  /// 서버가 거리를 깎았을 때 클라이언트가 그것을 되받는지 보기 위한 것(QA F-4).
+  double? recalculatedDistanceMeters;
+  int? recalculatedMovingSeconds;
+
   /// 네트워크 없음. 소켓을 그대로 끊어 실제 오프라인과 같은 실패를 만든다.
   bool offline = false;
 
   /// 200을 주지만 본문이 `.single()` 계약을 어기는 상황.
   bool corruptResponse = false;
+
+  /// 응답을 **보류**시키는 게이트. 완료시킬 때까지 서버가 응답을 쓰지 않는다.
+  ///
+  /// [hang]과 다르다: hang은 영원히 매달려 타임아웃을 검증하는 반면, 이쪽은
+  /// "업로드가 진행 중인 순간"을 테스트가 붙잡아 두기 위한 장치다(인플라이트
+  /// 가드 검증).
+  Completer<void>? gate;
 
   /// **스탈된 연결**. 소켓은 살아 있는데 응답이 영원히 오지 않는다(캡티브 포털,
   /// 지하철 셀 전환). 오프라인(`offline`)처럼 즉시 실패하지 않는다는 점이 핵심 —
@@ -442,6 +573,10 @@ class _FakePostgrest {
         // 응답을 쓰지도, 닫지도 않는다 — 요청이 그대로 매달린다.
         continue;
       }
+
+      // 요청이 "도착했고 아직 응답 전"인 상태로 테스트가 붙잡아 둘 수 있게 한다.
+      final Completer<void>? held = gate;
+      if (held != null) await held.future;
 
       if (offline) {
         // 응답 헤더도 쓰지 않고 소켓을 파괴 → 클라이언트에는 연결 실패로 보인다.
@@ -475,6 +610,20 @@ class _FakePostgrest {
       // upsert = 같은 PK면 덮어쓴다. 여기가 멱등성의 서버측 근거다.
       rows[id] = payload;
 
+      // 마이그레이션 64의 재계산 결과(있으면). 실제 서버와 같은 모양으로,
+      // 원본 주장값은 client_reported 에 담아 함께 내려보낸다.
+      final Map<String, dynamic> recalc = recalculatedDistanceMeters == null
+          ? <String, dynamic>{}
+          : <String, dynamic>{
+              'distance_meters': recalculatedDistanceMeters,
+              'moving_seconds':
+                  recalculatedMovingSeconds ?? payload['moving_seconds'],
+              'client_reported': <String, dynamic>{
+                'distance_meters': payload['distance_meters'],
+                'moving_seconds': payload['moving_seconds'],
+              },
+            };
+
       request.response
         ..statusCode = HttpStatus.created
         ..headers.contentType = ContentType.json
@@ -490,6 +639,7 @@ class _FakePostgrest {
                   'flag_reason': null,
                   'created_at': '2026-09-01T06:30:05.000Z',
                   'updated_at': '2026-09-01T06:30:05.000Z',
+                  ...recalc,
                 }),
         );
       await request.response.close();

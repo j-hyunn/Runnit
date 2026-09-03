@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.19 |
+| 문서 버전 | v0.20 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** Phase 0 산출물로 출발했으나 현재는 실제 코드(`lib/`, `supabase/migrations/`)를 따라간다. 구현이 발전하면 이 문서를 갱신한다(CLAUDE.md 규칙 3) |
@@ -13,6 +13,7 @@
 | 버전 | 변경 내용 |
 |------|----------|
 | v0.1 | 최초 작성. `claude/phase-0-start` 브랜치에서 구성된 하네스(에이전트 6개·스킬 7개)에 이미 반영되어 있던 아키텍처 결정을 PRD v1.3 기준으로 정리·문서화. PRD §11의 Phase 0 산출물(아키텍처·데이터 모델·Supabase 스키마 확정)에 해당 |
+| v0.20 | **§9 업로드 인플라이트 가드 + 재시도 상한**(2026-09-03, TRD §14 #29 / L-2 해소). `save()`의 백그라운드 업로드와 `RunSyncCoordinator.syncPending()`이 같은 행을 동시에 올리던 경합을 `LocalRunRepository._inFlight` 공유 set 하나로 닫았다. 무한 재시도는 백오프가 아니라 **횟수 상한**(`maxSyncAttempts = 10`, drift 스키마 v1→v2 `sync_attempts`·`last_sync_attempt_at`)으로 끊는다 — 재시도 *간격*은 이미 코디네이터의 4신호가 정하고 있기 때문. 함께: 서버 샘플 기반 거리 재계산(마이그레이션 64, TRD §7.1 / §14 #27) — **파일만 작성, 원격 미적용**이라 §13 마이그레이션 범위는 00~63 그대로. 그 재계산 값을 클라이언트가 되받는 경로(`_serverAdjustedKeys`, TRD §7.2 / QA F-4)도 §9에 반영 |
 | v0.19 | **§9.1 "동기화 필요" 사용자 안내 구현**(2026-09-02, 사용자 확정 — 옵션1). §9.1이 P2 UX 과제로 남겨 뒀던 항목을 닫았다. 서버의 소급 미반영 정책은 **그대로**이고, 바뀐 것은 그 사실이 언제 사용자에게 보이느냐뿐이다 — 미업로드 완료 러닝에 상세 화면 앰버 배너(`_SyncPendingBanner`, 플래그 배너와 배타)와 목록 행 소형 pill을 붙인다. 판정은 `isSyncPending()` 단일 술어(`features/history/presentation/sync_pending.dart`). 부수 수정: `LocalRunRepository._fromRemote`가 서버 응답을 `syncStatus: synced`로 확정하지 않아 **원격에서 읽어온 기록이 "동기화 대기"로 보이는** 오탐이 있었다(모델 기본값 `local` + 서버에 없는 컬럼) — 회귀 가드 `test/tracking/find_by_id_remote_sync_status_test.dart`. PRD v1.9 §10.1 #13과 짝 |
 | v0.18 | **R-12 회귀 가드 + 마이그레이션 번호 정리**(2026-09-02, 마이그레이션 63 + 62b 파일화). (1) 마이그레이션 57·61이 `evaluate_badge_condition`(24KB 디스패처)을 문자열 앵커 치환으로 패치했다(57-5 `finalized_at` 필터, 61-3 `runnit.badge_season` GUC) — 이후 전문 재정의가 두 조각을 빠뜨리면 조용히 사라져 TRD #23·#30이 부활한다. 63은 라이브 함수 정의를 덤프해 두 문자열의 존재를 검사하고 없으면 실패하는 `DO` 블록, **이후 마이그레이션에서도 유지**(스키마 변경 없음). 원래 62로 작성·적용됐으나 병렬 세션의 `leaderboard_entries_active` 뷰가 62를 선점해 파일을 63으로 재번호(원격 `schema_migrations` 이력은 유지). (2) C-1 세션이 원격에만 적용한 `62b_grant_season_calc_functions_for_active_view`(뷰의 `security_invoker` 경로가 부르는 season 계산 함수 4종 `anon`/`authenticated` grant)를 사후 파일화 — `db reset`/브랜치 DB 정합. (3) 본문 `마이그레이션 00~42` stale 표기를 `00~63`으로. §13 범위 00~62 → 00~63. 상세 TRD §14 #33 |
 | v0.17 | **주간 보드 rank 중복 수정**(2026-09-02, 마이그레이션 62, 사용자 승인·원격 적용 완료). 클라이언트가 `leaderboard_entries`를 직접 조회하면 누적 보존된 지난 기간 행(§5.3)과 단축 주간(61)의 반대편 조각이 섞여 `rank`가 중복됐다(라이브 bronze 주간 보드 재현). §5.3에 뷰 `leaderboard_entries_active`(`period_start = leaderboard_period_bounds(period, now())`, `security_invoker=true`) 서술 추가 — 클라이언트 조회는 이 뷰만, Realtime 구독은 베이스 테이블 유지. §13 마이그레이션 범위 00~61 → 00~62. 상세 TRD §4.3.1 |
@@ -578,7 +579,8 @@ flowchart LR
     Signal --> Queue
 ```
 
-- **재시도 전략은 지수 백오프가 아니다.** `RunSyncCoordinator`(`core/sync/run_sync_coordinator.dart`)가 ① 로그인 전이 ② 앱 포그라운드 복귀 ③ 오프라인→온라인 전환(`connectivity_plus`) ④ **고정 2분 주기** 폴백 — 네 신호에서 `syncPending(userId:)`를 부른다. 재시도 상한도 없다(TRD §14 L-2).
+- **재시도 전략은 지수 백오프가 아니다.** `RunSyncCoordinator`(`core/sync/run_sync_coordinator.dart`)가 ① 로그인 전이 ② 앱 포그라운드 복귀 ③ 오프라인→온라인 전환(`connectivity_plus`) ④ **고정 2분 주기** 폴백 — 네 신호에서 `syncPending(userId:)`를 부른다. 간격을 신호가 정하므로 백오프 대신 **횟수 상한**을 둔다: `LocalRunRepository.maxSyncAttempts`(10회, drift `sync_attempts` 컬럼). 서버가 구조적으로 거부하는 행 하나가 2분마다 1MB 페이로드를 앱 수명 내내 재전송하는 것을 끊는 장치다(TRD §14 #29 / L-2, 2026-09-03). 상한에 걸린 행은 지워지지 않고 `failed`로 남으며 `resetSyncAttempts(id)`로 되살린다 — 그 상태를 노출하는 UI는 아직 없다.
+- **업로드 경로는 둘인데 상태는 하나다.** `save()`가 띄우는 백그라운드 업로드(`_schedulePush` 체인)와 코디네이터의 `syncPending()`은 서로를 모르는 별개 실행 경로라, 러닝 종료 직후 연결이 회복되면 같은 행을 동시에 두 번 올렸다. `LocalRunRepository._inFlight`(`Set<String>`)를 두 경로가 공유해 막는다 — 판정은 `_push()` 진입부의 `Set.add` 반환값 하나이고, Dart가 단일 스레드라 그 자리가 원자적이다(TRD §14 #29).
   - 요청 하나의 상한은 `LocalRunRepository.uploadTimeout`(30초)이다. 스탈된 연결에서 요청이 반환되지 않으면 코디네이터의 재진입 래치가 걸린 채 큐가 앱 수명 내내 멈추기 때문에, **타임아웃이 큐 생존성의 단일 장치**다(QA C-3).
   - 연결 감지는 **보조 신호**다 — "연결됨"이 도달 가능을 뜻하지 않으므로(캡티브 포털) 나머지 3신호를 대체하지 않는다.
   - ⚠️ **백그라운드 동기화(WorkManager / BGTaskScheduler)는 없다.** 앱이 살아 있어야만 재시도가 돈다 — 러닝을 끝내고 앱을 다시 열지 않은 사용자의 기록은 로컬에만 남는다(손실은 아니다). TR-08의 "복귀 시 자동 동기화"는 이 전제 위에서 성립한다(QA C-9).
@@ -587,6 +589,7 @@ flowchart LR
 - 업로드는 별도 Edge Function이 아니라 **`supabase_flutter`를 통한 PostgREST 직접 upsert**다. 서버 확정(`is_flagged` 등)은 트리거가 같은 요청의 `.select()` 응답으로 내려준다.
 - 업로드 큐는 세션 단위(`RunRecord` 전체)로 관리하며, 부분 업로드로 인한 정합성 문제를 피하기 위해 하나의 트랜잭션으로 전송한다.
 - **업로드는 단방향이 아니다.** 서버 가드 트리거가 확정하는 값(`is_flagged`/`flag_reason`/`awarded_xp`/`avg_pace_sec_per_km`)은 upsert 응답(`.select(...).single()`)으로 되받아 로컬 행에 반영한다. 이것이 없으면 `RunRecord.isFlagged`가 영원히 `null`이라 공유 카드 게이트(§7.4)가 `pending`에서 멈춘다. 응답 채택 실패는 로컬을 `failed`로 남겨 `syncPending()`이 재시도하며, 업로드가 멱등(`id`=클라이언트 UUID)이라 중복 행이 생기지 않는다.
+  - **거리·이동시간도 되받는다**(2026-09-03, 마이그레이션 64 / TRD §7.2). 서버가 샘플 재계산 거리를 **상시** 확정값으로 채택하므로, 되받지 않으면 플래그 없는 정상 기록에서도 "앱 요약 10.0km / 랭킹 반영 9.7km"로 갈린다. 되받는 컬럼은 **두 집합**이고 합칠 수 없다 — `_serverOwnedKeys`(보내지 않고 받기만)와 `_serverAdjustedKeys`(**보내고 또 받는다**: `distance_meters`·`moving_seconds`). 거리는 서버 재계산의 *입력*이라 페이로드에서 빼면 서버가 비교할 원본 주장값 자체가 사라지기 때문이다. 채택 시 로컬 `summaryJson`의 거리를 서버 값으로 갱신하고, 원래 주장값은 `client_reported`로 함께 내려와 로컬에 남는다(상세 화면 표시는 후속).
 - **동기화 큐는 현재 로그인 사용자로 좁힌다.** `syncPending(userId:)` — 한 기기에서 계정을 바꿨을 때 이전 계정 행을 현재 세션 JWT로 밀어 올리면 RLS(`user_id = auth.uid()`)에 42501로 걸려 **영구 재시도**가 된다. 이전 계정 행은 지우지 않고 큐에 남겨 둔다(그 계정으로 다시 로그인하면 그대로 올라간다).
 
 ### 9.1 알려진 제약 — 경계를 넘긴 지각 업로드 (2026-09-01 확정)

@@ -38,11 +38,18 @@ import 'local_run_database.dart';
 /// (`supabase_user_repository.dart`의 `_editablePatch`와 같은 방침).
 /// 클라이언트가 계산한 페이스는 **낙관적 표시용**일 뿐이다.
 ///
-/// 그 대신 업로드 응답(`.select(...).single()`)으로 서버가 확정한 같은 컬럼들을
-/// 되받아 로컬에 기록한다. 방향이 반대일 뿐 컬럼 집합은 [_serverOwnedKeys] 하나로
-/// 같다 — 보낼 때 빼는 것과 받을 때 채우는 것이 어긋나면 `isFlagged`가 영원히
-/// `null`로 남아 공유 카드 게이트가 `pending`에서 멈춘다
+/// 그 대신 업로드 응답(`.select(...).single()`)으로 서버가 확정한 컬럼들을 되받아
+/// 로컬에 기록한다. 보낼 때 빼는 것과 받을 때 채우는 것이 어긋나면 `isFlagged`가
+/// 영원히 `null`로 남아 공유 카드 게이트가 `pending`에서 멈춘다
 /// (`gamification/domain/achievement_moment.dart`).
+///
+/// 되받는 컬럼은 두 종류이고 **한 집합으로 합칠 수 없다**:
+/// - [_serverOwnedKeys] — 보내지 않고 받기만 한다(서버가 온전히 소유).
+/// - [_serverAdjustedKeys] — **보내고 또 받는다.** 거리·이동시간은 서버 재계산의
+///   *입력*이라 반드시 실어야 하는데(마이그레이션 64), 서버가 그 값을 재계산 결과로
+///   덮어쓸 수 있어 되받아야 한다.
+///
+/// 채택 대상 전체는 [_adoptedKeys]다.
 class LocalRunRepository implements RunRepository {
   LocalRunRepository(
     this._db,
@@ -71,6 +78,39 @@ class LocalRunRepository implements RunRepository {
 
   static const String _table = 'runs';
 
+  /// 한 기록을 자동으로 재시도하는 **상한**(TRD §14 #29 / L-2).
+  ///
+  /// 상한이 없을 때 무엇이 문제였나: 서버가 구조적으로 거부하는 행 —
+  /// 스키마 드리프트, CHECK 위반, 삭제된 계정의 FK — 하나가 `RunSyncCoordinator`의
+  /// 2분 주기마다 3,600 샘플(0.5~1MB)을 다시 밀어 올린다. 네트워크·배터리 비용이
+  /// 앱 수명 내내 지속되고, 큐 앞쪽에 그런 행이 쌓이면 정상 기록의 업로드까지
+  /// 매 사이클 지연된다.
+  ///
+  /// **왜 백오프가 아니라 횟수 상한인가**: 백오프(대기 시간 증가)는 `syncPending()`이
+  /// 벽시계에 의존하게 만들어 오프라인 회귀 테스트 전체가 시간에 묶인다. 여기서
+  /// 필요한 것은 "언젠가 멈추는 것"뿐이고, 재시도 **간격**은 이미 코디네이터의
+  /// 신호(로그인/복귀/연결 회복/2분)가 정한다.
+  ///
+  /// ⚠️ 상한에 걸린 행은 **지워지지 않는다** — `failed`로 로컬에 그대로 남고
+  /// [resetSyncAttempts]로 다시 큐에 올릴 수 있다. 사용자에게 이 상태를 보여 주고
+  /// 수동 재시도를 제공하는 UI는 아직 없다(히스토리의 "동기화 대기" 칩이 붙을 자리).
+  static const int maxSyncAttempts = 10;
+
+  /// **지금 업로드 중인** run id. `_schedulePush` 체인과 [syncPending]이 공유한다.
+  ///
+  /// 두 경로는 서로를 모른다(TRD §14 #29): 러닝 종료 직후 `save()`가 띄운
+  /// 백그라운드 업로드가 도는 중에 코디네이터 신호(특히 연결 회복)가 발화하면
+  /// 같은 행을 동시에 두 번 올린다. `id`가 클라이언트 UUID라 서버 행이 중복되지는
+  /// 않지만, 3,600 샘플을 두 번 전송하고 두 응답이 같은 로컬 행에
+  /// `applyServerConfirmation`을 경쟁적으로 써 넣는다.
+  ///
+  /// 진입점은 [_push] 하나뿐이고 `Set.add`의 반환값으로 **원자적으로** 판정한다 —
+  /// Dart는 단일 스레드라 `add`와 그 뒤 `await` 사이에 다른 코드가 끼어들 수 없다.
+  final Set<String> _inFlight = <String>{};
+
+  @visibleForTesting
+  Set<String> get inFlightIds => Set<String>.unmodifiable(_inFlight);
+
   /// 서버가 소유하는 컬럼. 업로드 payload에서 **제거**하고, 업로드 응답에서
   /// **채택**한다.
   ///
@@ -89,15 +129,39 @@ class LocalRunRepository implements RunRepository {
     // 애초에 보내지 않는 것이 의도를 코드로 남기는 방법이다.
     'is_flagged',
     'flag_reason',
+    // 서버 재계산 직전의 클라이언트 주장값(마이그레이션 64). 클라이언트는 이
+    // 컬럼을 만들지 않으므로 제거는 no-op이고, 되받기만 실제로 의미가 있다.
+    'client_reported',
+  };
+
+  /// 클라이언트가 **보내야 하고 동시에 되받아야** 하는 컬럼 (TRD §14 #27 / QA F-4).
+  ///
+  /// [_serverOwnedKeys]와 같은 집합에 넣을 수 없다. 저쪽은 "페이로드에서 뺀다"가
+  /// 절반의 의미인데, 거리·이동시간은 **서버 재계산의 입력**이라 반드시 실어야
+  /// 한다 — 빼면 서버가 비교할 원본 주장값 자체가 사라진다.
+  ///
+  /// 마이그레이션 64부터 서버는 샘플로 재계산한 거리를 **상시** 확정값으로 채택한다
+  /// (밴드 없음). 그래서 플래그가 없는 정상 기록에서도 서버 값이 클라이언트 값보다
+  /// 조금 작을 수 있고, 되받지 않으면 "앱은 10.0km인데 랭킹엔 9.7km"가 된다.
+  /// 여기서 되받아 로컬 `summaryJson`에 반영하는 것이 그 divergence의 유일한 차단막이다.
+  static const Set<String> _serverAdjustedKeys = <String>{
+    'distance_meters',
+    'moving_seconds',
+  };
+
+  /// 업로드 응답에서 로컬에 **채택할** 컬럼 전체.
+  static final Set<String> _adoptedKeys = <String>{
+    ..._serverOwnedKeys,
+    ..._serverAdjustedKeys,
   };
 
   /// 업로드 응답으로 되받을 컬럼(PostgREST `select=` 인자).
   ///
   /// `.select()`를 인자 없이 쓰면 `samples`까지 통째로 돌아온다 — 1시간 러닝이면
   /// 3600 샘플을 방금 올린 그대로 다시 내려받는 셈이다. 우리가 채택할 컬럼은
-  /// [_serverOwnedKeys]뿐이므로 PK와 함께 그것만 요청한다.
+  /// [_adoptedKeys]뿐이므로 PK와 함께 그것만 요청한다.
   static final String _confirmationColumns =
-      <String>['id', ..._serverOwnedKeys].join(',');
+      <String>['id', ..._adoptedKeys].join(',');
 
   // ─────────────────────────── 쓰기 ───────────────────────────
 
@@ -170,14 +234,21 @@ class LocalRunRepository implements RunRepository {
   /// [uploadTimeout]을 넘기면 `TimeoutException`이 나고, 다른 실패와 똑같이
   /// `failed`로 내려 다음 신호에서 재시도된다 — 멈춘 연결 하나가 큐 전체를
   /// 정지시키지 않게 하는 유일한 장치다(QA C-3).
+  /// ## 인플라이트 가드
+  /// 같은 id가 이미 업로드 중이면 **아무것도 하지 않고 false**를 돌려준다(TRD §14
+  /// #29). 실패가 아니므로 `sync_attempts`를 올리지 않는다 — 올리면 코디네이터가
+  /// 자주 발화하는 것만으로 상한이 소진된다.
   Future<bool> _push(RunRecord record) async {
+    if (!_inFlight.add(record.id)) return false;
     try {
       final confirmed = await _upsertRemote(record).timeout(uploadTimeout);
       await applyServerConfirmation(record.id, confirmed);
       return true;
     } catch (_) {
-      await _markSyncStatus(record.id, SyncStatus.failed);
+      await _markUploadFailed(record.id);
       return false;
+    } finally {
+      _inFlight.remove(record.id);
     }
   }
 
@@ -200,13 +271,26 @@ class LocalRunRepository implements RunRepository {
     return json;
   }
 
-  /// 업로드 응답의 [_serverOwnedKeys]만 로컬 행에 덮어쓰고 `synced`로 올린다.
+  /// 업로드 응답의 [_adoptedKeys]만 로컬 행에 덮어쓰고 `synced`로 올린다.
   ///
   /// 메모리에 있던 [RunRecord]를 통째로 다시 쓰지 않고 **DB의 현재 `summaryJson`을
   /// 읽어 그 위에 겹치는** 이유는 두 가지다.
   /// 1. 업로드가 도는 동안 사용자가 제목/메모를 고쳤을 수 있다. 통째로 쓰면 그
   ///    수정이 조용히 되돌아간다.
   /// 2. `samplesJson` 컬럼을 아예 건드리지 않아, 3600 샘플을 재직렬화하지 않는다.
+  ///
+  /// ## 거리·이동시간이 여기서 바뀔 수 있다 (QA F-4)
+  /// 마이그레이션 64부터 서버가 샘플로 재계산한 거리를 상시 확정값으로 채택하므로,
+  /// 응답의 `distance_meters`가 방금 올린 값보다 작을 수 있다. **`summaryJson`의
+  /// 값을 서버 값으로 갱신한다** — 별도 필드로 두고 표시만 클라 값으로 유지하면
+  /// 히스토리·통계·공유 카드가 전부 랭킹과 다른 숫자를 말하게 된다. 서버 값이
+  /// 단일 진실이고, 원래 주장값은 `client_reported`에 남아 함께 내려온다
+  /// (상세 화면에서 "기기 기록 10.0km → 확정 9.7km"로 보여줄 데이터는 확보 —
+  /// UI 구현은 flutter-ui 후속).
+  ///
+  /// ⚠️ `samplesJson`은 갱신하지 않는다. 서버가 `cumulative_distance_meters`를
+  /// 재기입하지만 그것을 되받으려면 3,600 샘플을 다시 내려받아야 하고, 로컬
+  /// 스플릿 표시는 이미 로컬 샘플 기준으로 일관되므로 값어치가 없다.
   ///
   /// 행이 사라졌으면(업로드 중 `delete()`) 아무것도 하지 않는다 — 되살리지 않는다.
   @visibleForTesting
@@ -222,7 +306,7 @@ class LocalRunRepository implements RunRepository {
       if (row == null) return;
 
       final summary = jsonDecode(row.summaryJson) as Map<String, dynamic>;
-      for (final key in _serverOwnedKeys) {
+      for (final key in _adoptedKeys) {
         if (confirmed.containsKey(key)) summary[key] = confirmed[key];
       }
 
@@ -231,14 +315,41 @@ class LocalRunRepository implements RunRepository {
           syncStatus: Value(syncStatusWire(SyncStatus.synced)),
           summaryJson: Value(jsonEncode(summary)),
           updatedAtLocal: Value(DateTime.now().toUtc()),
+          // 성공했으므로 재시도 예산을 되돌린다. 되돌리지 않으면 오래 쓴 기기에서
+          // 과거의 산발적 실패가 누적돼 멀쩡한 기록이 상한에 걸린다.
+          syncAttempts: const Value<int>(0),
         ),
       );
     });
   }
 
-  Future<void> _markSyncStatus(String id, SyncStatus status) async {
+  /// 업로드 실패를 기록한다 — 상태를 `failed`로 내리고 시도 횟수를 1 올린다.
+  ///
+  /// 읽고-쓰기를 한 트랜잭션에 묶는 이유는 인플라이트 가드가 같은 id의 동시 실행을
+  /// 막더라도, **다른** id의 실패가 끼어드는 인터리빙에서 카운터가 유실되지 않게
+  /// 하기 위해서다(drift는 문장 단위로만 원자적이다).
+  Future<void> _markUploadFailed(String id) async {
+    await _db.transaction(() async {
+      final row = await _rowOf(id);
+      if (row == null) return;
+      await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
+        RunRecordRowsCompanion(
+          syncStatus: Value(syncStatusWire(SyncStatus.failed)),
+          syncAttempts: Value(row.syncAttempts + 1),
+          lastSyncAttemptAt: Value(DateTime.now().toUtc()),
+        ),
+      );
+    });
+  }
+
+  /// 재시도 상한에 걸린 기록을 다시 큐에 올린다(수동 재시도 진입점).
+  ///
+  /// [maxSyncAttempts] 상한은 무한 재전송을 끊기 위한 것이지 기록을 버리기 위한
+  /// 것이 아니다. 사용자가 "다시 시도"를 누르거나, 서버 스키마가 고쳐졌을 때
+  /// 호출한다.
+  Future<void> resetSyncAttempts(String id) async {
     await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
-      RunRecordRowsCompanion(syncStatus: Value(syncStatusWire(status))),
+      const RunRecordRowsCompanion(syncAttempts: Value<int>(0)),
     );
   }
 
@@ -246,13 +357,21 @@ class LocalRunRepository implements RunRepository {
   /// 참조. 한 기기에서 계정을 바꿨을 때 이전 계정의 행을 현재 세션 JWT로 밀어
   /// 올려 RLS 42501을 무한 반복하는 것을 막는다(QA C-5). 이전 계정 행은 **지우지
   /// 않는다** — 그 계정으로 다시 로그인하면 그대로 올라간다.
+  ///
+  /// 두 가지를 추가로 거른다(TRD §14 #29):
+  /// - **재시도 상한 초과 행**([maxSyncAttempts])은 질의 단계에서 제외한다.
+  ///   행은 남고 [resetSyncAttempts]로 되살릴 수 있다.
+  /// - **이미 업로드 중인 행**(`save()`가 띄운 백그라운드 업로드)은 건너뛴다.
+  ///   `_push`의 `Set.add`가 최종 판정이지만, 여기서 먼저 걸러야 3,600 샘플을
+  ///   역직렬화하는 비용까지 아낀다.
   @override
   Future<int> syncPending({String? userId}) async {
     final query = _db.select(_db.runRecordRows)
       ..where(
         (t) =>
             t.status.equals(runStatusWire(RunStatus.completed)) &
-            t.syncStatus.isNotValue(syncStatusWire(SyncStatus.synced)),
+            t.syncStatus.isNotValue(syncStatusWire(SyncStatus.synced)) &
+            t.syncAttempts.isSmallerThanValue(maxSyncAttempts),
       );
     if (userId != null) {
       query.where((t) => t.userId.equals(userId));
@@ -264,6 +383,7 @@ class LocalRunRepository implements RunRepository {
 
     var uploaded = 0;
     for (final row in rows) {
+      if (_inFlight.contains(row.id)) continue;
       final record = runRecordFromRow(row, includeSamples: true);
       if (await _push(record)) uploaded += 1;
     }

@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.24 |
+| 문서 버전 | v0.26 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~63`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
@@ -11,6 +11,7 @@
 **변경 이력**
 | 버전 | 변경 내용 |
 |------|----------|
+| v0.26 | **서버 샘플 기반 거리·이동시간 재계산 구현 + 업로드 인플라이트 가드·재시도 상한**(2026-09-03, 마이그레이션 64 — **파일만 작성, 원격 미적용**). *(헤더 버전이 v0.24 → v0.26 으로 두 단계 뛴 것은 v0.25 항목이 헤더 버전 갱신을 빠뜨렸기 때문이다. 중간 판본 누락 아님.)* ① §14 #27 해소 — `recalc_run_from_samples(samples, activity_type)` 신설(인접 구간 25km/h 초과 제거 · 0.6 m/s 미만 미산입 · 구간 시간 20초 상한, 전부 클라이언트 `GpsFilterConfig`와 동일 상수), `trg_runs_guard`가 파생값 확정 **앞**에서 이를 호출한다. **덮어쓰기는 항상 / 플래그는 서버 값 < 클라 주장 × 0.8 일 때만 / 늘리는 방향은 미채택** 세 결정 분리(허용 밴드 폐기 — 2026-09-03 사용자 확정, QA F-3·F-7·F-8), 원본 주장값은 `runs.client_reported`(신설 컬럼)에 최초 확정 때만 보존. **샘플 2개 미만·`indoor_run`은 재계산 스킵**(#26 ② 와 함께 최종 결정). 새 플래그 사유 `distance_mismatch` / `sample_time_regression`, HI-07 되돌리기 UPDATE 에서는 플래그 승계(세탁 차단, QA F-2). §7 ⚠️ 노트 → §7.1 로 교체. ①-b **클라이언트가 서버 확정 거리를 되받는다**(§7.2 신설, QA F-4) — `_serverAdjustedKeys`(보내고 또 받는 집합) 신설. ② §14 #29·L-2 해소 — `LocalRunRepository`에 인플라이트 set + `maxSyncAttempts`(10) 상한, drift 스키마 v1→v2(`sync_attempts` · `last_sync_attempt_at`). PRD 스펙 변경 없음(미구현 스펙의 구현) |
 | v0.25 | **§14 #27 ↔ #26 상호참조 추가**(2026-09-02, 문서만). QA `_workspace/20260901_qa_a3-a5-a6-integration.md` F-11 반영 — #27(서버 샘플 기반 거리 재계산)을 구현할 때 샘플 없는 기록(폰 실내 러닝 등)의 취급을 #26 ②(웨어러블 실내 거리 반영 범위)와 함께 결정하도록 #27 본문에 한 줄 명시. 스펙·스키마 변경 없음 |
 | v0.23 | **주간 보드 rank 중복 수정**(2026-09-02, 마이그레이션 62, 사용자 승인·원격 적용 완료 `xwtbwexcofcgmbvktwdo`). QA `_workspace/20260901_qa_short-week-optionb.md` **C-1 해소** — `leaderboard_entries`가 지난 기간 행을 누적 보존하고(ARCHITECTURE §5.3) 단축 주간(61)이 같은 달력 주를 `period_start` 다른 두 조각으로 나누는데, 클라이언트 `_scoped()`가 `period_start`를 안 걸어 여러 기간 행이 섞여 rank=1이 중복 반환됐다(라이브 bronze 주간 보드 재현). 뷰 `leaderboard_entries_active`(`period_start = leaderboard_period_bounds(period, now())`, `security_invoker=true`) 신설, 클라이언트 조회를 이 뷰로 전환(Realtime 구독만 베이스 테이블 유지). `fetchMyEntry`의 `.maybeSingle()`이 다주차 행 존재 시 던지던 예외도 함께 닫힘. §4.3.1 신설, §6 표·§4.1 갱신 |
 | v0.1 | 최초 작성. `docs/ARCHITECTURE.md`의 구조 결정을 구현 가능한 스펙(데이터 모델 코드, DDL, API, 검증 규칙)으로 세분화 |
@@ -1008,7 +1009,9 @@ grant select on public.leaderboard_entries_active to anon, authenticated;
 | `AppUser.weeklyGoalKm` | `profiles.weekly_goal_km` | double precision nullable | AC-02 사용자 편집 컬럼(마이그레이션 53, 2026-08-31). **단위가 km다** — 다른 거리 컬럼이 미터인 것과 의도적으로 다르며, 사용자가 직접 입력·확인하는 표시값이라 표시 단위와 맞췄다. `NULL` = 미설정(`0`이 아니다), CHECK `> 0 and <= 500`. 티어·랭킹·뱃지 판정 입력이 **아니다**. `trg_profiles_guard`는 화이트리스트가 아니라 **블랙리스트**라(서버 전용 컬럼만 old 값으로 되돌린다) 컬럼 추가만으로 사용자 편집이 열린다 — 역으로 새 **서버 전용** 컬럼은 반드시 가드에 등록해야 한다 |
 | `RunRecord.awardedXp` | `runs.awarded_xp` | integer nullable | ⚠️ 구 `awardedPoints`/`awarded_points` 개명. 서버 전용 쓰기(`_serverOwnedKeys`) |
 | `RunRecord.isFlagged` | `runs.is_flagged` | boolean nullable | 2026-08-26 읽기 전용 노출(공유 게이트). **`@Default(false)`가 아니라 nullable** — `null`(아직 모름) / `false`(서버가 정상 확정) / `true`(플래그) 세 상태를 구분해야 미검증 기록을 축하·공유해 버리는 사고를 막는다. 업로드 payload에서 제거(`_serverOwnedKeys`), 로컬 `summaryJson`에는 보존. **채워지는 유일한 경로는 업로드 응답**(`_push()`의 `.upsert(payload).select(...).single()`) — `trg_runs_guard`가 BEFORE 트리거에서 동기 확정하므로 재조회·realtime 없이 그 응답에 이미 들어 있다 |
-| `RunRecord.flagReason` | `runs.flag_reason` | text nullable | 위와 동일 규칙. 내부 코드성 문구라 사용자에게 그대로 노출하지 않는다 |
+| `RunRecord.flagReason` | `runs.flag_reason` | text nullable | 위와 동일 규칙. 내부 코드성 문구라 사용자에게 그대로 노출하지 않는다. 사유 목록은 §7.1 |
+| `RunRecord.distanceMeters` | `runs.distance_meters` | double precision | ⚠️ **양방향 컬럼**(마이그레이션 64, §7.2). 업로드 payload에 **싣고**(서버 재계산의 입력) 응답에서 **되받는다**(`_serverAdjustedKeys`) — 서버가 샘플 재계산 거리를 상시 확정값으로 채택하므로 응답 값이 보낸 값보다 작을 수 있다. `moving_seconds`도 같은 규칙 |
+| *(아직 대응 필드 없음)* | `runs.client_reported` | jsonb nullable | 서버 재계산 **직전의 클라이언트 주장값** `{distance_meters, moving_seconds, max_speed_mps, recalculated_at}`. 최초 확정 때만 채워진다(마이그레이션 64). 클라이언트는 **보내지 않고 받기만** 한다(`_serverOwnedKeys`) — 현재는 로컬 `summaryJson`에만 얹혀 있어 다음 전체 재기록(`toRow()`)에서 사라진다. 상세 화면에 "기기 기록 10.0km → 확정 9.7km"를 띄우려면 `RunRecord` 필드로 **승격 필요**(§14 #27 잔여 ②) |
 | *(대응 필드 없음)* | `profiles.current_streak_weeks` | integer | 리플레이 결과 캐시 |
 | *(대응 필드 없음)* | `profiles.longest_streak_weeks` | integer | 리플레이 결과 캐시 · **`streak_weeks_gte` 판정의 유일한 소스** |
 | *(대응 필드 없음)* | `profiles.streak_freeze_credits` | smallint | 리플레이 파생값 캐시(표시용, 0 또는 1) |
@@ -1518,7 +1521,62 @@ Edge Function 시크릿 `FCM_SERVICE_ACCOUNT`, 그리고 함수 배포. 셋이 �
 | 경로 비현실성 | 연속 3개 이상 샘플이 완전 직선 + 등간격(순간이동 패턴) | 플래그, 수동 검토 큐(운영 콘솔, Phase 1 이후) |
 | 다계정 의심 | 동일 기기 식별자로 다수 계정의 유사 경로 반복 | Phase 4 대상 — 현재는 로깅만, 포인트 없음 |
 
-⚠️ **표와 실제 구현의 차이 (2026-09-01 확인, A-6 C-1 부수 확인)**: 현재 `validate_run`(마이그레이션 04)은 **플래그만** 세운다 — `implausible_avg_speed`(평균 > 7.0 m/s = 2'23"/km), `implausible_max_speed`(`max_speed_mps` > 15.0 m/s), `moving_exceeds_elapsed`, `zero_moving_time`, 거리·시간·고도 상한. 위 표의 **"구간 속도 25km/h 초과 구간 제거 후 재계산"과 "샘플로 거리 재계산"은 아직 서버에 없다.** 즉 25km/h 기준은 현재 **클라이언트 1차 필터에만 살아 있다**(§8.3, `GpsFilterConfig.maxPlausibleSpeedMps`). 방향은 안전하다 — 클라이언트가 더 조이므로 서버 플래그 이전에 걸러진다. 서버 측 샘플 재계산 구현은 backend 담당의 남은 항목이다(§14 #27).
+### 7.1 실제 구현 (마이그레이션 04 + 64)
+
+검증은 두 층으로 나뉜다. 둘 다 `trg_runs_guard`(BEFORE INSERT/UPDATE)가 같은 트랜잭션에서 수행하므로, 업로드 응답(`.select().single()`)에 이미 판정 결과가 들어 있다.
+
+**① 샘플 기반 재계산 — `recalc_run_from_samples(samples, activity_type)` (마이그레이션 64)**
+
+| 규칙 | 값 | 클라이언트 대응 상수 |
+|---|---|---|
+| 구간 거리 | 인접 샘플 Haversine. 좌표가 없으면 `cumulative_distance_meters` 차분으로 폴백 | `haversineMeters` |
+| 구간 제거 | 구간 속도 > **6.944 m/s (25km/h)** | `GpsFilterConfig.maxPlausibleSpeedMps` |
+| 미산입(정지·노이즈) | 구간 속도 < **0.6 m/s** | `GpsFilterConfig.minMovingSpeedMps` |
+| 구간 이동시간 상한 | `min(dt, 20초)` | `GpsFilterConfig.signalGapSeconds` |
+| 타임스탬프 역행/중복 | `dt ≤ 0` → 구간 제거 + `sample_time_regression` 플래그 | — |
+
+**덮어쓰기와 플래그는 분리된 결정이다** (2026-09-03 사용자 확정, QA F-3/F-7/F-8). 허용 밴드 개념은 **폐기**했다 — PRD §8.4 의 "구간 제거 후 재계산"은 *수용 조치*이지 *예외 조치*가 아니고, 밴드를 두면 그 폭이 그대로 우회 여지가 되기 때문이다.
+
+| 결정 | 규칙 |
+|---|---|
+| **① 덮어쓰기** | **항상.** 재계산이 유효하면(`applied`) `distance_meters` · `moving_seconds` · `max_speed_mps` · `samples[].cumulative_distance_meters` 를 서버 값으로 확정한다. 이 값이 티어·주간랭킹·XP·뱃지의 근거다 |
+| **② 플래그** | 서버 값 < 클라 주장 × **0.8**(= 20% 초과 축소)일 때만 `distance_mismatch`. 그 이하 축소는 조용히 덮어쓰기만 한다. 정직한 기록도 스무딩 차이·신호등 정지(앵커 변위를 서버가 세지 못함)로 조금 짧게 나오므로, 그것을 부정으로 낙인찍지 않기 위한 보수적 임계. 상수는 `trg_runs_guard` 의 `v_flag_shrink_ratio` 한 곳 |
+| **③ 늘리는 방향** | **채택하지 않는다.** 재계산값 > 클라 주장이면 클라 값을 그대로 둔다(= `least(recalc, claimed)`). 사용자가 주장한 적 없는 거리를 서버가 만들어 랭킹에 실을 이유가 없다. 플래그도 하지 않는다. 이때 거리·이동시간·샘플을 **하나도 건드리지 않는다** — 거리만 클라 값으로 두고 샘플 누적거리만 재기입하면 `distance_meters` 와 `max(cumulative_distance_meters)` 가 어긋나 스플릿·PB 가 확정 거리와 다른 근거로 산출된다 |
+
+덮어쓸 때 원본 주장값은 `runs.client_reported jsonb`(`{distance_meters, moving_seconds, max_speed_mps, recalculated_at}`)에 보존한다 — PRD §8.4 "이의 제기 경로 필수 제공"의 근거 데이터. **최초 확정 때만 쓴다**(`client_reported is null` 일 때만): 아래 §7.2 로 클라이언트가 서버 확정 거리를 되받게 되면서 재 upsert 는 이미 서버 값을 실어 오므로, 매번 덮어쓰면 "원래 얼마를 주장했는가"가 세탁된다.
+
+**플래그 승계(QA F-2)**: HI-07 되돌리기 UPDATE 경로(`new := old`)에서는 `is_flagged`/`flag_reason` 을 재판정하지 않고 승계한다. 되돌린 뒤에는 재계산 차이가 0 이 되어 `distance_mismatch` 가 지워지고, 이어서 `compute_run_xp` 가 만점 XP 를 다시 매겨 AFTER 트리거가 티어·랭킹·뱃지에 편입시키기 때문 — 제목 한 줄 수정이나 오프라인 큐 재 upsert 만으로 부정 기록이 정상화된다.
+
+⚠️ **스킵 분기 (의도됨)**: `activity_type = 'indoor_run'` 이거나 샘플이 2개 미만이면 **재계산하지 않고 클라이언트 값을 그대로 둔다.** 경로 없는 기기 측정 거리가 0으로 깎이는 것을 막기 위해서다. 이 취급의 최종 결정은 §14 **#26 ②**(웨어러블 실내 거리의 티어·랭킹 반영 범위)와 함께 내린다.
+
+⚠️ **거부(422)가 아니라 플래그**: 위 표의 "기록 거부(422)"는 실제로는 플래그로 구현했다. 오프라인 큐(`syncPending`)는 같은 id 재 upsert 로 멱등성을 얻는데 여기서 예외를 던지면 그 큐가 영구히 실패한다(마이그레이션 05·51 헤더와 같은 방침).
+
+⚠️ **과거 행 백필은 하지 않았다.** `runs` 의 AFTER 트리거 4종에 `WHEN` 절이 없어 대량 UPDATE 가 전 사용자 재집계를 돌리고, 재계산으로 거리가 줄면 이미 지급된 뱃지·티어의 근거가 사라지는데 **시즌 중 강등은 금지**다(PRD TI-08). 64 는 앞으로 올라올 기록에만 적용된다.
+
+**② 집계값 상한 검사 — `validate_run(...)` (마이그레이션 04, 변경 없음)**
+
+①이 확정한 값을 입력으로 받는다: `implausible_avg_speed`(평균 > 7.0 m/s = 2'23"/km), `implausible_max_speed`(> 15.0 m/s), `moving_exceeds_elapsed`, `zero_moving_time`, 거리 200km / 시간 24h / 고도 9,000m 상한.
+
+**플래그 사유 우선순위**: `validate_run` 결과 → 없으면 `sample_time_regression` → `distance_mismatch`(서버 값이 클라 주장 × 0.8 미만일 때만).
+
+### 7.2 클라이언트의 서버 확정 거리 되받기 (QA F-4)
+
+§7.1 ①로 덮어쓰기가 **상시 경로**가 되면서, 플래그 없는 정상 기록에서도 서버 값이 클라이언트 값보다 조금 작을 수 있다. 되받지 않으면 "앱 요약은 10.0km인데 랭킹 반영은 9.7km"가 된다.
+
+`LocalRunRepository`는 되받을 컬럼을 **두 집합으로 나눈다**(한 집합으로 합칠 수 없다).
+
+| 집합 | 의미 | 컬럼 |
+|---|---|---|
+| `_serverOwnedKeys` | 페이로드에서 **빼고** 응답에서 채택 | `avg_pace_sec_per_km` · `awarded_xp` · `is_flagged` · `flag_reason` · `created_at` · `updated_at` · `client_reported` |
+| `_serverAdjustedKeys` | **보내고 또 받는다** | `distance_meters` · `moving_seconds` |
+
+거리·이동시간은 **서버 재계산의 입력**이라 반드시 실어야 한다 — 빼면 서버가 비교할 원본 주장값 자체가 사라진다. 채택 대상 전체는 `_adoptedKeys`(두 집합의 합)이고 `_confirmationColumns`(PostgREST `select=`)도 여기서 파생된다.
+
+채택 시 **로컬 `summaryJson` 의 거리를 서버 값으로 갱신한다.** 별도 필드로 두고 표시만 클라 값으로 유지하면 히스토리·통계·공유 카드가 전부 랭킹과 다른 숫자를 말하게 된다. 원래 주장값은 `client_reported` 로 함께 내려와 로컬에 남으므로 상세 화면에서 "기기 기록 10.0km → 확정 9.7km"를 보여줄 **데이터는 확보**돼 있다(UI 구현은 flutter-ui 후속).
+
+⚠️ `samplesJson` 은 갱신하지 않는다 — 서버가 `cumulative_distance_meters` 를 재기입하지만 되받으려면 3,600 샘플을 다시 내려받아야 하고, 로컬 스플릿 표시는 이미 로컬 샘플 기준으로 일관되다.
+
+⚠️ `client_reported` 는 `RunRecord` 의 필드가 아니라 `summaryJson` 에만 얹혀 있다. 다음 전체 로컬 재기록(`toRow()`)에서 사라지므로, UI 가 이 값을 실제로 쓰게 될 때 모델 필드로 승격해야 한다.
 
 **동점 처리 정렬 규칙 (PRD §8.2)** — 실제 구현은 §4.3 (마이그레이션 40, `refresh_all_leaderboards`):
 ```sql
@@ -1765,9 +1823,9 @@ PRD §11 "Phase 0 — 아키텍처·데이터 모델·Supabase 스키마 확정"
 | 17 | **클라이언트 진행률 바가 마이그레이션 42의 새 허용오차(§10.2)를 반영하지 않는다.** `badge_condition.dart`의 `sessionDistanceGte` 진행률 계산이 여전히 `distance/목표`(정확 비율)라, 텐런을 9.8km(서버 인정 기준)에서 뛰어도 바는 98.00%로 멈춘다. 실제 지급 시점에 `isEarned`가 `ratio: 1.0`으로 스냅해 자가 치유되므로 사용자에게 "받았는데 바가 98%"로 잠깐 보이는 정도이며, 클라이언트가 값을 내는 조건이 이 하나뿐이라 영향 범위는 좁다 | 다음 gamification-designer/flutter-ui-designer 라운드에서 진행률 계산에 동일 허용오차 반영 |
 | ~~20~~ | ~~성취 억제 카운터와 전역 축하 다이얼로그 사이에 프레임 경합이 있다~~ → **해소(2026-08-27).** 인라인 축하(요약 화면)와 억제 카운터 메커니즘 자체를 제거하고 전역 `AchievementCelebrationHost` 풀페이지 하나로 통합했다(사용자 요청, §3.9.3). 경합을 일으키던 두 소비 지점 중 하나가 사라져 원인이 구조적으로 없어졌다 | — |
 | 21 | **뱃지 아트 경로 규칙이 다시 두 곳이다**(QA O-4) — `badge_assets.dart`의 정본 `badgeAssetPath`와 `share_card_body.dart`의 `tierEmblemAssetPath`가 별도로 존재한다. 현재는 `assets/badges/tier/{bronze,silver,gold,platinum}.svg` 파일명이 우연히 일치해 문제가 드러나지 않지만, 이번 라운드가 없앤 이원화와 같은 형태다 | flutter-ui-designer, 정본으로 통합 |
-| 27 | **서버가 샘플로 거리를 재계산하지 않는다.** §7 표와 PRD §8.4는 "구간 속도 25km/h 초과 구간 제거 후 재계산"을 규정하지만 `validate_run`은 클라이언트가 올린 집계값에 플래그만 세운다(§7 ⚠️ 참조). 지금은 클라이언트 1차 필터(§8.3, 같은 25km/h)가 그 역할을 대신하고 있어 방향은 안전하지만, **"클라이언트 계산 값을 신뢰하지 않는다"는 PRD §8.4 원칙이 아직 코드로 성립하지 않는다** — 앱을 개조한 클라이언트가 임의 거리를 올리면 평균 7.0 m/s 미만인 한 통과한다. 웨어러블 임포트(경로 있는 외부 기록)가 붙으면 검증 표면이 더 넓어진다. ⚠️ **샘플이 없는 기록(폰 실내 러닝 등)의 취급은 #26 ②(웨어러블 실내 거리의 반영 범위)와 함께 결정한다** — 샘플 기반 재계산을 그대로 적용하면 경로 없는 기기 측정 거리가 0으로 깎이므로 두 항목이 상호 참조돼야 한다 | 🔴 베타 오픈 전, backend-engineer |
+| 27 | **서버가 샘플로 거리를 재계산하지 않는다** → 🟡 **구현 완료 · 원격 적용 대기(2026-09-03, 마이그레이션 64).** ⚠️ **아직 "해소"가 아니다** — 파일만 존재하고 라이브 DB에는 적용되지 않았으므로, **운영 서버는 여전히 클라이언트 집계값을 그대로 신뢰한다.** 적용 절차·검증 쿼리는 `_workspace/20260903_backend_p0-validate-recalc-upload-guard.md` §1.4. 구현 내용: `recalc_run_from_samples(samples, activity_type)` 가 인접 구간을 다시 걸어 거리·이동시간을 산출하고, `trg_runs_guard` 가 파생값(페이스·`validate_run`·XP) 확정 **앞**에서 이를 호출한다. 상수는 전부 클라이언트 `GpsFilterConfig` 와 동일(25km/h 제거 · 0.6 m/s 미산입 · 구간 20초 상한). **덮어쓰기는 항상**(밴드 없음), **플래그는 서버 값 < 클라 주장 × 0.8 일 때만**, **늘리는 방향은 채택하지 않음**(`least(recalc, claimed)`) — 세 결정은 분리돼 있다(§7.1, 2026-09-03 사용자 확정). 원본 주장값은 `runs.client_reported` 에 최초 확정 때만 보존. **샘플 2개 미만·`indoor_run` 은 스킵**하고 클라이언트 값을 유지한다 — 이 취급의 최종 결정은 #26 ② 와 함께. 과거 행 백필은 하지 않았다(TI-08 · 트리거 폭발). HI-07 되돌리기 UPDATE 경로에서는 `is_flagged`/`flag_reason` 을 **재판정하지 않고 승계**한다 — 재계산발 `distance_mismatch` 는 복원된 old 상태에서 재현되지 않아, 제목 편집이나 오프라인 재 upsert 한 번으로 플래그가 세탁되기 때문(QA F-2). **클라이언트 되받기(QA F-4)도 이번 범위에 포함해 함께 닫았다** — `_serverAdjustedKeys`(`distance_meters`·`moving_seconds`)를 신설해 **보내고 또 받으며**, `client_reported` 도 함께 내려와 로컬 `summaryJson` 에 남는다(§7.2). **잔여**: ① F-7 — 신호등 정지(앵커 변위)를 서버가 세지 못해 값이 체계적으로 짧게 나올 수 있다. 20% 임계가 대부분 흡수하지만, 원격 적용 후 실측(산출물 §6 진단 쿼리)에서 편향이 확인되면 **서버 재계산에 정지 구간 보정을 넣는 별도 후속**이 필요하다 ② `client_reported` 를 `RunRecord` 필드로 승격 + 상세 화면 표시(flutter-ui 후속) | 원격 적용 + 실측 후 |
 | 28 | **TR-04 잔여 격차 — 거리필터가 만드는 지연.** A-6 C-3/C-4로 폴링(절전 10→5초)과 스무딩 지연(마커를 원시 fix로 분리)은 해소했으나, `distanceFilter`(표준 3m / 절전 8m)는 **이동량이 적을 때 콜백 자체를 억제**한다 — 아주 느린 걷기·제자리 대기에서는 마커 갱신이 5초를 넘을 수 있다. 같은 이유로 절전 모드에서는 정지 판정용 fix가 안 들어와 **자동 일시정지(TR-03) 진입이 늦거나 안 될 수 있다.** 거리필터를 0으로 내리면 배터리 목표(§11)와 충돌하므로, 실기기에서 두 수치를 함께 재고 결정한다 | Phase 1 실기기 검증(§3.3·§3.4)에서 실측 후 |
-| 29 | **중복 업로드 경합 (A-5로 증폭, 회귀 아님).** `local_run_repository.dart`의 `_schedulePush` fire-and-forget 체인과 `RunSyncCoordinator`의 `syncPending()`은 별개 실행 경로다 — 러닝 종료 직후 백그라운드 업로드가 도는 중 코디네이터 신호(특히 연결 회복)가 발화하면 같은 행을 두 번 올린다. `id`=클라이언트 UUID upsert라 **데이터 손상은 없고** A-5 이전에도 있던 경합이지만, `_uploads` 체인이 생기며 연속 저장 시 증폭 여지가 늘었다. 재시도 상한 부재(L-2)와 같은 뿌리 — 업로드 인플라이트 가드 하나로 함께 처리 | P1, backend-engineer |
+| ~~29~~ | ~~중복 업로드 경합 + 재시도 상한 부재(L-2)~~ → **해소(2026-09-03).** (#27 과 달리 **원격 적용 단계가 없다** — 전부 클라이언트 코드이고 drift 마이그레이션은 앱 실행 시 자동 적용된다.) ① **인플라이트 가드** — `LocalRunRepository._inFlight`(`Set<String>`)를 `_schedulePush` 체인과 `syncPending()` 이 공유한다. 판정은 `_push()` 진입부의 `Set.add` 반환값 하나로 원자적으로 내린다(Dart 단일 스레드라 `add` 와 이후 `await` 사이에 끼어들 수 없다). 이미 업로드 중이면 **실패가 아니므로 시도 횟수를 올리지 않는다**. ② **재시도 상한** — drift 스키마 v1→v2 로 `sync_attempts` · `last_sync_attempt_at` 추가, `maxSyncAttempts = 10`. `syncPending()` 이 질의 단계에서 상한 초과 행을 제외한다. 성공하면 예산은 0 으로 복원된다. **백오프가 아니라 횟수 상한을 택한 이유**: 재시도 *간격*은 이미 코디네이터 신호(로그인/복귀/연결 회복/2분)가 정하고 있고, 벽시계 기반 백오프는 오프라인 회귀 테스트 전체를 시간에 묶는다. 상한에 걸린 행은 **지워지지 않고** `failed` 로 남으며 `resetSyncAttempts(id)` 로 되살릴 수 있다. **남은 격차**: 그 상태를 사용자에게 보여 주고 수동 재시도를 태우는 UI 가 아직 없다(히스토리의 "동기화 대기" 칩이 붙을 자리) | 잔여: 수동 재시도 UI — flutter-ui-designer |
 | ~~30~~ | ~~시즌 말 "걸친 주"의 RK-06 뱃지가 영영 지급되지 않는다~~ → **해소(2026-09-01, 마이그레이션 61 — 사용자 승인)**. PRD §8.5 의 미구현 스펙("시즌 종료일이 주 중간이면 해당 주간 랭킹은 단축 운영")을 구현하면서 근본 원인을 닫았다. ① `leaderboard_period_bounds('weekly')` 가 달력 주를 **앵커가 속한 시즌으로 클램프**해 조각 2개로 나눈다(스키마 변경 없음 — `period_start` 가 달라 `leaderboard_entries` 가 자동으로 별개 기간으로 다룬다). ② `week_id_at()` 이 걸친 주에만 `@{season}` 을 붙여 dedupe 키 충돌을 막는다(걸치지 않는 주는 출력 불변 → 기존 이력과 호환). ③ **판정 시즌을 `season_id_at(now())` 가 아니라 `runnit.badge_season` GUC(= `badges.season_id`)로** 바꿨다 — 이것이 C-2 의 진짜 원인이고, 동시에 "미획득으로 남은 과거 시즌 인스턴스가 현재 시즌 데이터로 재판정되는" 더 넓은 잠재 결함(Q4 성적으로 Q3 뱃지 발급)도 함께 닫힌다. ④ 확정 배치가 "직전 1개"가 아니라 **끝났는데 미확정인 모든 주간 기간(14일 되짚기)** 을 확정하고, `reset_stale_seasons` 가 리셋 루프 **전에** 확정 배치를 불러 구시즌 조각을 시즌 마감과 같은 순간에 확정한다. 스모크(2026-Q3 종료, 09-30 수요일): Q3 조각 `2026-W40@2026-Q3`(09-28~10-01, 3일) / Q4 조각 `2026-W40@2026-Q4`(10-01~10-05, 4일) 분리·확정 확인, 판정식이 Q3=true·Q4=false 로 갈리는 것과 `srank_bronze_top1@2026-Q3` 실지급까지 확인 | — |
 | 31 | **무효 시즌 사용자를 스냅샷에서 숨기면 그 티어의 `rank`·`participant_count`에 구멍이 남는다**(2026-09-01, QA C-1 부수 논점). 마이그레이션 59가 RLS 반전은 고쳤지만, 차단 방식이 "행을 감춘다"라서 3위가 무효면 나머지에게는 1·2·4위로 보이고 `participant_count`는 무효 사용자를 계속 센다. 진짜 무효 처리라면 스냅샷 **재산정** 또는 `is_voided` 반영 후 **재랭크**가 필요하다. 소비 UI가 아직 없어 실피해는 없다 | RK-10 UI 라운드, gamification-designer와 확정 |
 | ~~32~~ | ~~`_season_history_voided()` 가 `authenticated` 에게 RPC 로 노출된다~~ → **해소(2026-09-01, 마이그레이션 60 — 옵션 B, 사용자 승인)**. 헬퍼를 없애는 대신 **교차 테이블 참조 자체를 제거**했다: `season_leaderboard_snapshots.is_voided` 컬럼을 신설해 적재 시점에 `season_histories.is_voided` 를 복사하고, SELECT 정책을 `season_histories_select_visible` 와 **같은 형태의 순수 컬럼 술어**(`is_voided = false or user_id = auth.uid()`)로 되돌린 뒤 헬퍼를 DROP 했다. 정책 평가에 함수가 필요 없어져 RPC 노출이 사라지고 advisor 가 기존 6건으로 원복됐다. 두 테이블의 정책이 같은 모양이 되면서 59가 지적한 "형태가 달라 생긴 반전" 함정 자체도 없어졌다. **대가**: 복제본이 원본과 갈라질 수 있다 — `is_voided` 를 세우는 코드 경로가 없어(순수 수동 SQL) 잊히기 쉬우므로 `set_season_history_voided(user_id, season_id, voided)` 를 **단일 진입점**으로 신설해 두 테이블을 한 트랜잭션에서 갱신한다 | — |
