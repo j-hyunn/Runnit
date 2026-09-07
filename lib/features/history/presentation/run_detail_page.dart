@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/providers/repository_providers.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/utils/share_anchor.dart';
 import '../../../models/models.dart';
+import '../../tracking/data/local_run_repository.dart';
 import '../../tracking/presentation/tracking_format.dart';
 import '../../tracking/presentation/widgets/run_map_view.dart'
     show RunMapUnavailable;
@@ -159,6 +163,35 @@ Future<void> exportRunAsGpx(
   }
 }
 
+/// 재시도 상한([LocalRunRepository.maxSyncAttempts])에 걸려 자동 큐에서 빠진
+/// 기록을 사용자가 직접 다시 올린다 (TRD §14 #29 잔여 F-5).
+///
+/// 예산만 되돌리면(`resetSyncAttempts`) 다음 코디네이터 신호(최대 2분)까지
+/// 아무 일도 일어나지 않아 버튼이 먹통처럼 보인다. 그래서 곧바로
+/// `syncPending()`을 한 번 태운다 — 코디네이터에는 외부에서 부를 수 있는
+/// 트리거가 없고(`_trySync`는 private), 여기서 직접 부르는 편이 짧다.
+///
+/// 업로드 완료는 **기다리지 않는다**: 3,600 샘플 업로드는 수십 초가 걸릴 수
+/// 있고, 결과는 `runSyncRetryExhaustedProvider`·`runSyncStatusProvider`가
+/// drift `watch()`로 받아 배너를 스스로 지운다. 실패해도 행은 다시 `failed`로
+/// 남아 배너가 유지되므로 별도 에러 안내를 겹쳐 띄우지 않는다.
+@visibleForTesting
+Future<void> retrySyncUpload(
+  BuildContext context,
+  WidgetRef ref,
+  RunRecord record,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final repo = ref.read(runRepositoryProvider);
+  if (repo is LocalRunRepository) {
+    await repo.resetSyncAttempts(record.id);
+  }
+  messenger.showSnackBar(const SnackBar(content: Text('다시 시도하고 있어요')));
+  unawaited(
+    repo.syncPending(userId: record.userId).catchError((Object _) => 0),
+  );
+}
+
 /// 헤더 오른쪽 액션 묶음 — 편집 버튼 + (경로가 있을 때만) 오버플로 메뉴.
 ///
 /// 오버플로 버튼에 [GlobalKey]를 달아 두는 이유는 하나뿐이다: iPad 공유
@@ -277,6 +310,11 @@ class _DetailBody extends ConsumerWidget {
     // 목록 스트림이 아는 기록이면 그쪽의 실시간 값을 쓰고, 모르면(오래된 기록·
     // 다른 기기 기록) 조회 시점 값으로 폴백한다.
     final syncStatus = ref.watch(runSyncStatusProvider(runId));
+    // 자동 재시도 예산이 소진됐는가 — 모델에 없는 로컬 컬럼이라 별도 구독이다.
+    // 아직 도착 전(loading)이면 false로 본다: 자동 재시도 중이라는 문구가
+    // 사실에 더 가깝고, 값이 오면 그 자리에서 재시도 버튼으로 바뀐다.
+    final retryExhausted =
+        ref.watch(runSyncRetryExhaustedProvider(runId)).valueOrNull ?? false;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -313,16 +351,31 @@ class _DetailBody extends ConsumerWidget {
             ),
           ),
         ],
-        // 플래그가 우선이다 — 두 배너를 함께 띄우지 않는다. 검토 대상 기록은
-        // 업로드가 끝났다는 뜻이므로 애초에 동시에 성립하기 어렵고, 겹칠 경우
-        // 사용자가 먼저 알아야 할 쪽은 "반영되지 않았다"는 확정 사실이다.
+        // 플래그가 우선이다 — 두 배너를 함께 띄우지 않는다. 겹칠 경우 사용자가
+        // 먼저 알아야 할 쪽은 "반영되지 않았다"는 확정 사실이다.
+        //
+        // G-4(마이그레이션 64) 이후 `applyServerConfirmation`이 `is_flagged`
+        // 채택과 `synced` 승격을 분리하면서, `isFlagged==true && 아직 pending`
+        // 조합이 실제로 도달 가능해졌다(업로드 중 로컬 편집 → pending 유지 →
+        // 그 사이 서버가 플래그). 이때 플래그 배너만 띄우면 재시도 예산이
+        // 소진된 사용자에게 유일한 탈출구인 "다시 시도"가 사라진다. 배너를
+        // 3개로 늘리지 않고, 플래그 배너 아래에 재시도 액션만 덧붙인다.
         if (record.isFlagged == true) ...[
           const SizedBox(height: AppTokens.s12),
           const _FlaggedBanner(),
+          if (retryExhausted && isSyncPending(record, syncStatus: syncStatus)) ...[
+            const SizedBox(height: AppTokens.s8),
+            _RetryUploadAction(
+              onRetry: () => retrySyncUpload(context, ref, record),
+            ),
+          ],
         ] else if (isSyncPending(record, syncStatus: syncStatus)) ...[
           const SizedBox(height: AppTokens.s12),
           _SyncPendingBanner(
             failed: (syncStatus ?? record.syncStatus) == SyncStatus.failed,
+            onRetry: retryExhausted
+                ? () => retrySyncUpload(context, ref, record)
+                : null,
           ),
         ],
         const SizedBox(height: AppTokens.s16),
@@ -356,6 +409,14 @@ class _DetailBody extends ConsumerWidget {
         ..._lapSections(
           splits,
           hasRoute: hasRoute,
+          // 서버가 거리를 깎았을 때 이 화면에는 서로 다른 기준의 숫자가 공존
+          // 한다: 요약의 거리는 **확정값**인데 랩·페이스·경로는 로컬 samples
+          // (= 기기 원본)에서 계산한다. 서버가 재기입한 샘플을 되받지 않기로
+          // 했으므로(3,600건 재다운로드) 이 divergence는 남으며, 여기서 한 줄로
+          // 밝히는 것이 유일한 설명이다(아키텍트 문서 §4 열린항목 2·3).
+          adjustedDistanceKm: record.distanceWasAdjusted
+              ? Formatters.km(record.distanceMeters, fractionDigits: 2)
+              : null,
           // 랩 시간은 샘플 타임스탬프 차이(= 경과 시간, 일시정지 포함)라
           // 위 "평균 페이스"(이동 시간 기준)와 기준이 다르다. 일시정지가
           // 길었던 러닝에서만 눈에 띄므로 그때만 한 줄로 밝힌다.
@@ -371,7 +432,24 @@ class _DetailBody extends ConsumerWidget {
     List<LapSplit> splits, {
     required bool hasRoute,
     required bool paused,
+    required String? adjustedDistanceKm,
   }) {
+    // 서버 확정 거리가 기기 기록보다 작을 때만 non-null. 랩·페이스·경로가
+    // 어느 기준인지 밝히는 한 줄이며, 경로만 있고 랩이 없는 기록에도 붙는다.
+    final adjustedNote = adjustedDistanceKm == null
+        ? const <Widget>[]
+        : <Widget>[
+            const SizedBox(height: AppTokens.s8),
+            Text(
+              '랩·페이스·경로는 기기가 기록한 원본 거리 기준이에요. '
+              '티어·랭킹에는 확정 거리 $adjustedDistanceKm km가 반영돼요.',
+              style: const TextStyle(
+                fontSize: 12,
+                color: RunDetailPage._mutedText,
+              ),
+            ),
+          ];
+
     if (splits.isEmpty) {
       return [
         const SizedBox(height: AppTokens.s24),
@@ -382,6 +460,7 @@ class _DetailBody extends ConsumerWidget {
               : '경로 데이터가 없어 구간·페이스 그래프를 만들 수 없어요.',
           style: const TextStyle(fontSize: 13, color: RunDetailPage._mutedText),
         ),
+        if (hasRoute) ...adjustedNote,
       ];
     }
     return [
@@ -394,6 +473,7 @@ class _DetailBody extends ConsumerWidget {
           style: TextStyle(fontSize: 12, color: RunDetailPage._mutedText),
         ),
       ],
+      ...adjustedNote,
       if (PaceChart.canRender(splits)) ...[
         const SizedBox(height: AppTokens.s32),
         _Section(title: '페이스 그래프', child: PaceChart(splits: splits)),
@@ -413,17 +493,35 @@ class _SummaryGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = <(String, String)>[
-      ('거리', '${Formatters.km(record.distanceMeters, fractionDigits: 2)} km'),
-      ('이동 시간', Formatters.duration(record.movingSeconds)),
-      ('평균 페이스', RunFormat.paceOf(record)),
-      ('경과 시간', Formatters.duration(record.elapsedSeconds)),
-      if (record.caloriesKcal != null) ('칼로리', '${record.caloriesKcal} kcal'),
+    // (라벨, 값, 보조 표기). 보조 표기는 지금 거리 하나만 쓴다.
+    final items = <(String, String, String?)>[
+      (
+        '거리',
+        '${Formatters.km(record.distanceMeters, fractionDigits: 2)} km',
+        // TRD §14 #27 / 아키텍트 계약 — 서버가 샘플로 거리를 재계산해 깎았을
+        // 때만(> 10m) 원본을 병기한다. **주 숫자는 언제나 확정 거리**다:
+        // 히스토리·통계·랭킹·공유 카드가 모두 그 값을 쓰므로 여기서만 다른
+        // 숫자를 크게 보여주면 화면 간 수치가 갈린다.
+        //
+        // 배너가 아니라 인라인인 이유: 조정은 정상 기록에서도 일어나는 상시
+        // 현상이라, 배너로 만들면 앰버 배타 규칙(플래그 > 동기화 대기)의 세
+        // 번째 대상이 되고 플래그된 기록에서는 아예 사라진다.
+        record.distanceWasAdjusted
+            ? '기기 기록 '
+                '${Formatters.km(record.clientReportedDistanceMeters!, fractionDigits: 2)} km'
+            : null,
+      ),
+      ('이동 시간', Formatters.duration(record.movingSeconds), null),
+      ('평균 페이스', RunFormat.paceOf(record), null),
+      ('경과 시간', Formatters.duration(record.elapsedSeconds), null),
+      if (record.caloriesKcal != null)
+        ('칼로리', '${record.caloriesKcal} kcal', null),
       if (record.elevationGainMeters != null)
-        ('상승 고도', '${record.elevationGainMeters!.round()} m'),
+        ('상승 고도', '${record.elevationGainMeters!.round()} m', null),
       if (record.avgHeartRateBpm != null)
-        ('평균 심박', '${record.avgHeartRateBpm} bpm'),
-      if (record.avgCadenceSpm != null) ('케이던스', '${record.avgCadenceSpm} spm'),
+        ('평균 심박', '${record.avgHeartRateBpm} bpm', null),
+      if (record.avgCadenceSpm != null)
+        ('케이던스', '${record.avgCadenceSpm} spm', null),
     ];
 
     return LayoutBuilder(
@@ -434,7 +532,7 @@ class _SummaryGrid extends StatelessWidget {
         return Wrap(
           runSpacing: AppTokens.s16,
           children: [
-            for (final (label, value) in items)
+            for (final (label, value, note) in items)
               SizedBox(
                 width: itemWidth,
                 child: Column(
@@ -458,6 +556,16 @@ class _SummaryGrid extends StatelessWidget {
                         color: Color(0xFFA5A5A5),
                       ),
                     ),
+                    if (note != null)
+                      // 셀 폭이 96pt까지 좁아질 수 있어 두 줄까지 허용한다.
+                      Text(
+                        note,
+                        maxLines: 2,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: RunDetailPage._mutedText,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -528,6 +636,31 @@ class _Message extends StatelessWidget {
 /// `isFlagged`가 null(아직 검증 전)일 때는 띄우지 않는다. 업로드 직후 잠깐
 /// 지나가는 상태를 경고로 보여주면 정상 기록에 누명을 씌운다.
 /// `flagReason`도 노출하지 않는다 — 내부 코드에 가까운 문자열이다.
+/// 플래그 배너와 겹친 "재시도 예산 소진 + 아직 미업로드" 조합에서만 쓰는
+/// 최소 액션 행. 문구는 짧게 — 옆의 [_FlaggedBanner]가 맥락을 이미 준다.
+class _RetryUploadAction extends StatelessWidget {
+  const _RetryUploadAction({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(
+          child: Text(
+            '이 기록은 아직 서버에 올라가지 않았어요. 여러 번 시도했지만 '
+            '실패했어요.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF8A5A00)),
+          ),
+        ),
+        const SizedBox(width: AppTokens.s8),
+        TextButton(onPressed: onRetry, child: const Text('다시 시도')),
+      ],
+    );
+  }
+}
+
 class _FlaggedBanner extends StatelessWidget {
   const _FlaggedBanner();
 
@@ -566,18 +699,32 @@ class _FlaggedBanner extends StatelessWidget {
 /// 톤은 경고가 아니라 안내다 — 기록·거리·뱃지·XP는 전혀 손실되지 않고,
 /// 사용자가 할 일도 "네트워크에 연결한다"뿐이다. [_FlaggedBanner]와 같은
 /// 앰버 info 박스를 쓰되(같은 성격의 "반영 안 됨" 알림) 겹쳐 띄우지 않는다.
+///
+/// 상태는 셋이고 문구가 각각 다르다:
+/// - 미시도(`local`/`pending`) — "아직 올라가지 않았어요"
+/// - 자동 재시도 중(`failed`, 예산 남음) — "실패해 다시 시도하고 있어요"
+/// - **예산 소진**([onRetry] != null) — 자동 재시도가 멈췄으므로 사용자가
+///   직접 눌러야 한다. 앞의 둘과 달리 "기다리면 된다"가 거짓이 되는 지점이라
+///   문구를 확실히 갈라 놓는다(TRD §14 #29 F-5).
 class _SyncPendingBanner extends StatelessWidget {
-  const _SyncPendingBanner({required this.failed});
+  const _SyncPendingBanner({required this.failed, this.onRetry});
 
   /// `SyncStatus.failed` — 이미 한 번 이상 업로드를 시도했다가 실패했다.
   /// 재시도는 코디네이터가 알아서 돌리므로(§9의 4신호) 사용자가 할 일은
   /// `local`/`pending`일 때와 같다. 문구만 사실에 맞춘다.
   final bool failed;
 
+  /// null이 아니면 **자동 재시도 예산이 소진된 상태**
+  /// ([LocalRunRepository.maxSyncAttempts]). 이때만 "다시 시도" 버튼을 준다 —
+  /// 예산이 남아 있는데 버튼을 노출하면 코디네이터가 어차피 할 일을
+  /// 사용자에게 시키는 셈이다.
+  final VoidCallback? onRetry;
+
   static const Color _amberInk = Color(0xFF8A5A00);
 
   @override
   Widget build(BuildContext context) {
+    final onRetry = this.onRetry;
     return Container(
       padding: const EdgeInsets.all(AppTokens.s12),
       decoration: BoxDecoration(
@@ -603,15 +750,43 @@ class _SyncPendingBanner extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  failed
-                      ? '업로드에 실패해 다시 시도하고 있어요. 네트워크에 연결되면 '
-                          '자동으로 올라가요. 그 전까지는 이번 시즌 티어와 주간 '
-                          '랭킹에 반영되지 않아요.'
-                      : '이 기록은 아직 서버에 올라가지 않았어요. 네트워크에 '
-                          '연결되면 자동으로 업로드돼요. 그 전까지는 이번 시즌 '
-                          '티어와 주간 랭킹에 반영되지 않아요.',
+                  onRetry != null
+                      ? '여러 번 시도했지만 올리지 못했어요. 네트워크 상태를 '
+                          '확인하고 다시 시도해 주세요. 올라가기 전까지는 이번 '
+                          '시즌 티어와 주간 랭킹에 반영되지 않아요.'
+                      : failed
+                          ? '업로드에 실패해 다시 시도하고 있어요. 네트워크에 연결되면 '
+                              '자동으로 올라가요. 그 전까지는 이번 시즌 티어와 주간 '
+                              '랭킹에 반영되지 않아요.'
+                          : '이 기록은 아직 서버에 올라가지 않았어요. 네트워크에 '
+                              '연결되면 자동으로 업로드돼요. 그 전까지는 이번 시즌 '
+                              '티어와 주간 랭킹에 반영되지 않아요.',
                   style: const TextStyle(fontSize: 13, color: _amberInk),
                 ),
+                if (onRetry != null) ...[
+                  const SizedBox(height: AppTokens.s4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: onRetry,
+                      style: TextButton.styleFrom(
+                        foregroundColor: _amberInk,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppTokens.s12,
+                        ),
+                        minimumSize: const Size(0, AppTokens.minTapTarget),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text(
+                        '다시 시도',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

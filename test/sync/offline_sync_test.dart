@@ -43,8 +43,10 @@ void main() {
     RunStatus status = RunStatus.completed,
     int startHour = 6,
     int sampleCount = 3,
+    double? maxSpeedMps,
   }) =>
       RunRecord(
+        maxSpeedMps: maxSpeedMps,
         id: id,
         userId: userId,
         startedAt: DateTime.utc(2026, 9, 1, startHour),
@@ -315,6 +317,26 @@ void main() {
     );
   });
 
+  test('서버가 재기입한 max_speed_mps도 되받는다', () async {
+    // 64는 거리를 덮어쓸 때 max_speed_mps도 유효 구간 기준으로 재기입한다.
+    // 되받지 않으면 로컬 값이 이상치 구간을 품은 채 서버와 갈린다(QA PLAUSIBLE-2).
+    server
+      ..recalculatedDistanceMeters = 4600
+      ..recalculatedMovingSeconds = 1700
+      ..recalculatedMaxSpeedMps = 4.2;
+
+    await saveAndSettle(run(maxSpeedMps: 9.9));
+
+    final stored = await repository.findById('run-1');
+    expect(stored!.maxSpeedMps, 4.2, reason: '서버 재계산 최고 속도를 채택해야 한다');
+
+    // 올릴 때는 클라이언트 주장값이 실려야 한다.
+    expect(server.lastPayload!['max_speed_mps'], 9.9);
+
+    // 재계산 전 원본은 client_reported에 보존된다.
+    expect(stored.clientReported?.maxSpeedMps, 9.9);
+  });
+
   test('서버가 거리를 조정하지 않으면 클라이언트 값이 그대로 남는다', () async {
     // 응답에 distance_meters가 없는 경우(= 조정 없음)에도 로컬이 깨지지 않아야 한다.
     await saveAndSettle(run());
@@ -464,6 +486,144 @@ void main() {
     expect(first.keys, containsAll(<String>['timestamp', 'source', 'latitude']));
     expect(first.keys, everyElement(matches(RegExp(r'^[a-z0-9_]+$'))));
   });
+
+  // ───────── 8) client_reported 모델 필드 승격 (TRD §14 #27 잔여 ② / QA F-3) ─────────
+
+  test('되받은 client_reported는 다음 전체 로컬 재기록에서도 살아남는다', () async {
+    // 이 값이 `RunRecord` 필드가 아니라 `summaryJson`에만 얹혀 있던 동안,
+    // 다음 `toRow()`(= `RunRecord.toJson()`)가 키를 통째로 떨어뜨렸다.
+    // "상세 화면에 병기할 데이터는 확보돼 있다"는 §7.2의 주장이 앱 재저장 한 번에
+    // 무너지던 자리다.
+    server
+      ..recalculatedDistanceMeters = 4600
+      ..recalculatedMovingSeconds = 1700;
+
+    await saveAndSettle(run());
+
+    final confirmed = await repository.findById('run-1', includeSamples: true);
+    expect(confirmed!.clientReported?.distanceMeters, 5000);
+    expect(confirmed.distanceMeters, 4600);
+
+    // 전체 로컬 재기록. 오프라인으로 두어 서버 응답이 값을 다시 채워 넣지 못하게
+    // 한다 — 살아남는 근거가 재수신이 아니라 **로컬 직렬화**임을 고정한다.
+    server.offline = true;
+    await saveAndSettle(confirmed);
+
+    final rewritten = await repository.findById('run-1');
+    expect(rewritten!.clientReported?.distanceMeters, 5000,
+        reason: 'toJson() 왕복에서 client_reported가 사라지면 안 된다');
+    expect(rewritten.distanceMeters, 4600, reason: '확정 거리는 단일 진실이다');
+    expect(rewritten.distanceWasAdjusted, isTrue);
+    expect(rewritten.distanceAdjustmentMeters, 400);
+  });
+
+  test('로컬에 남은 client_reported를 업로드 payload에 다시 싣지 않는다', () async {
+    // 이 컬럼은 "재계산 전에 무엇을 주장했는가"의 증거다. 클라이언트가 그것을
+    // 다시 주장할 수 있으면 증거가 아니다(서버 가드도 되돌리지만, 애초에 안 싣는다).
+    await saveAndSettle(
+      run().copyWith(
+        clientReported: const ClientReportedRun(
+          distanceMeters: 9999,
+          movingSeconds: 111,
+        ),
+      ),
+    );
+
+    expect(server.lastPayload!.containsKey('client_reported'), isFalse);
+    expect(server.lastPayload!['distance_meters'], 5000);
+  });
+
+  // ───────── 9) 업로드 중 로컬 메타 편집 (G-4) ─────────
+
+  test('업로드 중 제목을 고치면 synced로 올리지 않고 pending으로 남긴다', () async {
+    // 업로드는 편집 **전** 제목을 싣고 나갔다. 응답을 받았다고 synced로 올리면
+    // `syncPending()`이 그 행을 다시 집지 않아 편집이 영원히 서버에 반영되지
+    // 않는다 — 사용자에게는 저장된 것처럼 보인다.
+    server
+      ..recalculatedDistanceMeters = 4600
+      ..recalculatedMovingSeconds = 1700;
+
+    final gate = Completer<void>();
+    server.gate = gate;
+
+    unawaited(repository.save(run(id: 'run-edit')));
+    for (var i = 0; i < 200 && server.requestCount == 0; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(server.requestCount, 1, reason: '업로드가 시작되지 않았다');
+
+    // 여기가 결함 지점 — 응답이 아직 오지 않은 사이의 편집.
+    // 행이 아직 `pending`이라 `updateMeta`는 네트워크를 타지 않는 로컬 경로다.
+    await repository.updateMeta('run-edit', title: '수정된 제목', note: '업로드 중 메모');
+
+    server.gate = null;
+    gate.complete();
+    await repository.uploadSettled;
+
+    expect(await statusOf('run-edit'), SyncStatus.pending,
+        reason: '편집이 아직 서버에 없으므로 큐에 남아야 한다');
+    expect(server.rows['run-edit']!['title'], '퇴근 러닝',
+        reason: '먼저 나간 요청은 편집 전 제목을 실었다');
+
+    // 서버 확정값은 **버리지 않는다** — pending으로 남기는 것과 별개의 결정이다.
+    final held = await repository.findById('run-edit');
+    expect(held!.distanceMeters, 4600);
+    expect(held.title, '수정된 제목');
+
+    // 다음 큐 순회가 편집까지 담아 다시 올린다.
+    expect(await repository.syncPending(), 1);
+    expect(server.rows['run-edit']!['title'], '수정된 제목');
+    expect(server.rows['run-edit']!['note'], '업로드 중 메모');
+    expect(await statusOf('run-edit'), SyncStatus.synced);
+  });
+
+  test('업로드 중 편집이 없으면 종전대로 synced로 올린다', () async {
+    // G-4 가드가 정상 경로를 pending에 붙잡아 두면 모든 기록이 매 순회마다
+    // 3,600 샘플을 재전송한다. 경계값(같은 시각)은 편집이 아닌 쪽으로 판정한다.
+    await saveAndSettle(run(id: 'run-quiet'));
+
+    expect(await statusOf('run-quiet'), SyncStatus.synced);
+    expect(await repository.syncPending(), 0);
+  });
+
+  // ───────── 10) 수동 재시도 UI 계약 (TRD §14 #29 잔여 F-5) ─────────
+
+  test('watchSyncRetryExhausted가 상한 도달·복구를 그대로 흘린다', () async {
+    // 상세 화면의 "다시 시도" 버튼 노출 조건. `sync_attempts`는 모델에 실리지
+    // 않는 기기 로컬 컬럼이라, 화면은 `RunRecord`가 아니라 이 스트림을 본다.
+    server.rejectIds.add('run-doomed');
+    await saveAndSettle(run(id: 'run-doomed'));
+
+    final seen = <bool>[];
+    final sub = repository.watchSyncRetryExhausted('run-doomed').listen(seen.add);
+    await Future<void>.delayed(Duration.zero);
+    expect(seen, <bool>[false], reason: '예산이 남아 있는 동안은 자동 재시도 중이다');
+
+    for (var i = 1; i < LocalRunRepository.maxSyncAttempts; i++) {
+      expect(await repository.syncPending(), 0);
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(seen.last, isTrue, reason: '상한에 걸렸으면 수동 재시도만 남는다');
+
+    // 수동 재시도 → 성공하면 배너가 스스로 사라진다(화면은 이 스트림만 본다).
+    server.rejectIds.clear();
+    await repository.resetSyncAttempts('run-doomed');
+    expect(await repository.syncPending(), 1);
+    await Future<void>.delayed(Duration.zero);
+    expect(seen.last, isFalse);
+
+    await sub.cancel();
+  });
+
+  test('synced 행은 예산과 무관하게 소진 상태가 아니다', () async {
+    await saveAndSettle(run(id: 'run-ok'));
+    expect(await statusOf('run-ok'), SyncStatus.synced);
+    expect(await repository.watchSyncRetryExhausted('run-ok').first, isFalse);
+  });
+
+  test('로컬에 없는 id는 false다 — 다른 기기 기록·상한 밖 기록', () async {
+    expect(await repository.watchSyncRetryExhausted('nope').first, isFalse);
+  });
 }
 
 /// `runs` 테이블의 컬럼 집합. 마이그레이션 01 + 36(`device_vendors`) +
@@ -530,6 +690,7 @@ class _FakePostgrest {
   /// 서버가 거리를 깎았을 때 클라이언트가 그것을 되받는지 보기 위한 것(QA F-4).
   double? recalculatedDistanceMeters;
   int? recalculatedMovingSeconds;
+  double? recalculatedMaxSpeedMps;
 
   /// 네트워크 없음. 소켓을 그대로 끊어 실제 오프라인과 같은 실패를 만든다.
   bool offline = false;
@@ -618,9 +779,12 @@ class _FakePostgrest {
               'distance_meters': recalculatedDistanceMeters,
               'moving_seconds':
                   recalculatedMovingSeconds ?? payload['moving_seconds'],
+              'max_speed_mps':
+                  recalculatedMaxSpeedMps ?? payload['max_speed_mps'],
               'client_reported': <String, dynamic>{
                 'distance_meters': payload['distance_meters'],
                 'moving_seconds': payload['moving_seconds'],
+                'max_speed_mps': payload['max_speed_mps'],
               },
             };
 
