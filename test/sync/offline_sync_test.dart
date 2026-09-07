@@ -43,8 +43,10 @@ void main() {
     RunStatus status = RunStatus.completed,
     int startHour = 6,
     int sampleCount = 3,
+    double? maxSpeedMps,
   }) =>
       RunRecord(
+        maxSpeedMps: maxSpeedMps,
         id: id,
         userId: userId,
         startedAt: DateTime.utc(2026, 9, 1, startHour),
@@ -313,6 +315,26 @@ void main() {
       (summary['client_reported'] as Map<String, dynamic>)['distance_meters'],
       5000,
     );
+  });
+
+  test('서버가 재기입한 max_speed_mps도 되받는다', () async {
+    // 64는 거리를 덮어쓸 때 max_speed_mps도 유효 구간 기준으로 재기입한다.
+    // 되받지 않으면 로컬 값이 이상치 구간을 품은 채 서버와 갈린다(QA PLAUSIBLE-2).
+    server
+      ..recalculatedDistanceMeters = 4600
+      ..recalculatedMovingSeconds = 1700
+      ..recalculatedMaxSpeedMps = 4.2;
+
+    await saveAndSettle(run(maxSpeedMps: 9.9));
+
+    final stored = await repository.findById('run-1');
+    expect(stored!.maxSpeedMps, 4.2, reason: '서버 재계산 최고 속도를 채택해야 한다');
+
+    // 올릴 때는 클라이언트 주장값이 실려야 한다.
+    expect(server.lastPayload!['max_speed_mps'], 9.9);
+
+    // 재계산 전 원본은 client_reported에 보존된다.
+    expect(stored.clientReported?.maxSpeedMps, 9.9);
   });
 
   test('서버가 거리를 조정하지 않으면 클라이언트 값이 그대로 남는다', () async {
@@ -668,6 +690,7 @@ class _FakePostgrest {
   /// 서버가 거리를 깎았을 때 클라이언트가 그것을 되받는지 보기 위한 것(QA F-4).
   double? recalculatedDistanceMeters;
   int? recalculatedMovingSeconds;
+  double? recalculatedMaxSpeedMps;
 
   /// 네트워크 없음. 소켓을 그대로 끊어 실제 오프라인과 같은 실패를 만든다.
   bool offline = false;
@@ -756,9 +779,12 @@ class _FakePostgrest {
               'distance_meters': recalculatedDistanceMeters,
               'moving_seconds':
                   recalculatedMovingSeconds ?? payload['moving_seconds'],
+              'max_speed_mps':
+                  recalculatedMaxSpeedMps ?? payload['max_speed_mps'],
               'client_reported': <String, dynamic>{
                 'distance_meters': payload['distance_meters'],
                 'moving_seconds': payload['moving_seconds'],
+                'max_speed_mps': payload['max_speed_mps'],
               },
             };
 

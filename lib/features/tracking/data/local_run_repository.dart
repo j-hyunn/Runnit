@@ -172,9 +172,16 @@ class LocalRunRepository implements RunRepository {
   /// (밴드 없음). 그래서 플래그가 없는 정상 기록에서도 서버 값이 클라이언트 값보다
   /// 조금 작을 수 있고, 되받지 않으면 "앱은 10.0km인데 랭킹엔 9.7km"가 된다.
   /// 여기서 되받아 로컬 `summaryJson`에 반영하는 것이 그 divergence의 유일한 차단막이다.
+  ///
+  /// `max_speed_mps`도 같은 이유로 들어 있다 — `trg_runs_guard`가 거리를 덮어쓸 때
+  /// `new.max_speed_mps := coalesce(v_recalc.max_speed_mps, …)`로 유효 구간의
+  /// 최대 구간속도를 함께 재기입한다(마이그레이션 64). 되받지 않으면 로컬 값은
+  /// 재계산으로 걸러진 이상치 구간을 그대로 품은 채 서버와 갈린다. 재계산 전
+  /// 원본은 `client_reported.max_speed_mps`에 따로 보존된다.
   static const Set<String> _serverAdjustedKeys = <String>{
     'distance_meters',
     'moving_seconds',
+    'max_speed_mps',
   };
 
   /// 업로드 응답에서 로컬에 **채택할** 컬럼 전체.
