@@ -3,6 +3,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../core/providers/repository_providers.dart';
 import '../../../models/models.dart';
+import '../../tracking/data/local_run_repository.dart';
 import '../../tracking/domain/polyline_codec.dart';
 import '../domain/lap_splits.dart';
 import 'history_providers.dart';
@@ -40,6 +41,22 @@ final runSyncStatusProvider =
     if (run.id == runId) return run.syncStatus;
   }
   return null;
+});
+
+/// 그 러닝이 **재시도 상한에 걸려 자동 큐에서 빠졌는지** (TRD §14 #29 F-5).
+///
+/// [runSyncStatusProvider]와 갈라 둔 이유는 원천이 다르기 때문이다:
+/// `syncStatus`는 [RunRecord]에 실려 목록 스트림에서 골라낼 수 있지만,
+/// `sync_attempts`는 **모델에 없는 기기 로컬 컬럼**이라
+/// `LocalRunRepository.watchSyncRetryExhausted`로 drift 행을 직접 구독해야 한다.
+///
+/// 원격 구현(`SupabaseRunRepository`)에는 재시도 예산이라는 개념 자체가 없어
+/// 항상 false다 — 그 경우 배너는 자동 재시도 문구로 남는다.
+final runSyncRetryExhaustedProvider =
+    StreamProvider.autoDispose.family<bool, String>((ref, runId) {
+  final repo = ref.watch(runRepositoryProvider);
+  if (repo is! LocalRunRepository) return Stream<bool>.value(false);
+  return repo.watchSyncRetryExhausted(runId);
 });
 
 /// 상세 화면의 1km 랩 분할. 조회 결과에서 파생한다.

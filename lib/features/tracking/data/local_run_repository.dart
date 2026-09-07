@@ -111,6 +111,30 @@ class LocalRunRepository implements RunRepository {
   @visibleForTesting
   Set<String> get inFlightIds => Set<String>.unmodifiable(_inFlight);
 
+  /// **업로드가 도는 동안 로컬 편집이 들어온** run id (G-4).
+  ///
+  /// [_inFlight]와 같은 생애주기를 갖는다 — [_push]가 등록하고 `finally`에서
+  /// 함께 비운다. [_applyMeta]가 인플라이트 중인 id를 여기 넣으면
+  /// [applyServerConfirmation]이 그 행을 `synced`로 올리지 않고 `pending`으로
+  /// 남긴다.
+  ///
+  /// ## 왜 `updatedAtLocal` 시각 비교가 아닌가 (2026-09-07 설계 변경)
+  /// 원래 제안은 "업로드 시작 시각을 기록해 두고 행의 `updatedAtLocal`이 그보다
+  /// 나중이면 편집으로 본다"였고, `_inFlight`를 `Map<String, DateTime>`으로
+  /// 바꾸는 형태였다. **그 방식은 이 스키마에서 동작하지 않는다** — drift의
+  /// `DateTimeColumn` 기본 저장 형식이 **unix epoch 초**라, 업로드 시작과 편집이
+  /// 같은 초에 떨어지면(로컬 편집은 네트워크 왕복 없이 끝나므로 그게 정상 경로다)
+  /// 두 값이 **동일한 정수**가 되어 편집이 보이지 않는다. 실제로 그렇게 구현했더니
+  /// G-4 회귀 테스트가 `synced`를 관측했다.
+  ///
+  /// 저장 형식을 밀리초/텍스트로 바꾸는 것은 drift 스키마 마이그레이션이고, 이
+  /// 판정 하나를 위해 전 기기의 로컬 DB를 건드릴 이유가 없다. 두 경로가 **같은
+  /// 리포지토리 인스턴스** 안에 있으므로 메모리 표식이 더 정확하고 더 싸다.
+  ///
+  /// 프로세스가 죽어 표식이 사라지는 경우는 문제가 되지 않는다 — 그때는 확정
+  /// 응답도 도달하지 않아 행이 `pending`/`failed`로 남는다.
+  final Set<String> _localEditDuringUpload = <String>{};
+
   /// 서버가 소유하는 컬럼. 업로드 payload에서 **제거**하고, 업로드 응답에서
   /// **채택**한다.
   ///
@@ -129,8 +153,12 @@ class LocalRunRepository implements RunRepository {
     // 애초에 보내지 않는 것이 의도를 코드로 남기는 방법이다.
     'is_flagged',
     'flag_reason',
-    // 서버 재계산 직전의 클라이언트 주장값(마이그레이션 64). 클라이언트는 이
-    // 컬럼을 만들지 않으므로 제거는 no-op이고, 되받기만 실제로 의미가 있다.
+    // 서버 재계산 직전의 클라이언트 주장값(마이그레이션 64).
+    // `RunRecord.clientReported`로 승격된 뒤(2026-09-07)로는 제거가 **no-op이
+    // 아니다** — 되받은 값을 로컬에 보관하므로 `toJson()`이 이 키를 실제로 만든다.
+    // 그대로 올리면 서버 가드가 되돌리기는 하지만, 애초에 싣지 않는 편이 옳다:
+    // 이 컬럼은 "재계산 전에 무엇을 주장했는가"의 증거이고, 클라이언트가 그것을
+    // 다시 주장할 수 있으면 증거로서의 의미가 없다.
     'client_reported',
   };
 
@@ -238,17 +266,26 @@ class LocalRunRepository implements RunRepository {
   /// 같은 id가 이미 업로드 중이면 **아무것도 하지 않고 false**를 돌려준다(TRD §14
   /// #29). 실패가 아니므로 `sync_attempts`를 올리지 않는다 — 올리면 코디네이터가
   /// 자주 발화하는 것만으로 상한이 소진된다.
+  /// ## 업로드 중 편집 관측 (G-4)
+  /// 인플라이트 구간 동안 [_applyMeta]가 들어오면 [_localEditDuringUpload]에
+  /// 표식이 남는다. 그 경우 확정값은 그대로 채택하되 행은 `pending`으로 남겨,
+  /// 다음 `syncPending()`이 편집된 title/note까지 실어 다시 올리게 한다.
   Future<bool> _push(RunRecord record) async {
     if (!_inFlight.add(record.id)) return false;
     try {
       final confirmed = await _upsertRemote(record).timeout(uploadTimeout);
-      await applyServerConfirmation(record.id, confirmed);
+      await applyServerConfirmation(
+        record.id,
+        confirmed,
+        editedDuringUpload: _localEditDuringUpload.contains(record.id),
+      );
       return true;
     } catch (_) {
       await _markUploadFailed(record.id);
       return false;
     } finally {
       _inFlight.remove(record.id);
+      _localEditDuringUpload.remove(record.id);
     }
   }
 
@@ -279,6 +316,22 @@ class LocalRunRepository implements RunRepository {
   ///    수정이 조용히 되돌아간다.
   /// 2. `samplesJson` 컬럼을 아예 건드리지 않아, 3600 샘플을 재직렬화하지 않는다.
   ///
+  /// ## 업로드 중 편집이면 `synced`로 올리지 않는다 (G-4)
+  /// 위 1번은 편집을 **로컬에서** 지키는 데까지만 유효했다. 서버에는 편집 전
+  /// 제목이 올라가 있는데 행이 `synced`가 되면, `syncPending()`이 `synced` 행을
+  /// 다시 집지 않으므로 그 편집은 **영원히 서버에 반영되지 않는다** — 사용자에게는
+  /// 저장된 것처럼 보인다(`updateMeta`는 아직 업로드 안 된 행을 로컬만 고치고
+  /// 성공을 돌려준다).
+  ///
+  /// 판정은 [editedDuringUpload]가 내린다 — [_push]가 인플라이트 구간의
+  /// [_localEditDuringUpload] 표식을 읽어 넘긴다(시각 비교를 쓰지 않는 이유는
+  /// 그 필드의 주석 참조). 그 경우 **확정값은 그대로 채택하되**(서버가 깎은
+  /// 거리·플래그·XP를 버릴 이유가 없다) `sync_status`는 `pending`으로 두고
+  /// `sync_attempts`를 0으로 되돌려 다음 큐 순회가 title/note까지 담아
+  /// 다시 올리게 한다.
+  ///
+  /// 기본값 `false`는 "업로드 왕복 밖에서 부른다"는 뜻이다(테스트의 직접 호출).
+  ///
   /// ## 거리·이동시간이 여기서 바뀔 수 있다 (QA F-4)
   /// 마이그레이션 64부터 서버가 샘플로 재계산한 거리를 상시 확정값으로 채택하므로,
   /// 응답의 `distance_meters`가 방금 올린 값보다 작을 수 있다. **`summaryJson`의
@@ -296,8 +349,9 @@ class LocalRunRepository implements RunRepository {
   @visibleForTesting
   Future<void> applyServerConfirmation(
     String id,
-    Map<String, dynamic> confirmed,
-  ) async {
+    Map<String, dynamic> confirmed, {
+    bool editedDuringUpload = false,
+  }) async {
     await _db.transaction(() async {
       final row = await (_db.select(_db.runRecordRows)
             ..where((t) => t.id.equals(id))
@@ -312,11 +366,17 @@ class LocalRunRepository implements RunRepository {
 
       await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
         RunRecordRowsCompanion(
-          syncStatus: Value(syncStatusWire(SyncStatus.synced)),
+          syncStatus: Value(
+            syncStatusWire(
+              editedDuringUpload ? SyncStatus.pending : SyncStatus.synced,
+            ),
+          ),
           summaryJson: Value(jsonEncode(summary)),
           updatedAtLocal: Value(DateTime.now().toUtc()),
           // 성공했으므로 재시도 예산을 되돌린다. 되돌리지 않으면 오래 쓴 기기에서
           // 과거의 산발적 실패가 누적돼 멀쩡한 기록이 상한에 걸린다.
+          // `pending`으로 남기는 경우에도 마찬가지다 — 이번 왕복은 성공했고,
+          // 되돌리지 않으면 편집 재업로드가 남은 예산 안에서만 시도된다.
           syncAttempts: const Value<int>(0),
         ),
       );
@@ -351,6 +411,29 @@ class LocalRunRepository implements RunRepository {
     await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
       const RunRecordRowsCompanion(syncAttempts: Value<int>(0)),
     );
+  }
+
+  /// 그 기록이 **재시도 예산을 다 써 자동 큐에서 빠졌는지**를 구독한다
+  /// (TRD §14 #29 잔여 F-5 — 수동 재시도 UI의 판정 입력).
+  ///
+  /// `sync_attempts`는 **기기 로컬 컬럼이라 [RunRecord]에 실리지 않는다**
+  /// (`runRecordFromRow`가 모델로 올리지 않는다 — 서버에 대응 컬럼이 없고,
+  /// 목록 200건이 모두 들고 다닐 이유도 없는 값이다). 그래서 화면은 모델이
+  /// 아니라 이 스트림으로 상태를 읽는다.
+  ///
+  /// 상한에 걸린 행은 [syncPending]의 질의 단계에서 제외되므로, 사용자에게는
+  /// "동기화 대기"가 영원히 걸린 것처럼 보인다. [resetSyncAttempts]가 그
+  /// 유일한 탈출구이고 이 술어가 그 버튼의 노출 조건이다.
+  ///
+  /// `synced`인 행은 항상 false다 — 예산은 성공 시 0으로 복원되지만, 순서에
+  /// 의존하지 않도록 상태로도 한 번 더 막는다.
+  Stream<bool> watchSyncRetryExhausted(String id) {
+    final query = _db.select(_db.runRecordRows)..where((t) => t.id.equals(id));
+    return query.watchSingleOrNull().map((row) {
+      if (row == null) return false;
+      if (row.syncStatus == syncStatusWire(SyncStatus.synced)) return false;
+      return row.syncAttempts >= maxSyncAttempts;
+    }).distinct();
   }
 
   /// [userId]를 주면 그 사용자의 행만 올린다 — 계약은 [RunRepository.syncPending]
@@ -472,7 +555,17 @@ class LocalRunRepository implements RunRepository {
   /// `pending`(본문 업로드 미완)이면 여전히 pending이어야 하고, 반대로 이미
   /// `synced`인 기록을 편집했다고 pending으로 내리면 `syncPending()`이 3,600
   /// 샘플을 통째로 다시 올린다.
+  ///
+  /// 그래서 "업로드 중 편집"의 방어는 여기가 아니라 [applyServerConfirmation]에
+  /// 있다(G-4). 이쪽은 `updatedAtLocal`을 갱신하는 것으로 **흔적만 남기고**,
+  /// 그 흔적을 읽어 `synced` 승격을 보류할지 판단하는 것은 확정 반영 쪽의 몫이다 —
+  /// 편집 시점에는 업로드가 언제 시작됐는지 알 수 없기 때문이다.
   Future<void> _applyMeta(String id, RunMeta meta) async {
+    // 업로드가 도는 중이라면 그 요청은 **편집 전** title/note를 싣고 나갔다.
+    // 표식을 남겨 `applyServerConfirmation`이 이 행을 `synced`로 올리지 않게 한다
+    // (G-4 — [_localEditDuringUpload]).
+    if (_inFlight.contains(id)) _localEditDuringUpload.add(id);
+
     await _db.transaction(() async {
       final row = await _rowOf(id);
       if (row == null) return;
@@ -621,6 +714,13 @@ class LocalRunRepository implements RunRepository {
     } else if (json['samples'] is String) {
       // PostgREST가 jsonb를 문자열로 돌려주는 드문 경우 방어.
       json['samples'] = jsonDecode(json['samples'] as String);
+    }
+    // `client_reported`도 같은 jsonb라 같은 방어가 필요하다 — 문자열로 오면
+    // `ClientReportedRun.fromJson`의 캐스트가 던지고, 그 예외가 `findById`의
+    // 원격 폴백 경로 전체를 조용히 실패시킨다(QA P-1).
+    if (json['client_reported'] is String) {
+      json['client_reported'] =
+          jsonDecode(json['client_reported'] as String);
     }
     // `sync_status`는 기기 로컬 컬럼이라 서버 응답에 없고, 모델 기본값은
     // `local`이다 — 그대로 두면 **방금 서버에서 읽어온 기록**이 "동기화 대기"로

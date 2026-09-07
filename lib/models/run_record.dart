@@ -6,6 +6,52 @@ import 'run_sample.dart';
 part 'run_record.freezed.dart';
 part 'run_record.g.dart';
 
+/// 서버가 샘플로 거리를 재계산하기 **직전**에 보존한 클라이언트 주장값
+/// (마이그레이션 64, `runs.client_reported jsonb`).
+///
+/// ## 왜 스칼라 2개가 아니라 중첩 객체인가 (2026-09-07 mobile-architect 결정)
+/// 서버 컬럼이 jsonb 하나이고, 클라이언트는 그것을 **통째로 되받기만** 한다
+/// (`LocalRunRepository._serverOwnedKeys`). 스칼라로 펼치면 `toJson()`이
+/// `client_reported_distance_meters` 같은 **`runs`에 존재하지 않는 키**를
+/// 만들어 업로드 payload에 섞이고(회귀 테스트 `_runsColumns`가 정확히 이걸
+/// 잡는다), 되받을 때는 jsonb → 스칼라 2개로 푸는 분해 로직을
+/// `_adoptedKeys` 루프 밖에 따로 둬야 한다. 중첩으로 두면 wire 키가
+/// `client_reported` 하나로 유지돼 세 집합(`_serverOwnedKeys` ·
+/// `_adoptedKeys` · `_confirmationColumns`)을 **한 글자도 고치지 않아도**
+/// 되고, `summaryJson` 왕복도 `RunRecord.toJson()`이 그대로 처리한다.
+/// freezed 중첩 클래스는 커스텀 컨버터 없이 직렬화된다(`explicitToJson: true`).
+///
+/// 덤으로 [maxSpeedMps] · [recalculatedAt]도 손실 없이 따라온다 — 스칼라 2개로
+/// 펼쳤다면 버려졌을 값이다.
+///
+/// ## 언제 채워지는가
+/// 서버는 **재계산 결과가 주장값보다 작고 차이가 1m 이상일 때, 최초 확정 한 번만**
+/// 채운다(마이그레이션 64 `trg_runs_guard`). 즉 이 값이 존재한다는 것 자체가
+/// "거리가 깎였다"는 뜻이며, 값이 늘어나는 방향은 존재하지 않는다.
+/// 재 upsert가 서버 확정값을 세탁하지 못하도록 null 검사로 보호된다.
+///
+/// **읽기 전용**이다 — 클라이언트는 보내지 않고 받기만 한다.
+@freezed
+abstract class ClientReportedRun with _$ClientReportedRun {
+  @JsonSerializable(fieldRename: FieldRename.snake)
+  const factory ClientReportedRun({
+    /// 재계산 전 클라이언트가 주장한 거리(m).
+    double? distanceMeters,
+
+    /// 재계산 전 클라이언트가 주장한 이동시간(s).
+    int? movingSeconds,
+
+    /// 재계산 전 클라이언트가 주장한 최고 순간 속도(m/s).
+    double? maxSpeedMps,
+
+    /// 서버가 재계산을 확정한 시각(UTC).
+    DateTime? recalculatedAt,
+  }) = _ClientReportedRun;
+
+  factory ClientReportedRun.fromJson(Map<String, dynamic> json) =>
+      _$ClientReportedRunFromJson(json);
+}
+
 /// 완결된(또는 진행 중인) 하나의 러닝 세션.
 ///
 /// ## 단위 규약 (전 팀 공통)
@@ -146,6 +192,19 @@ abstract class RunRecord with _$RunRecord {
     /// 서버 전용이다. 사용자에게 그대로 노출할 문구는 아니다(내부 코드에 가깝다).
     String? flagReason,
 
+    /// 서버 재계산 **직전**의 클라이언트 주장 거리·이동시간
+    /// (마이그레이션 64, DB 컬럼 `runs.client_reported jsonb`).
+    ///
+    /// [isFlagged]와 **같은 방침**이다 — `_serverOwnedKeys`가 업로드 payload에서
+    /// 제거하고, 업로드 응답에서만 채택한다. 다만 로컬 저장에는 남아야 한다:
+    /// 이 필드가 없던 동안 값은 `summaryJson`에만 얹혀 있어서, 다음 전체 로컬
+    /// 재기록(`toRow()` → `toJson()`)에서 **조용히 사라졌다**(TRD §14 #27 잔여 ②).
+    ///
+    /// null의 뜻은 "거리 조정이 없었다"이다 — 서버가 값을 깎았을 때만 채우므로
+    /// (§ [ClientReportedRun] 주석), `isFlagged`와 달리 "아직 모른다"와
+    /// "조정 없음"을 구분할 필요가 없다. 조정 여부 판정은 [distanceWasAdjusted].
+    ClientReportedRun? clientReported,
+
     /// 레코드 생성/수정 시각(UTC). 서버가 채운다.
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -162,4 +221,43 @@ abstract class RunRecord with _$RunRecord {
 
   bool get isActive =>
       status == RunStatus.recording || status == RunStatus.paused;
+
+  /// 서버가 확정한 거리와 기기가 기록한 거리가 **눈에 띄게** 다른가.
+  ///
+  /// 상세 화면이 "기기 기록 10.0km → 확정 9.7km"를 병기할지 결정하는 단일
+  /// 술어다(flutter-ui 계약). 이 값이 true일 때만 [clientReportedDistanceMeters]가
+  /// non-null임이 보장된다.
+  ///
+  /// ## 임계 10m는 **표시용**이며 서버의 `v_flag_shrink_ratio`(0.8)와 무관하다
+  /// 두 수는 서로 다른 질문에 답한다:
+  /// - 서버 0.8 — "부정을 의심할 만큼 깎였는가" → `is_flagged`
+  /// - 여기 10m — "사용자에게 두 숫자를 나란히 보여줄 가치가 있는가"
+  ///
+  /// 서버는 1m 이상 차이면 [clientReported]를 남기는데, 5.00km가 4.998km로
+  /// 확정된 것까지 병기하면 배너가 상시 노출돼 **정말 깎인 기록의 신호를 덮는다.**
+  /// 반대로 서버 임계(20%)를 그대로 쓰면 플래그 없이 3% 깎인 기록 —
+  /// 사용자가 실제로 "왜 거리가 다르지?"라고 묻는 대다수 —이 설명 없이 남는다.
+  ///
+  /// 축소 방향만 본다: 서버는 재계산값이 주장값 이하일 때만 채택하므로
+  /// (`least(recalc, claimed)`) 확정 거리가 더 큰 경우는 존재하지 않고,
+  /// 혹시 생기더라도 "기기보다 더 뛴 것으로 확정"을 병기할 이유는 없다.
+  bool get distanceWasAdjusted {
+    final claimed = clientReported?.distanceMeters;
+    if (claimed == null) return false;
+    return claimed - distanceMeters > distanceAdjustmentDisplayThresholdMeters;
+  }
+
+  /// [distanceWasAdjusted]가 true일 때 병기할 **기기 기록 거리**(m).
+  /// 조정이 없었으면 null — 호출부가 null 검사 하나로 분기하게 하려는 것이다.
+  double? get clientReportedDistanceMeters =>
+      distanceWasAdjusted ? clientReported!.distanceMeters : null;
+
+  /// 확정 거리보다 얼마나 컸는가(m). 조정이 없었으면 null.
+  double? get distanceAdjustmentMeters {
+    final claimed = clientReportedDistanceMeters;
+    return claimed == null ? null : claimed - distanceMeters;
+  }
+
+  /// 병기 임계(m). [distanceWasAdjusted] 주석 참조.
+  static const double distanceAdjustmentDisplayThresholdMeters = 10.0;
 }
