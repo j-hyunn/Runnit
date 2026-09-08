@@ -48,3 +48,18 @@ String badgeAssetPath({
 }) =>
     'assets/badges/${badgeCategoryAssetFolder(category)}'
     '/${badgeGradeAssetName(badgeGrade)}.svg';
+
+/// 티어 엠블럼 SVG. 뱃지 갤러리의 시즌 티어 뱃지와 **같은 파일**을 쓴다
+/// (`assets/badges/tier/{티어}.svg`) — 두 화면의 그림이 갈라지지 않게.
+///
+/// 2026-09-08까지 이 함수는 `share_card_body.dart`에 경로 문자열을 직접 조립하는
+/// 사본으로 살아 있었다(TRD §14 #21 / QA O-4). 파일명이 우연히 일치해 증상이
+/// 없었을 뿐이라, [badgeAssetPath] 위임으로 바꿔 규칙을 한 곳으로 모은다 —
+/// 폴더명이든 등급 폴백이든 앞으로는 이 파일만 고치면 된다.
+///
+/// [Tier]의 4개 이름(bronze/silver/gold/platinum)은 전부
+/// [badgeGradeAssetName]이 아는 값이라 폴백을 타지 않는다.
+String tierEmblemAssetPath(Tier tier) => badgeAssetPath(
+      category: BadgeCategory.seasonTier,
+      badgeGrade: tier.name,
+    );

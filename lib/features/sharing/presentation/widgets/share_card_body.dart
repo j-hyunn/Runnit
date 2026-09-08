@@ -43,6 +43,9 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/theme/app_tokens.dart';
 import '../../../../models/enums.dart';
+// 뱃지·티어 아트 경로 규칙의 정본. 카드가 경로를 직접 조립하면 갤러리와
+// 갈라진다(TRD §14 #21).
+import '../../../gamification/domain/badge_assets.dart';
 import '../../domain/share_card_data.dart';
 
 // ════════════════════════ 타이포 · 가독성 토큰 ════════════════════════
@@ -223,7 +226,8 @@ class ShareCardBody extends StatelessWidget {
 
   /// PB 카드: 기록 · (있으면) 그 PB가 나온 러닝 거리.
   ///
-  /// ⚠️ `timeLabel`은 **null일 수 있다**(서버 보간값이 저장되지 않는 구간 —
+  /// ⚠️ `timeLabel`은 **null일 수 있다**(마이그레이션 65 이전에 지급돼
+  /// `achieved_value`가 비어 있는 뱃지 —
   /// `PersonalBestCardData.certifiedSeconds` 문서). 그때는 시간 칸이 빠지고
   /// 거리 칸만 남는다. 절대 클라이언트가 시간을 지어내지 않는다.
   static List<_Stat> _pbStats(PersonalBestCardData card) {
@@ -661,10 +665,6 @@ Color badgeGradeAccentColor(String grade) => switch (grade) {
       'special' => AppTokens.tierSpecial,
       _ => AppTokens.tierSilver,
     };
-
-/// 티어 엠블럼 SVG. 뱃지 갤러리의 시즌 티어 뱃지와 **같은 파일**을 쓴다
-/// (`assets/badges/tier/{등급}.svg`) — 두 화면의 그림이 갈라지지 않게.
-String tierEmblemAssetPath(Tier tier) => 'assets/badges/tier/${tier.name}.svg';
 
 /// 카드에 찍히는 날짜+시각. 서버 시각은 UTC로 오므로 **KST로 옮겨** 표기한다
 /// — 밤 러닝이 하루 전날로 찍히는 일을 막는다(PRD의 주간 경계도 KST 기준).
