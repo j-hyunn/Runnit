@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.29 |
+| 문서 버전 | v0.30 |
 | 작성일 | 2026-08-27 |
 | 작성자 | jehyun (Claude Code 하네스 산출) |
 | 상태 | **살아있는 문서 — 구현 반영본.** §3 Dart 코드·§4 DDL·§6 API의 원문은 Phase 0 설계 시점 버전이며 **실제 정본은 `lib/models/*.dart`와 `supabase/migrations/00~64`**다. 각 절 상단의 "구현 갱신" 노트가 실제 상태를 가리킨다 |
@@ -11,6 +11,7 @@
 **변경 이력**
 | 버전 | 변경 내용 |
 |------|----------|
+| v0.30 | **P0 잔여 방어 보강 2건**(2026-09-08, mobile-architect. **클라이언트 코드만 — 스키마·마이그레이션·PRD 스펙 변경 없음**). QA `_workspace/20260907_qa_p0-group1.md` 의 PLAUSIBLE-1·PLAUSIBLE-3 을 닫았다. ① **`applyServerConfirmation` 의 jsonb-문자열 방어**(§7.2) — v0.29 QA 후속 ② 가 `_fromRemote` 만 고쳤는데, 확정 채택 루프도 `confirmed[key]` 를 그대로 `summaryJson` 에 넣고 `jsonEncode` 한다. PostgREST 가 `client_reported` 를 문자열로 돌려주면 문자열이 그대로 박히고 **다음** `runRecordFromRow` → `RunRecord.fromJson` 캐스트가 던져, 예외가 왕복이 아니라 **다음 조회**에서 나타난다(상세 화면이 원인 없이 빈다). 두 소비 지점이 같은 목록을 봐야 하므로 `_jsonbKeys`(`client_reported` · `samples`)를 상수로 뽑아 대칭 방어. ② **`watchSyncRetryExhausted` 에 `status == completed` 필터**(§14 #29 ④) — `syncPending` 은 이 술어를 요구하는데 재시도 스트림에는 없어, 주석이 선언한 "정확히 상보"가 코드에서 깨져 있었다. 체크포인트 행은 `_push` 대상이 아니라 실무상 도달 불가지만 상태로 한 번 더 막는다. 회귀 3건 추가(총 322), `flutter analyze` 클린 |
 | v0.29 | **상세 화면 UI 마감 — 수동 재시도(#29 F-5) + 확정 거리 병기(#27 잔여 ②·G-3)**(2026-09-07, flutter-ui. **클라이언트 UI 전용 — 스키마·마이그레이션·PRD 스펙 변경 없음**). ① `LocalRunRepository.watchSyncRetryExhausted(id)` + `runSyncRetryExhaustedProvider` 신설 — `sync_attempts` 는 모델에 없는 기기 로컬 컬럼이라 화면이 drift 행을 직접 구독해야 한다. 상한 도달 시 `_SyncPendingBanner` 문구가 갈리고 "다시 시도" 버튼(→ `resetSyncAttempts` + `syncPending(userId:)` 즉시 1회)이 붙는다. ② 요약 그리드 거리 셀에 `distanceWasAdjusted` 일 때만 "기기 기록 N km" 인라인 병기(주 숫자는 확정 거리) + 랩 섹션 한 줄 안내. **배너로 만들지 않았다** — 조정은 상시 현상이라 앰버 배타 규칙의 세 번째 대상이 되면 플래그된 기록에서 사라진다. 위젯·리포지토리 회귀 11건 추가(총 317), `flutter analyze` 클린. **QA 후속(2026-09-07)**: ① CONFIRMED-1(플래그+미동기화 조합, #29 ⑤ 로 해소) ② `_fromRemote` 의 jsonb-문자열 방어를 `client_reported` 에도 확장(`samples` 와 동일) ③ `max_speed_mps` 를 `_serverAdjustedKeys` 에 추가 — `trg_runs_guard` 가 거리를 덮어쓸 때 이 컬럼도 재기입하는데(마이그레이션 64 L393) 되받지 않아 로컬이 서버와 갈렸다. 거리·이동시간과 같은 재계산 출력값이라 대칭으로 채택. 총 319 |
 | v0.28 | **`client_reported` 모델 필드 승격 + 업로드 중 로컬 메타 편집 유실(G-4) 해소**(2026-09-07, mobile-architect. **클라이언트 코드만 — 스키마·마이그레이션·PRD 스펙 변경 없음**). ① §14 #27 잔여 ② 의 모델분 해소 — `RunRecord.clientReported: ClientReportedRun?` 신설(§3.2·§4.1·§7.2). 서버 `runs.client_reported jsonb` 를 **중첩 freezed 모델**로 그대로 받는다: wire 키가 `client_reported` 하나로 유지돼 `_serverOwnedKeys`·`_adoptedKeys`·`_confirmationColumns` 세 집합이 **한 글자도 바뀌지 않았고**, 스칼라 2개로 펼쳤을 때 생기는 "`runs` 에 없는 컬럼명이 payload 에 섞이는" 문제와 jsonb 분해 로직도 없다. 표시 계약은 파생 getter 3개(`distanceWasAdjusted` — 주장 − 확정 > **10m 표시용 임계**, `v_flag_shrink_ratio` 와 무관 / `clientReportedDistanceMeters` / `distanceAdjustmentMeters`)로 고정. ② §14 #29 에 G-4 해소 추가 — 인플라이트 구간의 `_applyMeta` 가 `_localEditDuringUpload` 표식을 남기고, `applyServerConfirmation` 은 서버 확정값을 채택하되 `sync_status` 를 `pending` 으로 남겨 다음 순회가 편집을 올린다. ⚠️ 원래 제안이던 `updatedAtLocal` 시각 비교는 **drift 가 DateTime 을 초 단위로 저장**해 동작하지 않는다(#29 상세). 회귀 테스트 13건 추가(총 306), `flutter analyze` 클린 |
 | v0.27 | **웨어러블 라운드 표기 P1 → Phase 4 통일**(2026-09-03, PRD v1.10 동반). §14 #26 경고 해소, #8·#10·§8.4.1(§4.1 벤더 판별 시점)의 `P1` 표기를 `Phase 4`로 정정. 스키마·판정 로직 변경 없음 |
