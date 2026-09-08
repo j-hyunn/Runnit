@@ -190,6 +190,15 @@ class LocalRunRepository implements RunRepository {
     ..._serverAdjustedKeys,
   };
 
+  /// 서버에서 **jsonb**로 내려오는 키 — PostgREST가 드물게 이것들을 파싱된 구조가
+  /// 아니라 **문자열**로 돌려준다. 그대로 받으면 `RunRecord.fromJson`의
+  /// `as Map<String, dynamic>` / `as List` 캐스트가 던진다.
+  ///
+  /// 두 소비 지점([_fromRemote]와 [applyServerConfirmation])이 같은 방어를 걸어야
+  /// 하므로 목록을 여기 한 곳에 둔다. `samples`는 [_adoptedKeys]에 없어 확정 경로로는
+  /// 도달하지 않지만, 목록이 갈라지는 것이 방어가 하나 빠지는 것보다 위험하다.
+  static const Set<String> _jsonbKeys = <String>{'client_reported', 'samples'};
+
   /// 업로드 응답으로 되받을 컬럼(PostgREST `select=` 인자).
   ///
   /// `.select()`를 인자 없이 쓰면 `samples`까지 통째로 돌아온다 — 1시간 러닝이면
@@ -368,7 +377,16 @@ class LocalRunRepository implements RunRepository {
 
       final summary = jsonDecode(row.summaryJson) as Map<String, dynamic>;
       for (final key in _adoptedKeys) {
-        if (confirmed.containsKey(key)) summary[key] = confirmed[key];
+        if (!confirmed.containsKey(key)) continue;
+        final value = confirmed[key];
+        // [_fromRemote]의 jsonb-문자열 방어와 **대칭**이다. PostgREST가 jsonb를
+        // 문자열로 돌려주는 드문 경우, 여기서 걸러 두지 않으면 문자열이 그대로
+        // `summaryJson`에 박히고 **다음** `runRecordFromRow` → `RunRecord.fromJson`
+        // 캐스트가 던진다 — 예외 지점이 이 왕복에서 한참 떨어져 있어(다음 조회)
+        // 상세 화면이 원인 없이 조용히 비는 형태로 나타난다(QA P-1).
+        summary[key] = _jsonbKeys.contains(key) && value is String
+            ? jsonDecode(value)
+            : value;
       }
 
       await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
@@ -434,10 +452,16 @@ class LocalRunRepository implements RunRepository {
   ///
   /// `synced`인 행은 항상 false다 — 예산은 성공 시 0으로 복원되지만, 순서에
   /// 의존하지 않도록 상태로도 한 번 더 막는다.
+  ///
+  /// `completed`가 아닌 행(진행 중 체크포인트)도 항상 false다 — [syncPending]의
+  /// 술어와 **정확히 상보**여야 하기 때문이다(QA P-3). 체크포인트 행은 [_push]
+  /// 대상이 아니라 `sync_attempts`가 오르지 않으므로 실무상 도달 불가지만, 두
+  /// 술어가 갈라지면 "큐에서 빠진 행"과 "재시도 버튼이 뜨는 행"이 어긋난다.
   Stream<bool> watchSyncRetryExhausted(String id) {
     final query = _db.select(_db.runRecordRows)..where((t) => t.id.equals(id));
     return query.watchSingleOrNull().map((row) {
       if (row == null) return false;
+      if (row.status != runStatusWire(RunStatus.completed)) return false;
       if (row.syncStatus == syncStatusWire(SyncStatus.synced)) return false;
       return row.syncAttempts >= maxSyncAttempts;
     }).distinct();

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runnit/features/tracking/data/local_run_database.dart';
@@ -623,6 +624,76 @@ void main() {
 
   test('로컬에 없는 id는 false다 — 다른 기기 기록·상한 밖 기록', () async {
     expect(await repository.watchSyncRetryExhausted('nope').first, isFalse);
+  });
+
+  test('완료되지 않은 체크포인트 행은 예산과 무관하게 항상 false다', () async {
+    // `syncPending()`은 `status == completed`도 요구한다. 두 술어가 갈라지면
+    // "큐에서 빠진 행"과 "재시도 버튼이 뜨는 행"이 어긋난다(QA P-3).
+    // `_push` 대상이 아니라 실무상 예산이 오르지 않지만, 그 사실에 기대지 않고
+    // 상태로 한 번 더 막는다.
+    for (final status in <RunStatus>[RunStatus.recording, RunStatus.paused]) {
+      final id = 'run-${status.name}';
+      await repository.save(run(id: id, status: status));
+      await (db.update(db.runRecordRows)
+            ..where((RunRecordRows t) => t.id.equals(id)))
+          .write(
+        RunRecordRowsCompanion(
+          syncStatus: Value(syncStatusWire(SyncStatus.failed)),
+          syncAttempts:
+              const Value<int>(LocalRunRepository.maxSyncAttempts + 5),
+        ),
+      );
+
+      expect(await repository.watchSyncRetryExhausted(id).first, isFalse,
+          reason: '$status 행은 애초에 업로드 큐의 대상이 아니다');
+      expect(await repository.syncPending(), 0,
+          reason: '같은 행을 큐도 집지 않는다 — 두 술어가 상보임을 함께 고정한다');
+    }
+  });
+
+  // ───────── 11) PostgREST가 jsonb를 문자열로 돌려주는 경우 (QA P-1) ─────────
+
+  test('확정 응답의 client_reported가 문자열이어도 이후 조회가 깨지지 않는다', () async {
+    // `applyServerConfirmation`은 채택값을 `summaryJson`에 넣고 jsonEncode한다.
+    // 문자열을 그대로 박으면 예외가 **이 왕복이 아니라 다음 조회**에서 터진다 —
+    // `RunRecord.fromJson`의 `as Map<String, dynamic>` 캐스트가 던져 상세 화면이
+    // 원인 없이 조용히 빈다. `_fromRemote`의 대칭 방어와 같은 자리다.
+    server.offline = true;
+    await saveAndSettle(run(id: 'run-str'));
+
+    await repository.applyServerConfirmation('run-str', <String, dynamic>{
+      'id': 'run-str',
+      'distance_meters': 4600,
+      'moving_seconds': 1700,
+      // PostgREST가 파싱된 Map이 아니라 jsonb 원문을 그대로 준 경우.
+      'client_reported': jsonEncode(<String, dynamic>{
+        'distance_meters': 5000,
+        'moving_seconds': 1750,
+      }),
+    });
+
+    final record = await repository.findById('run-str');
+    expect(record, isNotNull, reason: '조회가 캐스트 예외로 죽으면 안 된다');
+    expect(record!.clientReported?.distanceMeters, 5000,
+        reason: '문자열을 디코드해 중첩 모델로 되살려야 한다');
+    expect(record.distanceMeters, 4600);
+    expect(record.distanceWasAdjusted, isTrue);
+  });
+
+  test('client_reported가 이미 Map이면 종전대로 그대로 채택한다', () async {
+    // 방어가 정상 경로를 건드리지 않는지 — 회귀 방향의 반대편.
+    server.offline = true;
+    await saveAndSettle(run(id: 'run-map'));
+
+    await repository.applyServerConfirmation('run-map', <String, dynamic>{
+      'id': 'run-map',
+      'distance_meters': 4600,
+      'client_reported': <String, dynamic>{'distance_meters': 5000},
+    });
+
+    final record = await repository.findById('run-map');
+    expect(record!.clientReported?.distanceMeters, 5000);
+    expect(record.distanceMeters, 4600);
   });
 }
 
