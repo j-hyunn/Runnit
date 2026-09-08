@@ -110,7 +110,10 @@ class BadgeProgressCalculator {
     final isEarned = earnedAt != null;
     final current = currentValueFor(badge.conditionType, badge.condition, stats);
     final direction = BadgeConditionType.compareDirectionFor(badge.conditionType);
-    final target = targetOf(badge.condition);
+    final target = effectiveTargetOf(
+      conditionType: badge.conditionType,
+      condition: badge.condition,
+    );
 
     final meets = current != null &&
         target != null &&
@@ -144,6 +147,30 @@ class BadgeProgressCalculator {
       if (value is num) return value.toDouble();
     }
     return null;
+  }
+
+  /// 서버가 실제로 인정하는 **유효 목표값**. [targetOf]에 마이그레이션 42의 거리
+  /// 허용오차(`목표 − min(목표×2%, 300m)`)를 얹은 값이다 — 이 계층에서 한 번만
+  /// 적용해 진행률 바(`ratio`)와 "곧 지급됩니다"(`meetsThresholdLocally`)가 같은
+  /// 기준을 쓰게 한다. 허용오차 대상이 아닌 조건은 [targetOf]와 동일하다.
+  ///
+  /// 거리 조건의 목표 키는 `distanceKm`이라 단위가 km이고,
+  /// [currentValueFor]도 km로 맞춰 내므로 여기서 단위 변환은 하지 않는다.
+  static double? effectiveTargetOf({
+    required String conditionType,
+    required Map<String, dynamic> condition,
+  }) {
+    final raw = targetOf(condition);
+    if (raw == null) return null;
+    if (!usesDistanceTolerance(conditionType)) return raw;
+    // 허용오차 대상 3종은 전부 `distanceKm`을 목표 키로 쓴다. 혹시 다른 키가
+    // 먼저 잡혔다면(카탈로그 오타 등) 완화하지 않고 원값을 쓴다 — 서버보다
+    // 느슨해지는 쪽이 더 나쁘다.
+    if (condition['distanceKm'] is! num) return raw;
+    return effectiveDistanceTargetKm(
+      conditionType: conditionType,
+      targetKm: raw,
+    );
   }
 
   /// 조건별 현재값. [BadgeConditionType.evaluabilityOf]가 `clientEstimable`인
