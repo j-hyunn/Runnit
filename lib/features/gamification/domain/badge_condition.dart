@@ -13,6 +13,8 @@
 /// 미획득이다(ARCHITECTURE 원칙 3).
 library;
 
+import 'dart:math' as math;
+
 /// 임계값 비교 방향.
 enum BadgeCompareDirection {
   /// `현재값 >= 목표`이면 달성. 대부분의 조건.
@@ -181,6 +183,50 @@ class BadgeConditionType {
         ? BadgeCompareDirection.atMost
         : BadgeCompareDirection.atLeast;
   }
+}
+
+/// 서버가 "목표 거리 도달"을 판정할 때 쓰는 **거리 허용오차**(마이그레이션 42,
+/// `docs/TRD.md` §10.2). 목표 `D`km에 대해 서버는
+/// `distance_meters >= D*1000 - min(D*1000*0.02, 300)` 이면 달성으로 본다.
+///
+/// 이 상수/함수는 **마이그레이션 42 SQL의 거울**이다 — 서버 식이 바뀌면 여기도
+/// 같이 바뀌어야 한다. 클라이언트가 이걸 아는 이유는 오직 하나, 진행률 바가
+/// 서버 인정 기준에서 100%로 차게 하기 위해서다(텐런을 9.8km에서 뛰면 서버는
+/// 지급하는데 바만 98%에서 멈추던 문제 — TRD §14 #17).
+const double _distanceTolerancePct = 0.02;
+const double _distanceToleranceCapMeters = 300.0;
+
+/// 마이그레이션 42가 허용오차를 적용한 조건 3종.
+///
+/// ⚠️ `cumulative_distance_gte`는 **포함하지 않는다.** 42번 마이그레이션에서
+/// 누적 거리 분기는 `p.total_distance_meters >= v_distance_km * 1000.0` 그대로다 —
+/// 누적은 "한 번의 목표 거리 완주" 판정이 아니라 합계라 허용오차를 둘 이유가
+/// 없다. 클라이언트가 임의로 완화하면 서버보다 먼저 100%를 그리게 된다.
+const Set<String> _distanceToleranceConditionTypes = {
+  BadgeConditionType.sessionDistanceGte,
+  BadgeConditionType.pbFirstAchieved,
+  BadgeConditionType.seasonFirstLongDistance,
+};
+
+/// [conditionType]이 서버 거리 허용오차를 쓰는 조건인지.
+bool usesDistanceTolerance(String conditionType) =>
+    _distanceToleranceConditionTypes.contains(conditionType);
+
+/// 서버가 실제로 인정하는 **유효 목표 거리(km)**.
+///
+/// 허용오차를 쓰지 않는 조건이거나 목표가 유효하지 않으면 [targetKm]을 그대로
+/// 돌려준다(호출부가 분기하지 않아도 되게).
+double effectiveDistanceTargetKm({
+  required String conditionType,
+  required double targetKm,
+}) {
+  if (!usesDistanceTolerance(conditionType) || targetKm <= 0) return targetKm;
+  final targetMeters = targetKm * 1000.0;
+  final tolerance = math.min(
+    targetMeters * _distanceTolerancePct,
+    _distanceToleranceCapMeters,
+  );
+  return (targetMeters - tolerance) / 1000.0;
 }
 
 /// `Badge.badgeGrade`(String) 정렬 키. bronze=0 … diamond=4, 그 외(special 포함)=5.

@@ -26,6 +26,7 @@ Badge _badge({
   Map<String, dynamic> condition = const {},
   String grade = 'gold',
   String? seasonId,
+  String conditionType = 'x',
 }) =>
     Badge(
       id: id,
@@ -34,21 +35,41 @@ Badge _badge({
       category: category,
       scope: scope,
       triggerType: BadgeTriggerType.session,
-      conditionType: 'x',
+      conditionType: conditionType,
       condition: condition,
       badgeGrade: grade,
       seasonId: seasonId,
     );
 
-UserBadge _earned(Badge badge, {String? sourceRunId}) => UserBadge(
+UserBadge _earned(Badge badge, {String? sourceRunId, double? achievedValue}) =>
+    UserBadge(
       id: 'ub1',
       userId: 'u1',
       badgeId: badge.id,
       earnedAt: DateTime.utc(2026, 8, 26, 3),
       verified: true,
       sourceRunId: sourceRunId,
+      achievedValue: achievedValue,
       badge: badge,
     );
+
+/// PB 뱃지 한 벌 — 카탈로그와 획득 기록을 함께 만든다.
+({Badge badge, UserBadge userBadge}) _pb({
+  double distanceKm = 5,
+  String conditionType = 'pb_time_lte',
+  double? achievedValue,
+}) {
+  final badge = _badge(
+    id: 'pb_${distanceKm}km',
+    category: BadgeCategory.personalBest,
+    condition: {'distanceKm': distanceKm},
+    conditionType: conditionType,
+  );
+  return (
+    badge: badge,
+    userBadge: _earned(badge, sourceRunId: 'r1', achievedValue: achievedValue),
+  );
+}
 
 RunRecord _run({
   required double distanceMeters,
@@ -119,21 +140,19 @@ void main() {
     });
 
     test('personal_best 뱃지는 PB 카드가 된다', () {
-      final badge = _badge(
-        id: 'pb_5km',
-        category: BadgeCategory.personalBest,
-        condition: {'distanceKm': 5},
-      );
+      final pb = _pb(achievedValue: 1471);
 
       final card = ShareCardBuilder.fromUserBadge(
-        userBadge: _earned(badge, sourceRunId: 'r1'),
+        userBadge: pb.userBadge,
         user: _user,
-        sourceRun: _run(distanceMeters: 5020, movingSeconds: 1471),
+        sourceRun: _run(distanceMeters: 5020, movingSeconds: 1500),
       )! as PersonalBestCardData;
 
       expect(card.targetKm, 5);
       expect(card.distanceLabel, '5km');
+      // 시간은 러닝이 아니라 서버 확정값(achieved_value)에서 온다.
       expect(card.timeLabel, '24:31');
+      expect(card.runDistanceMeters, 5020);
     });
 
     test('distanceKm이 없는 PB 뱃지는 카드로 만들지 않는다', () {
@@ -174,25 +193,86 @@ void main() {
     });
   });
 
-  group('PB 확정 시간 — 102% 규칙 (TRD §10.2)', () {
-    test('목표의 102% 이하면 movingSeconds가 곧 서버 판정값이다', () {
+  group('PB 확정 시간 — achieved_value 단일 출처 (TRD §14 #18, 마이그레이션 65)', () {
+    test('서버 확정값을 반올림해 그대로 쓴다', () {
+      final pb = _pb(achievedValue: 1470.6);
       expect(
         ShareCardBuilder.certifiedPbSeconds(
-          run: _run(distanceMeters: 5100, movingSeconds: 1500),
-          targetKm: 5,
+          badge: pb.badge,
+          userBadge: pb.userBadge,
         ),
-        1500,
+        1471,
       );
     });
 
-    test('102%를 넘으면 서버가 GPS 보간값을 쓰므로 클라이언트는 비운다', () {
+    test('pb_first_achieved도 초 단위라 같은 경로를 쓴다', () {
+      final pb = _pb(conditionType: 'pb_first_achieved', achievedValue: 1800);
       expect(
         ShareCardBuilder.certifiedPbSeconds(
-          run: _run(distanceMeters: 7200, movingSeconds: 2400),
-          targetKm: 5,
+          badge: pb.badge,
+          userBadge: pb.userBadge,
+        ),
+        1800,
+      );
+    });
+
+    test('65 이전 지급분(achieved_value == null)은 비운다 — moving_seconds 폴백 없음', () {
+      final pb = _pb();
+      expect(
+        ShareCardBuilder.certifiedPbSeconds(
+          badge: pb.badge,
+          userBadge: pb.userBadge,
         ),
         isNull,
       );
+
+      // 회귀 가드: 예전 규칙(세션 거리 ≤ 목표×102%)이라면 1500이 나왔다.
+      final card = ShareCardBuilder.fromUserBadge(
+        userBadge: pb.userBadge,
+        user: _user,
+        sourceRun: _run(distanceMeters: 5020, movingSeconds: 1500),
+      )! as PersonalBestCardData;
+      expect(card.certifiedSeconds, isNull);
+      expect(card.timeLabel, isNull);
+      expect(card.shareText, '5km PB 갱신! #Runnit');
+    });
+
+    test('102%를 넘는 러닝이어도 서버 확정값이 있으면 그 값을 쓴다', () {
+      // 예전 규칙은 이 구간을 통째로 null로 만들었다(GPS 보간값이 저장되지
+      // 않았기 때문). 이제 서버가 보간 결과를 적어 두므로 카드에 시간이 나온다.
+      final pb = _pb(achievedValue: 1471.2);
+      final card = ShareCardBuilder.fromUserBadge(
+        userBadge: pb.userBadge,
+        user: _user,
+        sourceRun: _run(distanceMeters: 7200, movingSeconds: 2400),
+      )! as PersonalBestCardData;
+
+      expect(card.timeLabel, '24:31');
+    });
+
+    test('단위가 초가 아닌 조건 타입은 읽지 않는다 — 등수를 시간으로 찍지 않기 위해', () {
+      final pb = _pb(conditionType: 'season_weekly_rank_lte', achievedValue: 3);
+      expect(
+        ShareCardBuilder.certifiedPbSeconds(
+          badge: pb.badge,
+          userBadge: pb.userBadge,
+        ),
+        isNull,
+      );
+    });
+
+    test('0 이하·비유한 값은 0:00을 자랑하지 않도록 비운다', () {
+      for (final v in <double>[0, -12, double.nan, double.infinity]) {
+        final pb = _pb(achievedValue: v);
+        expect(
+          ShareCardBuilder.certifiedPbSeconds(
+            badge: pb.badge,
+            userBadge: pb.userBadge,
+          ),
+          isNull,
+          reason: 'achievedValue=$v',
+        );
+      }
     });
 
     test('시간을 모르면 카드 문구에서 시간이 통째로 빠진다', () {

@@ -108,6 +108,33 @@ abstract class UserBadge with _$UserBadge {
     /// RLS상 클라이언트가 쓸 수 있는 **유일한** 컬럼이다.
     @Default(false) bool isSeen,
 
+    /// 서버가 **판정 시점에 확정한 값**. DB 컬럼 `user_badges.achieved_value`
+    /// (`numeric null`, 마이그레이션 65 / TRD §14 #18).
+    ///
+    /// ## 단위는 이 컬럼이 정하지 않는다
+    /// [Badge.conditionType]이 정한다. 이 값만 보고 포맷을 결정하면 안 된다.
+    ///
+    /// | `conditionType` | 단위 |
+    /// |---|---|
+    /// | `pb_time_lte` · `pb_first_achieved` | **초**(102% 초과 구간의 GPS 보간값이라 소수 가능) |
+    /// | `streak_weeks_gte` · `season_streak_weeks_gte` | 주 수 |
+    /// | `season_weekly_rank_lte` | 등수(작을수록 상위) |
+    /// | `season_weekly_rank_rising_streak_gte` | 연속 상승 주 수 |
+    /// | 그 밖의 34종 | **항상 null** |
+    ///
+    /// ## null이 정상인 이유
+    /// - 값 시맨틱이 정의되지 않은 34종은 언제나 null이다.
+    /// - 마이그레이션 65 **이전에 지급된 행은 백필하지 않는다**(TRD §14 #18).
+    ///   `_pb_best_seconds`는 "지금까지의 최고"를 돌려주므로, 지금 백필하면
+    ///   판정 이후에 세운 더 좋은 기록이 "판정 시점 값" 자리에 들어간다.
+    ///
+    /// ## 진행률이 아니다
+    /// 판정 이후 기록이 좋아져도 갱신되지 않는다. "이 뱃지를 딸 때 당신은
+    /// 이랬다"를 영구 보존하는 값이고, 그래서 공유 카드가 앱 화면과 어긋나지
+    /// 않는다(§3.9.1). `int`가 아니라 **`double?`**인 것은 `numeric`이고 PB 초가
+    /// 보간값이기 때문이다.
+    double? achievedValue,
+
     /// 조인해서 함께 내려온 카탈로그 정보(선택). 별도 조회 왕복을 줄인다.
     Badge? badge,
   }) = _UserBadge;

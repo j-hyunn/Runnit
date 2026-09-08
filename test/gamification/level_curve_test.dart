@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runnit/features/gamification/domain/badge_assets.dart';
 import 'package:runnit/features/gamification/domain/badge_condition.dart';
 import 'package:runnit/features/gamification/domain/badge_progress.dart';
 import 'package:runnit/features/gamification/domain/gamification_stats.dart';
@@ -399,6 +400,202 @@ void main() {
       );
       expect(result, hasLength(1));
       expect(result.single.isEarned, isTrue);
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // TRD §14 #17 — 마이그레이션 42 거리 허용오차가 진행률에도 반영돼야 한다.
+  // 서버 식: distance_meters >= D*1000 - min(D*1000*0.02, 300)
+  // 이 그룹의 기대값은 그 SQL 한 줄과 동일해야 한다.
+  // ---------------------------------------------------------------------
+  group('거리 허용오차 (마이그레이션 42 / TRD §10.2)', () {
+    test('허용오차 대상은 session/pb/season_first_long 3종뿐', () {
+      expect(usesDistanceTolerance(BadgeConditionType.sessionDistanceGte), isTrue);
+      expect(usesDistanceTolerance(BadgeConditionType.pbFirstAchieved), isTrue);
+      expect(
+        usesDistanceTolerance(BadgeConditionType.seasonFirstLongDistance),
+        isTrue,
+      );
+    });
+
+    test('cumulative_distance_gte는 대상이 아니다 — 서버도 정확 비교다', () {
+      // 마이그레이션 42의 cumulative 분기는
+      // `p.total_distance_meters >= v_distance_km * 1000.0` 그대로다.
+      // 클라이언트가 여기서 완화하면 서버보다 먼저 100%를 그린다.
+      expect(
+        usesDistanceTolerance(BadgeConditionType.cumulativeDistanceGte),
+        isFalse,
+      );
+      expect(
+        effectiveDistanceTargetKm(
+          conditionType: BadgeConditionType.cumulativeDistanceGte,
+          targetKm: 100,
+        ),
+        100,
+      );
+    });
+
+    test('2% 구간(목표 10km 미만) — 10km는 2%인 200m가 깎인다', () {
+      expect(
+        effectiveDistanceTargetKm(
+          conditionType: BadgeConditionType.sessionDistanceGte,
+          targetKm: 10,
+        ),
+        closeTo(9.8, 1e-9),
+      );
+      expect(
+        effectiveDistanceTargetKm(
+          conditionType: BadgeConditionType.sessionDistanceGte,
+          targetKm: 5,
+        ),
+        closeTo(4.9, 1e-9),
+      );
+    });
+
+    test('300m 상한 구간 — 하프/풀은 2%가 아니라 300m만 깎인다', () {
+      // 21.0975km × 2% = 421.95m > 300m 상한 → 20.7975km (TRD §10.2 표)
+      expect(
+        effectiveDistanceTargetKm(
+          conditionType: BadgeConditionType.seasonFirstLongDistance,
+          targetKm: 21.0975,
+        ),
+        closeTo(20.7975, 1e-9),
+      );
+      expect(
+        effectiveDistanceTargetKm(
+          conditionType: BadgeConditionType.pbFirstAchieved,
+          targetKm: 42.195,
+        ),
+        closeTo(41.895, 1e-9),
+      );
+    });
+
+    test('목표가 0 이하면 그대로 반환한다 (0 나눗셈 방어)', () {
+      expect(
+        effectiveDistanceTargetKm(
+          conditionType: BadgeConditionType.sessionDistanceGte,
+          targetKm: 0,
+        ),
+        0,
+      );
+    });
+  });
+
+  group('BadgeProgress — 허용오차가 진행률/임계 판정에 반영된다 (#17)', () {
+    Badge distanceBadge({
+      required String conditionType,
+      required double distanceKm,
+    }) =>
+        Badge(
+          id: 'b-$conditionType-$distanceKm',
+          name: 'n',
+          description: 'd',
+          category: BadgeCategory.singleSessionDistance,
+          scope: BadgeScope.permanent,
+          triggerType: BadgeTriggerType.session,
+          conditionType: conditionType,
+          condition: {'distanceKm': distanceKm},
+          badgeGrade: 'bronze',
+        );
+
+    BadgeProgress progressFor(Badge badge, double maxRunMeters) =>
+        BadgeProgressCalculator.forBadge(
+          badge: badge,
+          earnedAt: null,
+          stats: GamificationStats(maxSingleRunDistanceMeters: maxRunMeters),
+        );
+
+    test('텐런을 9.8km에 뛰면 바가 100%로 찬다 (기존엔 98%에서 멈췄다)', () {
+      final p = progressFor(
+        distanceBadge(
+          conditionType: BadgeConditionType.sessionDistanceGte,
+          distanceKm: 10,
+        ),
+        9800,
+      );
+      expect(p.ratio, 1.0);
+      expect(p.meetsThresholdLocally, isTrue);
+      // 진행률만 스냅될 뿐 획득은 아니다 — 확정은 서버다.
+      expect(p.isEarned, isFalse);
+    });
+
+    test('허용오차 밖(9.79km)은 여전히 100%가 아니다', () {
+      final p = progressFor(
+        distanceBadge(
+          conditionType: BadgeConditionType.sessionDistanceGte,
+          distanceKm: 10,
+        ),
+        9790,
+      );
+      expect(p.ratio, lessThan(1.0));
+      expect(p.ratio, closeTo(9.79 / 9.8, 1e-9));
+      expect(p.meetsThresholdLocally, isFalse);
+    });
+
+    test('누적 거리는 완화되지 않는다 — 98km로는 100km 뱃지가 차지 않는다', () {
+      const badge = Badge(
+        id: 'cum100',
+        name: 'n',
+        description: 'd',
+        category: BadgeCategory.cumulativeDistance,
+        scope: BadgeScope.permanent,
+        triggerType: BadgeTriggerType.cumulative,
+        conditionType: BadgeConditionType.cumulativeDistanceGte,
+        condition: {'distanceKm': 100},
+        badgeGrade: 'bronze',
+      );
+      final p = BadgeProgressCalculator.forBadge(
+        badge: badge,
+        earnedAt: null,
+        stats: const GamificationStats(totalDistanceMeters: 98000),
+      );
+      expect(p.ratio, closeTo(0.98, 1e-9));
+      expect(p.meetsThresholdLocally, isFalse);
+    });
+
+    test('effectiveTargetOf는 distanceKm가 없으면 완화하지 않는다', () {
+      // 허용오차 대상 조건인데 목표 키가 distanceKm가 아니면(카탈로그 오타 등)
+      // 서버보다 느슨해지지 않도록 원값을 쓴다.
+      expect(
+        BadgeProgressCalculator.effectiveTargetOf(
+          conditionType: BadgeConditionType.sessionDistanceGte,
+          condition: const {'count': 10},
+        ),
+        10,
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // TRD §14 #21 (QA O-4) — 뱃지 아트 경로 규칙은 badge_assets.dart 하나뿐이다.
+  // ---------------------------------------------------------------------
+  group('뱃지 아트 경로 단일 소스 (#21)', () {
+    test('tierEmblemAssetPath는 badgeAssetPath(seasonTier)와 동일하다', () {
+      for (final tier in Tier.values) {
+        expect(
+          tierEmblemAssetPath(tier),
+          badgeAssetPath(
+            category: BadgeCategory.seasonTier,
+            badgeGrade: tier.name,
+          ),
+        );
+      }
+    });
+
+    test('실제 경로는 assets/badges/tier/{티어}.svg 이다', () {
+      expect(tierEmblemAssetPath(Tier.bronze), 'assets/badges/tier/bronze.svg');
+      expect(tierEmblemAssetPath(Tier.silver), 'assets/badges/tier/silver.svg');
+      expect(tierEmblemAssetPath(Tier.gold), 'assets/badges/tier/gold.svg');
+      expect(
+        tierEmblemAssetPath(Tier.platinum),
+        'assets/badges/tier/platinum.svg',
+      );
+    });
+
+    test('Tier 4종은 전부 등급 폴백을 타지 않는다', () {
+      for (final tier in Tier.values) {
+        expect(badgeGradeAssetName(tier.name), tier.name);
+      }
     });
   });
 }
