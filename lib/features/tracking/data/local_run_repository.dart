@@ -452,10 +452,16 @@ class LocalRunRepository implements RunRepository {
   ///
   /// `synced`인 행은 항상 false다 — 예산은 성공 시 0으로 복원되지만, 순서에
   /// 의존하지 않도록 상태로도 한 번 더 막는다.
+  ///
+  /// `completed`가 아닌 행(진행 중 체크포인트)도 항상 false다 — [syncPending]의
+  /// 술어와 **정확히 상보**여야 하기 때문이다(QA P-3). 체크포인트 행은 [_push]
+  /// 대상이 아니라 `sync_attempts`가 오르지 않으므로 실무상 도달 불가지만, 두
+  /// 술어가 갈라지면 "큐에서 빠진 행"과 "재시도 버튼이 뜨는 행"이 어긋난다.
   Stream<bool> watchSyncRetryExhausted(String id) {
     final query = _db.select(_db.runRecordRows)..where((t) => t.id.equals(id));
     return query.watchSingleOrNull().map((row) {
       if (row == null) return false;
+      if (row.status != runStatusWire(RunStatus.completed)) return false;
       if (row.syncStatus == syncStatusWire(SyncStatus.synced)) return false;
       return row.syncAttempts >= maxSyncAttempts;
     }).distinct();
