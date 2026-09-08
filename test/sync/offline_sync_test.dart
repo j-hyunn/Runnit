@@ -624,6 +624,51 @@ void main() {
   test('로컬에 없는 id는 false다 — 다른 기기 기록·상한 밖 기록', () async {
     expect(await repository.watchSyncRetryExhausted('nope').first, isFalse);
   });
+
+  // ───────── 11) PostgREST가 jsonb를 문자열로 돌려주는 경우 (QA P-1) ─────────
+
+  test('확정 응답의 client_reported가 문자열이어도 이후 조회가 깨지지 않는다', () async {
+    // `applyServerConfirmation`은 채택값을 `summaryJson`에 넣고 jsonEncode한다.
+    // 문자열을 그대로 박으면 예외가 **이 왕복이 아니라 다음 조회**에서 터진다 —
+    // `RunRecord.fromJson`의 `as Map<String, dynamic>` 캐스트가 던져 상세 화면이
+    // 원인 없이 조용히 빈다. `_fromRemote`의 대칭 방어와 같은 자리다.
+    server.offline = true;
+    await saveAndSettle(run(id: 'run-str'));
+
+    await repository.applyServerConfirmation('run-str', <String, dynamic>{
+      'id': 'run-str',
+      'distance_meters': 4600,
+      'moving_seconds': 1700,
+      // PostgREST가 파싱된 Map이 아니라 jsonb 원문을 그대로 준 경우.
+      'client_reported': jsonEncode(<String, dynamic>{
+        'distance_meters': 5000,
+        'moving_seconds': 1750,
+      }),
+    });
+
+    final record = await repository.findById('run-str');
+    expect(record, isNotNull, reason: '조회가 캐스트 예외로 죽으면 안 된다');
+    expect(record!.clientReported?.distanceMeters, 5000,
+        reason: '문자열을 디코드해 중첩 모델로 되살려야 한다');
+    expect(record.distanceMeters, 4600);
+    expect(record.distanceWasAdjusted, isTrue);
+  });
+
+  test('client_reported가 이미 Map이면 종전대로 그대로 채택한다', () async {
+    // 방어가 정상 경로를 건드리지 않는지 — 회귀 방향의 반대편.
+    server.offline = true;
+    await saveAndSettle(run(id: 'run-map'));
+
+    await repository.applyServerConfirmation('run-map', <String, dynamic>{
+      'id': 'run-map',
+      'distance_meters': 4600,
+      'client_reported': <String, dynamic>{'distance_meters': 5000},
+    });
+
+    final record = await repository.findById('run-map');
+    expect(record!.clientReported?.distanceMeters, 5000);
+    expect(record.distanceMeters, 4600);
+  });
 }
 
 /// `runs` 테이블의 컬럼 집합. 마이그레이션 01 + 36(`device_vendors`) +

@@ -190,6 +190,15 @@ class LocalRunRepository implements RunRepository {
     ..._serverAdjustedKeys,
   };
 
+  /// 서버에서 **jsonb**로 내려오는 키 — PostgREST가 드물게 이것들을 파싱된 구조가
+  /// 아니라 **문자열**로 돌려준다. 그대로 받으면 `RunRecord.fromJson`의
+  /// `as Map<String, dynamic>` / `as List` 캐스트가 던진다.
+  ///
+  /// 두 소비 지점([_fromRemote]와 [applyServerConfirmation])이 같은 방어를 걸어야
+  /// 하므로 목록을 여기 한 곳에 둔다. `samples`는 [_adoptedKeys]에 없어 확정 경로로는
+  /// 도달하지 않지만, 목록이 갈라지는 것이 방어가 하나 빠지는 것보다 위험하다.
+  static const Set<String> _jsonbKeys = <String>{'client_reported', 'samples'};
+
   /// 업로드 응답으로 되받을 컬럼(PostgREST `select=` 인자).
   ///
   /// `.select()`를 인자 없이 쓰면 `samples`까지 통째로 돌아온다 — 1시간 러닝이면
@@ -368,7 +377,16 @@ class LocalRunRepository implements RunRepository {
 
       final summary = jsonDecode(row.summaryJson) as Map<String, dynamic>;
       for (final key in _adoptedKeys) {
-        if (confirmed.containsKey(key)) summary[key] = confirmed[key];
+        if (!confirmed.containsKey(key)) continue;
+        final value = confirmed[key];
+        // [_fromRemote]의 jsonb-문자열 방어와 **대칭**이다. PostgREST가 jsonb를
+        // 문자열로 돌려주는 드문 경우, 여기서 걸러 두지 않으면 문자열이 그대로
+        // `summaryJson`에 박히고 **다음** `runRecordFromRow` → `RunRecord.fromJson`
+        // 캐스트가 던진다 — 예외 지점이 이 왕복에서 한참 떨어져 있어(다음 조회)
+        // 상세 화면이 원인 없이 조용히 비는 형태로 나타난다(QA P-1).
+        summary[key] = _jsonbKeys.contains(key) && value is String
+            ? jsonDecode(value)
+            : value;
       }
 
       await (_db.update(_db.runRecordRows)..where((t) => t.id.equals(id))).write(
