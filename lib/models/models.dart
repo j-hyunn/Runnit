@@ -14,3 +14,4 @@ export 'run_record.dart';
 export 'run_sample.dart';
 export 'season.dart';
 export 'season_history.dart';
+export 'season_leaderboard_snapshot.dart';

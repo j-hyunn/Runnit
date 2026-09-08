@@ -17,9 +17,16 @@ abstract final class ShareCardBuilder {
   /// 차이가 없고, 점이 많을수록 캡처 시 래스터화가 느려진다.
   static const int maxRoutePoints = 240;
 
-  /// 서버 PB 판정(TRD §10.2 `pb_time_lte`)이 `moving_seconds`를 그대로 쓰는
-  /// 상한 비율. 이 안쪽이면 클라이언트가 보는 값 = 서버가 판정한 값이다.
-  static const double pbDirectTimeRatio = 1.02;
+  /// [certifiedPbSeconds]가 값을 읽어도 되는 `badges.condition_type`.
+  ///
+  /// `achieved_value`의 **단위는 컬럼이 아니라 조건 타입이 정한다**(TRD §14 #18).
+  /// PB 계열만 초(seconds)이고 스트릭은 주 수, 주간순위는 등수다. 카탈로그가
+  /// `personal_best` 카테고리에 다른 조건 타입을 달아 두면 등수를 시간으로 찍는
+  /// 사고가 나므로, 카테고리가 아니라 **조건 타입**으로 한 번 더 막는다.
+  static const Set<String> pbSecondsConditionTypes = {
+    'pb_time_lte',
+    'pb_first_achieved',
+  };
 
   // ───────────────────────── 진입점 ─────────────────────────
 
@@ -175,7 +182,7 @@ abstract final class ShareCardBuilder {
         category: badge.category,
         badgeGrade: badge.badgeGrade,
       ),
-      certifiedSeconds: certifiedPbSeconds(run: sourceRun, targetKm: targetKm),
+      certifiedSeconds: certifiedPbSeconds(badge: badge, userBadge: userBadge),
       runDistanceMeters: sourceRun?.distanceMeters,
       route: route,
     );
@@ -184,17 +191,23 @@ abstract final class ShareCardBuilder {
   /// PB 카드에 적을 수 있는 **확정 기록(초)**. 규칙과 근거는
   /// [PersonalBestCardData.certifiedSeconds] 문서 참조.
   ///
-  /// 요약하면: 세션 거리가 목표의 102% 이하일 때만 `movingSeconds`가 서버 판정과
-  /// 일치하므로 그 구간에서만 값을 낸다. 초과 구간은 서버가 GPS 보간으로 만든
-  /// 값을 쓰는데 그 값이 저장되지 않아 클라이언트가 알 방법이 없다 → null.
+  /// 출처는 하나뿐이다 — 서버가 판정 시점에 확정한 [UserBadge.achievedValue]
+  /// (마이그레이션 65 / TRD §14 #18). `runs.moving_seconds` 폴백은 **삭제됐다**:
+  /// 그 분기가 있었던 유일한 이유는 "서버가 확정한 숫자가 어디에도 없다"였고,
+  /// 이제 있다. 클라이언트가 서버 값을 재유도하면 정본이 둘이 된다.
+  ///
+  /// null을 돌려주는 경우(전부 정상이다 — 카드는 시간 없이 "5km PB 갱신"만 말한다):
+  /// - 마이그레이션 65 이전에 지급된 뱃지. **백필하지 않는다**(TRD §14 #18).
+  /// - 조건 타입이 [pbSecondsConditionTypes] 밖 — 그 값은 초가 아니다.
+  /// - 값이 0 이하이거나 유한하지 않은 경우. `0:00`을 자랑하게 두지 않는다.
   static int? certifiedPbSeconds({
-    required RunRecord? run,
-    required double targetKm,
+    required Badge badge,
+    required UserBadge userBadge,
   }) {
-    if (run == null) return null;
-    final targetMeters = targetKm * 1000;
-    if (run.distanceMeters > targetMeters * pbDirectTimeRatio) return null;
-    return run.movingSeconds > 0 ? run.movingSeconds : null;
+    if (!pbSecondsConditionTypes.contains(badge.conditionType)) return null;
+    final value = userBadge.achievedValue;
+    if (value == null || !value.isFinite || value <= 0) return null;
+    return value.round();
   }
 
   /// 러닝에서 카드용 경로를 뽑는다.
