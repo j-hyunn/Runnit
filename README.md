@@ -4,10 +4,12 @@
 > 아는 사람 없이 시작해서, 뛴 만큼 티어가 오르고 순위가 오른다.
 
 <p>
-  <img alt="status" src="https://img.shields.io/badge/status-기획_완료·개발_준비-blue">
+  <img alt="status" src="https://img.shields.io/badge/status-개발_진행_중·Phase_1~2-green">
   <img alt="platform" src="https://img.shields.io/badge/platform-iOS_%7C_Android-lightgrey">
   <img alt="flutter" src="https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter&logoColor=white">
   <img alt="supabase" src="https://img.shields.io/badge/Supabase-Postgres-3ECF8E?logo=supabase&logoColor=white">
+  <img alt="riverpod" src="https://img.shields.io/badge/Riverpod-2.x-0A62FF">
+  <img alt="prd" src="https://img.shields.io/badge/PRD-v1.10-blue">
 </p>
 
 ---
@@ -81,13 +83,33 @@ flowchart TD
 
 ## 현재 상태
 
-**기획 완료 · 개발 착수 전.** 아직 애플리케이션 코드는 없다.
+**개발 진행 중 — Phase 1 완료, Phase 2 구현 중.** Flutter 앱과 Supabase 백엔드가 동작한다.
 
 | 단계 | 상태 |
 |------|------|
-| 제품 기획 (PRD) | ✅ v1.3 확정 |
+| 제품 기획 (PRD) | ✅ v1.10 확정 |
 | 개발 하네스 구성 | ✅ 에이전트 6 · 스킬 7 |
-| Phase 0 (아키텍처·스키마) | ⬜ 예정 |
+| Phase 0 — 아키텍처 · 데이터 모델 · Supabase 스키마 | ✅ 완료 |
+| Phase 1 — GPS 트래킹 · 기록 저장/히스토리 · 계정 · 오프라인 동기화 | ✅ 완료 |
+| Phase 2 — 티어 · 주간 랭킹 · 뱃지/레벨 · 서버 검증 · 공유 카드 · 알림 | 🔶 구현 중 (실기기·FCM 발송 검증 잔여) |
+| Phase 3 — 베타 · 성능/배터리 최적화 · 스토어 심사 | ⬜ 예정 |
+
+### 구현된 것
+
+| 영역 | 내용 |
+|------|------|
+| **GPS 트래킹** | 백그라운드 세션 유지, GPS 스무딩, 자동 일시정지, 경로 폴리라인, 페이스/고도/거리 실시간 |
+| **기록 · 히스토리** | 로컬(drift) append-only 저장, 러닝 상세(경로·페이스 차트), 제목·메모 수정, GPX 내보내기, 역대 시즌 기록 |
+| **오프라인 동기화** | 무네트워크 기록 → 복귀 시 자동 업로드, 계정 격리 큐, 멱등 업로드, 서버 재계산값 되받기, "동기화 대기" 표시 |
+| **랭킹** | 티어 내 주간 랭킹, 주간 확정 배치, 시즌 리더보드 스냅샷, 무효 시즌 사용자 재랭크 |
+| **티어** | 시즌 누적 거리 절대평가 승급, 시즌 중 강등 없음, 시즌 말 영구 뱃지 |
+| **게이미피케이션** | 뱃지 카탈로그·서버 조건 평가, XP/레벨, 주간 스트릭, 뱃지 갤러리(영구/시즌 분리) |
+| **알림** | FCM 토큰 등록, 서버 트리거·배치, Edge Function `push-dispatch`, 딥링크 라우팅 |
+| **프로필** | 표시이름·아바타(Storage)·체중·주간 목표 편집, 타 사용자 프로필 조회, username 불변 |
+| **공유** | 1080×1920 공유 카드 렌더링, PB 갱신 시 공유 유도, OS 공유 시트 |
+| **백엔드** | Supabase 마이그레이션 66개, RLS, 서버 거리 재계산, 중복 업로드 가드 |
+
+> Flutter 소스 130여 파일 · 테스트 28개 · Supabase 마이그레이션 66개 (2026-09-09 기준)
 
 ---
 
@@ -96,6 +118,10 @@ flowchart TD
 | 문서 | 내용 |
 |------|------|
 | [docs/PRD.md](docs/PRD.md) | **제품 사양의 단일 진실 원천.** 기능 요구사항, 티어·랭킹 정책, 부정행위 방지, KPI |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 시스템 아키텍처 — 클라이언트/백엔드 구조, 데이터 흐름, 모듈 경계 |
+| [docs/TRD.md](docs/TRD.md) | 데이터 모델 코드, Supabase DDL, API·검증 규칙 명세 |
+| [docs/HARNESS.md](docs/HARNESS.md) | 하네스 목표, 핵심 구조 요약, 폐기된 가정, 변경 이력 |
+| [docs/badge-catalog.csv](docs/badge-catalog.csv) | 뱃지 카탈로그 (조건·시즌/영구 구분) |
 | [CLAUDE.md](CLAUDE.md) | 개발 하네스 진입점 |
 
 > 📌 **PRD가 모든 구현 판단의 기준이다.** 코드·문서·에이전트 지시가 PRD와 충돌하면 PRD가 우선한다.
@@ -107,10 +133,16 @@ flowchart TD
 | 영역 | 선택 | 비고 |
 |------|------|------|
 | 앱 | **Flutter** | iOS 15+ / Android 8.0+ 동시 출시 |
-| 상태관리 | **Riverpod** | |
-| 백엔드 | **Supabase** | Postgres · Auth · Realtime · Edge Functions |
-| 지도 | **Naver Map** | 국내 지도 품질·과금 구조 우위 |
-| 푸시 | **FCM** | |
+| 상태관리 | **Riverpod** | Provider override 기반 목킹 |
+| 불변 모델 | **freezed · json_serializable** | 수동 toJson/fromJson 금지 |
+| 라우팅 | **go_router** | 딥링크 · 바텀 네비 shell |
+| 백엔드 | **Supabase** | Postgres · Auth · Realtime · Storage · Edge Functions |
+| 로컬 저장 | **drift (SQLite)** | 진행 중 세션 RunSample append-only, 오프라인 우선 |
+| 위치 | **geolocator · flutter_background_service** | 백그라운드 트래킹 |
+| 지도 | **Naver Map** | 국내 지도 품질·과금 구조 우위. 좌표 표준은 `latlong2` |
+| 차트 | **fl_chart** | 페이스·고도·심박 추이 |
+| 공유 | **share_plus** | 1080×1920 카드 PNG → OS 공유 시트 |
+| 푸시 | **FCM** (firebase_messaging) | 발송은 Edge Function `push-dispatch` |
 | 웨어러블 | **HealthKit / Health Connect** | Garmin은 이를 경유 (Phase 4) |
 
 ### 설계 원칙
@@ -122,19 +154,39 @@ flowchart TD
 
 ---
 
+## 빌드 / 실행
+
+환경 값은 커밋하지 않고 `--dart-define`으로 주입한다.
+
+```bash
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs   # freezed / json / drift 코드 생성
+
+flutter run \
+  --dart-define=SUPABASE_URL=... \
+  --dart-define=SUPABASE_ANON_KEY=... \
+  --dart-define=NAVER_MAP_CLIENT_ID=...
+```
+
+- 여러 값은 `--dart-define-from-file=env/dev.json`으로 묶어 넣을 수도 있다
+- FCM: `google-services.json` / `GoogleService-Info.plist`가 없어도 앱은 뜬다 (초기화를 try/catch로 감쌈)
+- 테스트: `flutter test`
+
+---
+
 ## 로드맵
 
 주 20시간 투입 기준. 상세는 [PRD §11](docs/PRD.md).
 
-| Phase | 기간 | 범위 |
-|-------|------|------|
-| **0** | 3주 | 아키텍처 · 데이터 모델 · Supabase 스키마 |
-| **1** | 10주 | GPS 트래킹 · 기록 저장/히스토리 · 계정 |
-| **2** | 8주 | 티어 · 주간 랭킹 · 뱃지/레벨 · 서버 검증 · 공유 카드 |
-| **3** | 5주 | 베타 · 성능/배터리 최적화 · 스토어 심사 |
-| 🚀 **MVP** | **~26주** | P0 전체 |
-| **4** | +13주 | 웨어러블 연동 · 포인트 이코노미 |
-| **5** | +13주 | 그룹 기능 · B2B 기업 챌린지 |
+| Phase | 기간 | 범위 | 상태 |
+|-------|------|------|------|
+| **0** | 3주 | 아키텍처 · 데이터 모델 · Supabase 스키마 | ✅ |
+| **1** | 10주 | GPS 트래킹 · 기록 저장/히스토리 · 계정 · 오프라인 동기화 | ✅ |
+| **2** | 8주 | 티어 · 주간 랭킹 · 뱃지/레벨 · 서버 검증 · 공유 카드 · 알림 | 🔶 구현 중 |
+| **3** | 5주 | 베타 · 성능/배터리 최적화 · 스토어 심사 | ⬜ |
+| 🚀 **MVP** | **~26주** | P0 전체 | |
+| **4** | +13주 | 웨어러블 연동 · 실내 러닝 · 포인트 이코노미 | ⬜ |
+| **5** | +13주 | 그룹 기능 · B2B 기업 챌린지 | ⬜ |
 
 ---
 
@@ -147,7 +199,21 @@ flowchart TD
 .claude/
 ├── agents/     mobile-architect · gps-tracking-engineer · gamification-designer
 │               backend-engineer · flutter-ui-designer · qa-integration-tester
-└── skills/     running-app-builder (오케스트레이터) + 도메인 스킬 6종
+└── skills/     running-app-builder (오케스트레이터)
+                + flutter-architecture-setup · flutter-ui-patterns
+                + gps-wearable-tracking · gamification-system-design
+                + supabase-running-backend · integration-qa-flutter
+```
+
+```
+lib/
+├── core/       config · auth · providers · repositories · api · sync
+│               map · theme · notifications · router · error · widgets
+└── features/   tracking · history · ranking · gamification
+                profile · sharing · notifications · home · auth
+supabase/
+├── migrations/ 66개 (스키마 · RLS · 랭킹 배치 · 서버 재계산)
+└── functions/  push-dispatch (FCM 발송)
 ```
 
 모든 에이전트와 스킬은 작업 전 `docs/PRD.md`를 읽도록 구성되어 있다.
@@ -164,4 +230,4 @@ flowchart TD
 
 ---
 
-<sub>1인 개발 프로젝트 · 문서 최종 갱신 2026-08-19</sub>
+<sub>1인 개발 프로젝트 · 문서 최종 갱신 2026-09-09</sub>
